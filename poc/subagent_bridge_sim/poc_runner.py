@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import json
 import threading
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from orchestration_runtime.task_registry import (
+    FileTaskRegistry,
+    TERMINAL_STATES,
+    load_json_file,
+    write_json_atomic,
+)
 
-TERMINAL_STATES = {"completed", "failed", "degraded"}
+
 CALLBACK_DEFAULT_SUMMARIES = {
     "final_callback_sent": "final callback sent",
     "callback_receipt_acked": "callback receipt acknowledged",
@@ -21,15 +25,12 @@ CALLBACK_TRANSITIONS = {
 
 
 def dump_json(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f"{path.name}.tmp")
-    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temp_path.replace(path)
+    write_json_atomic(path, payload)
 
 
 
 def load_json(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json_file(path)
 
 
 
@@ -61,60 +62,10 @@ def next_callback_status(current_status: str, stage: str, state: str) -> str:
     return next_status
 
 
-@dataclass
-class RepoLocalTaskRegistry:
-    root_dir: Path
-
-    def __post_init__(self) -> None:
-        self.tasks_dir = self.root_dir / "tasks"
-        self.tasks_dir.mkdir(parents=True, exist_ok=True)
-
-    def task_path(self, task_id: str) -> Path:
-        return self.tasks_dir / f"{task_id}.json"
-
-    def upsert(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        payload = {
-            "task_id": record["task_id"],
-            "owner": record["owner"],
-            "runtime": record["runtime"],
-            "state": record["state"],
-            "evidence": record.get("evidence", {}),
-            "callback_status": record["callback_status"],
-        }
-        dump_json(self.task_path(record["task_id"]), payload)
-        return payload
-
-    def load(self, task_id: str) -> Dict[str, Any]:
-        return load_json(self.task_path(task_id))
-
-    def patch(
-        self,
-        task_id: str,
-        *,
-        state: Optional[str] = None,
-        runtime: Optional[str] = None,
-        evidence_merge: Optional[Dict[str, Any]] = None,
-        callback_status: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        record = self.load(task_id)
-        if state is not None:
-            record["state"] = state
-        if runtime is not None:
-            record["runtime"] = runtime
-        if evidence_merge:
-            merged = dict(record.get("evidence", {}))
-            merged.update(evidence_merge)
-            record["evidence"] = merged
-        if callback_status is not None:
-            record["callback_status"] = callback_status
-        dump_json(self.task_path(task_id), record)
-        return record
-
-
 class SubagentBridgeSimulator:
     def __init__(self, root_dir: Path) -> None:
         self.root_dir = root_dir
-        self.registry = RepoLocalTaskRegistry(root_dir / "runtime")
+        self.registry = FileTaskRegistry(root_dir / "runtime")
         self.by_child_session_dir = self.registry.root_dir / "by-child-session"
         self.events_dir = self.registry.root_dir / "events"
         self.waiters_dir = self.registry.root_dir / "waiters"

@@ -176,6 +176,36 @@ python3 -m unittest tests.test_official_lobster_bridge_runner -v
 
 ---
 
+## 新增：最小 scheduler / dispatcher core（Batch1）
+
+这批已经把 **registry library + 顺序 dispatcher** 抽成可复用模块：
+
+- `orchestration_runtime/task_registry.py`
+- `orchestration_runtime/scheduler.py`
+- `orchestration_runtime/builtin_handlers.py`
+- `scripts/run_minimal_scheduler.py`
+- `examples/workflows/chain-basic.scheduler.json`
+
+关键口径：
+
+- 只支持 **顺序链**，不做 DAG / parallel / join
+- 顶层 registry 仍冻结为 6 字段
+- `waiting_subagent` 不新增顶层 state，而是写进 `evidence.scheduler.waiting_for`
+- `callback_status` 与业务终态继续分离
+
+快速 sample：
+
+```bash
+python3 scripts/run_minimal_scheduler.py \
+  --workflow examples/workflows/chain-basic.scheduler.json \
+  --input poc/lobster_minimal_validation/inputs/chain-basic.json \
+  --run-dir /tmp/chain-basic-scheduler-run
+```
+
+详细 contract：`docs/scheduler-dispatch-contract.md`
+
+---
+
 ## 全局路线图
 
 ### P0：重置主线，打通最小闭环
