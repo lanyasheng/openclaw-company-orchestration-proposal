@@ -1,321 +1,426 @@
-# OpenClaw 公司级编排架构 Proposal
+# OpenClaw 公司级编排架构 Proposal v2
 
-日期：2026-03-19  
-状态：proposal-v1  
-来源：整合已完成的同主题调研任务与正式设计稿，去重后收敛为单一审阅版本。
+> 日期：2026-03-19
+> 状态：v2（基于新真值重写）
+> 更新：删除旧口径，明确 subagent 主链，收敛 taskwatcher，纳入 Lobster
 
 ---
 
-## 1. 问题定义
+## 1. 问题定义（v2 修正）
 
-OpenClaw 当前已经拥有多种真实运行时资产：
-- `sessions_spawn(runtime="subagent")`
-- ACP session / external harness
-- watcher / callback
-- cron
-- message
-- browser
+### 当前已明确的真值
 
-所以当前真正的问题不是“有没有编排能力”，而是：
+| 事实 | 说明 | v1 旧口径 |
+|------|------|-----------|
+| **默认执行主链** | `sessions_spawn(runtime="subagent")` | 模糊提及 ACP/subagent |
+| **taskwatcher** | external async watcher/reconciler | 作为编排 backbone 候选 |
+| **Lobster** | P0/P1 最优先评估的 thin orchestration | 未纳入 shortlist |
+| **外部证据** | GitHub + X + Moltbook 已验证 | 仅 GitHub |
 
-1. **状态分散**：subagent、ACP、watcher、delivery 分别持有局部真值
-2. **重试口径不统一**：不同执行器的 retry / timeout / completion 语义不一致
-3. **人工介入缺协议**：有人审能力，但缺统一 HITL 状态机
+### 当前核心问题
+
+1. **状态分散**：subagent、browser、message、cron 各自为政
+2. **重试口径不统一**：不同 runtime 的 retry/timeout 语义不一致
+3. **人工介入缺协议**：有人审能力，但缺标准 HITL 状态机
 4. **观测不连续**：缺单个公司级任务的完整 timeline
-5. **恢复与补偿不足**：跨天、跨运行时、高 SLA 流程仍偏脚本级工程约定
+5. **编排层过重风险**：容易误判为需要「自研 DAG 平台」
 
-因此，这不是简单的“框架选型题”，而是：
+### 关键认知转变
 
-> **如何在不推倒 OpenClaw 现有资产的前提下，把它升级成公司级 orchestration system。**
+> **不是「选哪个框架替换 OpenClaw」，而是「在 OpenClaw 现有资产上，加一层 thin orchestration」。**
 
 ---
 
-## 2. 方案比较结论
+## 2. 方案比较结论（v2 更新）
 
 ### 2.1 选型结论
 
-**推荐路线：Hybrid（分阶段）**
+**推荐路线：Thin Orchestration Layer + 分层选型**
 
-- **P0 / P1：OpenClaw Native+**
-- **P2：Selective Temporal**
-- **LangGraph：Agent Internal Only**
+```
+P0/P1: Lobster (最优先评估) → Thin orchestration layer
+       └─ 受限 templates (chain/parallel/join/human-gate/failure-branch)
 
-### 2.2 为什么不是 LangGraph-first
+P2+:   Temporal (关键高 SLA 流程) → Durable execution backbone
 
-LangGraph 更适合：
-- 单 agent 的认知流
-- 多工具调用图
-- 审批/断点嵌在思考流中
+LangGraph: 仅 agent 内部 (checkpoint/HITL/reasoning)
 
-但不适合直接担任：
-- 公司级 durable execution 底座
-- 跨 runtime 统一审计与恢复引擎
-- 强 SLA 的异步执行总线
+taskwatcher: 仅 external async watcher (不是 backbone)
+```
 
-### 2.3 为什么不是 Temporal-first
+### 2.2 为什么 Lobster 优先
 
-Temporal 最适合：
-- 长事务
-- 跨天流程
-- 强 retry / timer / signal / compensation
-- 可回放、可审计的关键链路
+| 优势 | 说明 |
+|------|------|
+| OpenClaw-native | 与现有 `subagent`/`browser`/`message` 兼容 |
+| Typed macro engine | 类型安全，local-first |
+| 低侵入 | 不需要 worker/namespace 新基础设施 |
+| 快速验证 | 一周内可 POC |
+| 外部证据 | X/Moltbook/GitHub 已验证与 orchestration 强关联 |
 
-但短期代价过大：
-- 现有执行器都要 activity 化
-- 要引入 worker/namespace/determinism/versioning 体系
-- 要重构 OpenClaw 运行时边界
+### 2.3 为什么不是 LangGraph-first
 
-### 2.4 为什么不是纯原生不变
+| LangGraph 适合 | LangGraph 不适合 |
+|---------------|-----------------|
+| 单 agent 认知流 | 公司级 durable execution |
+| checkpoint/HITL | 跨 runtime 统一审计 |
+| tool routing | 强 SLA 异步总线 |
+| reasoning graph | subagent/browser 统一编排 |
 
-OpenClaw 原生最适合作为：
-- 控制平面
-- 入口
-- 线程 / 权限 / 人审协调层
+**结论**：只做叶子层 agent 内部子图，不做公司级 backbone。
 
-但如果长期不升级：
-- 状态仍会分散
-- 补偿/回放/SLA 难统一
-- 公司级流程可观测性不足
+### 2.4 为什么不是 Temporal-first
+
+| Temporal 适合 | Temporal 不适合（短期） |
+|-------------|---------------------|
+| 跨天/长事务 | 简单短任务 |
+| 强 retry/timer | 一次性 subagent |
+| 强审计/恢复 | 轻量 browser/message |
+| 高 SLA 流程 | 全量迁移（成本过高） |
+
+**结论**：P2+ 关键流程选择性接入，不替代控制平面。
+
+### 2.5 为什么不是自研 DAG 平台
+
+| 自研成本 | 风险 |
+|---------|------|
+| scheduler/executor | 长期维护负担 |
+| versioning/recovery | 方法论成熟度 |
+| state store | 运维复杂度 |
+| 需求验证 | 未经验证的过早抽象 |
+
+**结论**：先用现成方案（Lobster/Temporal）验证，再决定自研。
 
 ---
 
-## 3. 推荐架构
+## 3. 推荐架构（v2）
 
-```mermaid
-flowchart TD
-    U[User / Channel / Thread] --> CP[OpenClaw Control Plane]
-    CP --> TG[Task Gateway]
-    TG --> TR[Task Registry]
-    TG --> EB[Callback / Event Bus]
-
-    TR --> S1[Subagent Adapter]
-    TR --> S2[ACP Adapter]
-    TR --> S3[Browser Adapter]
-    TR --> S4[Message Adapter]
-    TR --> S5[Cron / Job Adapter]
-
-    S1 --> EX1[Subagent Runtime]
-    S2 --> EX2[ACP Runtime]
-    S3 --> EX3[Browser Runtime]
-    S4 --> EX4[Delivery Runtime]
-    S5 --> EX5[Scheduler / Jobs]
-
-    TR --> OBS[Timeline / Audit / Retry / Escalation]
-    TR --> TEMP[Temporal Layer - P2 Selective]
-    EX1 --> LG[LangGraph - Internal Subgraph Only]
-    EX2 --> LG
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Control Plane (OpenClaw main)                               │
+│  - 用户入口、线程/频道、权限、人审                            │
+└──────────────────────────────────────────────────────────────┘
+                              ↓ sessions_spawn(runtime="subagent")
+┌──────────────────────────────────────────────────────────────┐
+│  Thin Orchestration Layer (P0/P1)                            │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │ Lobster (P0 优先评估)                                   │ │
+│  │ ┌─────────────────┐ ┌─────────────────┐              │ │
+│  │ │ Task Registry   │ │ Workflow        │              │ │
+│  │ │ - task_id       │ │ Templates       │              │ │
+│  │ │ - state         │ │ (受限 5 种)      │              │ │
+│  │ │ - evidence      │ │                 │              │ │
+│  │ └─────────────────┘ └─────────────────┘              │ │
+│  │ ┌────────────────────────────────────────────────────┐ │ │
+│  │ │ Adapter Layer                                       │ │ │
+│  │ │ subagent | browser | message | cron                 │ │ │
+│  │ └────────────────────────────────────────────────────┘ │ │
+│  └────────────────────────────────────────────────────────┘ │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │ Callback / Event Bus (幂等)                             │ │
+│  └────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
+                              ↓
+┌──────────────────────────────────────────────────────────────┐
+│  Execution Plane                                             │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │
+│  │ subagent │ │ browser  │ │ message  │ │ cron     │      │
+│  │ (主链)    │ │          │ │          │ │          │      │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘      │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │ Temporal (P2+ 关键流程)                                 │ │
+│  └────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
+                              ↓
+┌──────────────────────────────────────────────────────────────┐
+│  Watcher Layer (External)                                    │
+│  - taskwatcher: 消费状态、callback、reconcile                  │
+│  - 不是 backbone，只是 external async 通知层                   │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### 3.1 分层定义
+---
 
-#### 控制平面
+## 4. 分层定义
+
+### 4.1 控制平面（保留 OpenClaw 原生）
+
 负责：
-- 用户入口
+- 用户入口与路由
 - 会话/线程语义
 - 权限与审批
 - 人机交互
 - 最终回执
 
-#### 状态平面
-核心新增件：
-- `Task Registry`
-- 统一 `orchestration_task` schema
-- 统一状态机
-- 统一终态语义
-- Timeline / Audit / Retry / Escalation
+### 4.2 Thin Orchestration Layer（P0 新增）
 
-#### 执行平面
-统一纳管：
-- subagent
-- ACP
-- browser
-- message
-- cron / local jobs
+核心组件：
+- **Task Registry**：统一 task schema、state machine
+- **Lobster**：typed macro engine，受限 workflow templates
+- **Adapter 层**：subagent/browser/message/cron 统一接入
+- **Event Bus**：幂等 callback、delivery audit
 
-#### 耐久编排平面
-- 仅对高价值长事务接入 Temporal
-- 不替代 OpenClaw 控制平面
+### 4.3 执行平面
 
-#### 认知编排平面
-- LangGraph 只在 agent 内部使用
-- 不越过 task boundary 成为公司级 orchestrator
+- **subagent**：默认内部长任务主链
+- **browser/message/cron**：标准 activity adapter
+- **Temporal**：P2+ 关键高 SLA 流程
+
+### 4.4 Watcher 层（External）
+
+- **taskwatcher**：消费状态变化、trigger callback、escalation
+- **明确**：不是 backbone，只是 external async 通知层
 
 ---
 
-## 4. 统一状态机建议
+## 5. 受限 Workflow Templates（v2 新增）
 
-建议统一到以下状态：
+**P0 只支持 5 种受限模式，不做通用图引擎。**
 
-- `queued`
-- `running`
-- `waiting_human`
-- `retrying`
-- `completed`
-- `failed`
-- `timeout`
-- `cancelled`
-- `degraded`
+| Template | 模式 | 示例 |
+|----------|------|------|
+| **CHAIN** | A → B → C | 编码 → 测试 → 部署 |
+| **PARALLEL** | A → [B,C] → D | 多源数据采集 |
+| **JOIN** | [A,B] → C | 多依赖聚合 |
+| **HUMAN-GATE** | A → [人工] → B | 发布审批 |
+| **FAILURE-BRANCH** | A → [成功:B/失败:C] | 错误处理 |
 
-### 4.1 状态迁移原则
+### 为什么受限？
 
-1. 所有执行器必须映射到统一状态机
-2. `completed` 必须对应真实交付物或可验证终态
-3. `timeout` 与 `failed` 必须区分
-4. `degraded` 用于“主目标部分达成但质量门不完整”
-5. `waiting_human` 必须带审批超时策略
+- 覆盖 80% 实际场景
+- 实现简单，无需复杂调度器
+- 易于测试、审计、恢复
+- 避免过度设计
 
-### 4.2 终态语义
+---
 
-终态只允许：
-- `completed`
-- `failed`
-- `timeout`
-- `cancelled`
-- `degraded`
+## 6. 统一状态机
 
-且终态必须携带：
+### 6.1 状态定义
+
+```
+created
+  -> queued
+  -> running
+  -> waiting_external (等 ACP/browser/cron)
+  -> waiting_human (等人审)
+  -> retrying
+  -> validating
+  -> completed / failed / timeout / cancelled / degraded
+```
+
+### 6.2 终态语义
+
+终态必须携带：
 - `task_id`
 - `owner`
 - `runtime`
-- `evidence`
+- `evidence` (日志、输出、测试报告)
 - `report_path`
 - `delivery_status`
 - `next_action`
 
 ---
 
-## 5. 模块边界建议
+## 7. Task Watcher / Subagent / ACP 职责边界
 
-### 5.1 Task Gateway
-负责统一接收入参，并路由到不同执行器。
+### 7.1 明确真值
 
-### 5.2 Task Registry
-负责：
-- task schema
-- 当前状态
-- last signal
-- retry count
-- owner
-- dependency
-- final summary pointer
+| 组件 | 职责 | 边界 |
+|------|------|------|
+| **subagent** | 默认内部执行主链 | 长任务走 `sessions_spawn` |
+| **taskwatcher** | external async watcher | **不是 backbone**，只消费状态 |
+| **ACP** | 外部系统接入 | CI/人审，走 session bridge |
 
-### 5.3 Adapter 层
-为不同执行器提供统一接口：
-- subagent adapter
-- ACP adapter
-- browser adapter
-- message adapter
-- cron adapter
+### 7.2 架构图
 
-### 5.4 Callback / Event Bus
-负责：
-- 回调去重
-- 状态推进
-- delivery 幂等
-- 回原线程/频道
+```
+Control Plane
+    ↓
+sessions_spawn(runtime="subagent")
+    ↓
+┌─────────────┐
+│ subagent    │ ← 默认主链
+│ (执行)       │
+└─────────────┘
+    ↓
+Run Dir (status.json)
+    ↓
+┌─────────────┐
+│ taskwatcher │ ← 消费状态（不是 backbone）
+│ (callback)   │
+└─────────────┘
+    ↓
+User Notification
+```
 
-### 5.5 Observability Layer
-负责：
-- timeline
-- 审计
-- retry trace
-- escalation
-- SLA 观察
+### 7.3 为什么 taskwatcher 不是 backbone
 
-### 5.6 Temporal Bridge（P2）
-只桥接关键 workflow，不接管所有流程。
-
----
-
-## 6. 失败恢复与补偿
-
-### 6.1 失败分类
-- 可重试失败：网络波动、外部服务偶发失败
-- 需人工失败：审批卡住、结果冲突、权限不足
-- 不可恢复失败：输入错误、配置缺失、契约不成立
-
-### 6.2 恢复策略
-- `retrying`：按 adapter 定义 backoff / max attempts
-- `waiting_human`：进入审批断点，超时升级
-- `failed`：附失败原因与建议动作
-- `timeout`：支持重入或人工接管
-
-### 6.3 幂等策略
-建议 callback/delivery 幂等键统一为：
-
-`task_id + state + content_hash + target`
+| watcher 实际 | backbone 需要 |
+|-------------|--------------|
+| 消费外部状态 | 持有 state-of-truth |
+| 轮询/回调 | durable execution |
+| reconcile | deterministic replay |
+| 局部真值 | 跨-runtime 统一 timeline |
 
 ---
 
-## 7. 质量门
+## 8. 失败恢复与补偿
 
-所有公司级编排任务至少满足：
+### 8.1 失败分类
 
-1. **结论**：完成 / 部分完成 / 失败
-2. **证据**：日志、状态、文件、回执、测试或审计线索
-3. **动作**：下一步、Owner、截止时间
+- **可重试**：网络波动、外部服务偶发失败
+- **需人工**：审批卡住、权限不足
+- **不可恢复**：输入错误、配置缺失
 
-额外要求：
-- `completed` 不能只有聊天回执，必须有真实产物或真实终态证据
-- 运行时状态与报告状态必须一致
-- 跨执行器任务必须能回放 timeline
+### 8.2 恢复策略
 
----
+| Runtime | 策略 |
+|---------|------|
+| subagent | profile/stall 语义 + retry count |
+| ACP | session 文件超时 → timeout/waiting_human |
+| browser | 登录失效 → waiting_human |
+| message | 指数退避 + dead-letter |
 
-## 8. 路线图
+### 8.3 幂等策略
 
-### P0：统一语义层
-目标：先把“公司级任务”定义出来。
-
-- 定义 `orchestration_task` schema
-- 定义统一状态机
-- 统一终态语义
-- 打通 subagent / ACP 接入
-- 接入统一 callback 幂等规则
-
-### P1：统一可观测与人工介入
-目标：把“脚本集”变成“运营级控制系统”。
-
-- timeline 看板
-- retry registry
-- escalation / dead-letter
-- human-in-the-loop 协议
-- browser / message / cron 接入 registry
-- 选择 1~2 条关键流程做 shadow workflow
-
-### P2：Selective Temporal
-目标：把最痛的长事务交给耐久执行层。
-
-优先迁入：
-- 跨天任务
-- 强 SLA 任务
-- 多阶段审批链
-- 强补偿/可回放流程
-
-不建议迁入：
-- 简单 agent 子任务
-- 短平快本地执行
-- 仅认知推理型流程
+```
+幂等键 = task_id + state + content_hash + target
+```
 
 ---
 
-## 9. 最终建议
+## 9. 质量门
+
+### 9.1 P0 质量门
+
+- [ ] 状态契约已冻结（schema/state/event）
+- [ ] 幂等键可验证（重复不会重复 final）
+- [ ] 端到端回放可验证（timeline 完整）
+- [ ] 失败分类清晰（timeout/failed/cancelled/degraded）
+- [ ] 人工断点可验证（approve/reject/revise/timeout）
+- [ ] chain/parallel 模板可工作
+
+### 9.2 上线质量门
+
+| Gate | 要求 |
+|------|------|
+| Gate 0 | schema + adapter contract review 通过 |
+| Gate 1 | shadow mode：只记录不 callback |
+| Gate 2 | canary：仅 1 条流程真实投递 |
+| Gate 3 | 增加到 10~20% 流量 |
+| Gate 4 | 默认启用，保留 feature flag 回退 |
+
+---
+
+## 10. 路线图
+
+### P0（1-2 周）：Thin Orchestration Layer 基线
+
+目标：**不引入新基础设施，先统一状态与观测。**
+
+交付：
+1. 确认 `subagent` 为默认主链
+2. 收敛 `taskwatcher` 为 external watcher
+3. 评估 Lobster 作为 thin orchestration layer
+4. `orchestration_task` schema v1
+5. unified state machine v1
+6. subagent / browser / message adapter
+7. callback 幂等与 delivery audit
+8. task timeline viewer 最小版
+
+成功标准：
+- subagent 流程能在 registry 中追踪
+- 重复 watcher 不会重复 final
+- chain/parallel 模板能工作
+
+### P1（2-6 周）：完整 Thin Layer
+
+目标：**Lobster 全面接入，受限 templates 完整。**
+
+交付：
+1. Lobster 全面接入 subagent/browser/message/cron
+2. 受限 templates（5 种）完整实现
+3. human-in-the-loop 标准协议
+4. retry policy registry
+5. dead-letter + escalation
+6. company-level observability board
+
+成功标准：
+- 3 类以上 runtime 能统一追踪
+- 失败分类与补偿策略标准化
+- 人工介入 SLA 有明确定义
+
+### P2+（关键高 SLA 流程）：Selective Temporal
+
+目标：**只迁移真正值得迁移的流程。**
+
+优先迁移：
+- 跨天审批流程
+- 需要 timer/signal/compensation 的流程
+- 强审计、强恢复需求
+
+不迁移：
+- 简单短任务
+- 一次性 subagent
+- 轻量 browser/message
+- 单 agent reasoning（给 LangGraph）
+
+成功标准：
+- 至少 1 条关键流程在 Temporal 跑通
+- 不影响 OpenClaw 入口体验
+- 有清晰 cutover/rollback runbook
+
+---
+
+## 11. 最终建议
 
 ### 应该做的
-- 保留 OpenClaw 作为主控制平面
-- 新增 Task Registry + 统一状态机 + Event Bus
-- 先把现有执行器统一成标准 adapter
-- 把 Human-in-the-loop、retry、delivery、escalation 做成平台能力
-- 只把真正需要 durable execution 的流程接给 Temporal
-- 把 LangGraph 收敛到 agent 内部复杂推理子图
+
+- 明确 `subagent` 为默认内部执行主链
+- 评估 Lobster 作为 P0/P1 thin orchestration layer
+- 受限 workflow templates（5 种）
+- 统一 Task Registry + 状态机 + Event Bus
+- 收敛 `taskwatcher` 为 external async watcher
+- 只把关键高 SLA 流程接给 Temporal
+- LangGraph 只用于 agent 内部子图
 
 ### 不应该做的
-- 不要让 LangGraph 接管公司级总线
-- 不要让 Temporal 一步到位替换所有现有机制
-- 不要继续让状态散落在 run dir / session / watcher / delivery 各自为政
+
+- 第一步自研 DAG 平台
+- 把 `taskwatcher` 当作编排 backbone
+- 让 LangGraph 接管公司级总线
+- Temporal 一步到位全迁
+- 通用图引擎（过早抽象）
 
 ---
 
-## 10. 结论
+## 12. 外部证据来源（v2 新增）
 
-> **OpenClaw 未来的最优架构，不是单框架替代，而是“原生控制平面 + 统一状态层 + Temporal 选择性增强 + LangGraph 叶子层认知编排”的分层混合方案。**
+| 来源 | 关键证据 | 支撑结论 |
+|------|----------|----------|
+| **GitHub: openclaw/lobster** | Typed local-first workflow shell | Lobster 是 P0/P1 最优先候选 |
+| **GitHub: temporal-community/temporal-ai-agent** | Temporal 用于 durable workflow backbone | Temporal P2+ 关键流程 |
+| **X: Lobster + orchestration** | Lobster 与 deterministic workflows/orchestration/subagent spawning 强关联 | Lobster P0 优先 |
+| **X: Temporal + durable execution** | Temporal 被社区用于 durable execution | Temporal P2+ |
+| **X: task watcher** | 搜索无显著结果 | watcher 不是主流 backbone |
+| **Moltbook** | workflow engines/state machines/execution receipts/idempotency | durable/state/receipt 比 watcher 更关键 |
+
+---
+
+## 13. 删除的旧口径
+
+| 旧口径 | 新真值 |
+|--------|--------|
+| "ACP 是主链之一" | **subagent 是默认内部主链** |
+| "taskwatcher 作为编排 backbone 候选" | **taskwatcher 是 external async watcher，不是 backbone** |
+| "第一步 OpenClaw Native+ 增强" | **第一步 Thin Orchestration Layer，评估 Lobster** |
+| "LangGraph 公司级总编排候选" | **LangGraph 仅 agent 内部** |
+| "未考虑 Lobster" | **Lobster P0/P1 最优先** |
+| "仅 GitHub 证据" | **GitHub + X + Moltbook 全纳入** |
+
+---
+
+## 14. 结论
+
+> **OpenClaw 未来的最优架构，不是「自研 DAG 平台」，也不是「单框架替换」，而是「Thin Orchestration Layer + Lobster 优先 + Temporal 择机 + LangGraph 内部化 + taskwatcher 收敛」的分层方案。**

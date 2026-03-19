@@ -1,64 +1,84 @@
-# OpenClaw Company Orchestration Proposal
+# OpenClaw Company Orchestration Proposal v2
 
-Temporal vs LangGraph vs OpenClaw 原生编排的公司级架构方案。
+> Temporal vs LangGraph vs Lobster vs taskwatcher：公司级编排架构选型方案
 
-## 这份仓库回答什么问题
+---
 
-如果 OpenClaw 要从“多个 session / subagent / ACP / watcher / cron / message / browser 的组合”升级为**可审计、可恢复、可扩展的公司级编排系统**，应该如何选型与分阶段落地？
+## 一句话结论
 
-## 最终建议
+**第一步不该自研 workflow engine，也不该直接用 Temporal/LangGraph 全盘替换。当前应走「Thin Orchestration Layer」路线：**
 
-**不建议 LangGraph-first，也不建议 Temporal-first 全量替换。**
+| 组件 | 位置 | 说明 |
+|------|------|------|
+| **subagent** | 默认内部执行主链 | 长任务默认走 `sessions_spawn(runtime="subagent")` |
+| **Lobster** | P0/P1 优先评估 | OpenClaw-native thin orchestration candidate，typed local-first macro engine |
+| **taskwatcher** | external watcher/reconciler | 对外部异步/轮询型任务的 callback adapter，**不是编排 backbone** |
+| **Temporal** | P2+ 或关键高 SLA 流程 | 成熟的 durable execution backbone |
+| **LangGraph** | agent 内部专用 | 适合 checkpoint/HITL/reasoning graph，**不是公司级 durable backbone** |
 
-推荐路线：
+---
 
-> **P0 / P1：先做 OpenClaw Native+**
-> - 统一状态机
-> - Task Registry
-> - Callback / Event Bus
-> - 统一终态语义、重试、人工介入协议
->
-> **P2：再选择性引入 Temporal**
-> - 只用于跨天、强重试、强审计、强 SLA 的关键长事务
->
-> **LangGraph：只放在 agent 内部子图**
-> - 用于复杂推理 / 工具调用 / 人审断点
-> - 不作为公司级总编排底座
+## 读法顺序
 
-## 为什么是这条路线
+1. `docs/executive-summary.md` — 5 分钟快速浏览
+2. `docs/shortlist-existing-options.md` — 现成方案对比（Lobster/Temporal/LangGraph/taskwatcher）
+3. `docs/thin-orchestration-layer.md` — Thin Orchestration Layer 设计
+4. `docs/openclaw-company-orchestration-proposal.md` — 完整方案（含路线图、质量门）
 
-- **不是 LangGraph-first**：它更像认知编排，不是 durable execution 底座
-- **不是 Temporal-first 全迁**：长期强，但短期改造和迁移成本过高
-- **不是 pure native forever**：短期最省，但会撞上状态分散、补偿困难、统一 SLA 与审计能力不足的天花板
-- **最佳路线是分阶段 Hybrid**：先把现有 OpenClaw 资产标准化，再把 Temporal 接到真正高价值的关键流程上
+---
 
-## 仓库结构
+## 当前推荐路线
 
-- `docs/executive-summary.md`：适合快速浏览的执行摘要
-- `docs/openclaw-company-orchestration-proposal.md`：整合后的主方案文档
-- `research/raw-draft-2026-03-19.md`：原始调研稿归档
+```
+P0（本周可落地）：
+├── 明确 subagent 是默认内部执行主链
+├── 评估 Lobster 作为 thin orchestration layer
+├── 把 taskwatcher 收敛为 external async watcher
+└── 受限 workflow templates（chain/parallel/join/human-gate/failure-branch）
 
-## 建议优先看
+P1（1-2 周）：
+├── Lobster 接入现有 subagent/browser/message/cron
+├── 统一 task registry + 幂等 callback
+└── timeline/observability 基线
 
-1. `docs/executive-summary.md`
-2. `docs/openclaw-company-orchestration-proposal.md`
+P2+（关键高 SLA 流程）：
+├── Temporal 选择性接入跨天/强重试/强审计流程
+└── LangGraph 仅用于 agent 内部 reasoning graph
+```
 
-## 当前决策口径
+---
 
-### 现在先做什么
-- 统一 `orchestration_task` schema
-- 统一 task state machine
-- 统一 subagent / ACP / browser / cron / message 的状态接入方式
-- 统一 callback / delivery 幂等键
-- 先把观测、重试、人工介入、升级机制做成标准件
+## 为什么不是这些
 
-### 暂时不做什么
-- 不直接把 LangGraph 升成公司级总编排器
-- 不直接把 Temporal 作为唯一新底座强推全迁
+| 误区 | 为什么不是 |
+|------|-----------|
+| **第一步自研 DAG 平台** | 工程成本过高，维护负担重；应先用现成方案验证需求 |
+| **taskwatcher 当 backbone** | watcher 是轮询/回调组件，不是 durable execution 主链；state/receipt/idempotency 才是核心 |
+| **LangGraph-first** | LangGraph 擅长 agent 内部 reasoning，不是公司级跨-runtime durable execution |
+| **Temporal-first 全迁** | 短期改造成本过高，worker/namespace/determinism 引入大量新复杂度 |
 
-## 适用场景
+---
 
-这份方案适合：
-- OpenClaw 多 agent 公司级编排
-- 编码 / 调研 / 审核 / 发布 / 通知 等异步链路
-- 需要人审断点、补偿、回调、SLA、审计的执行系统
+## 关键真值（v2 修正）
+
+1. **默认内部执行主链 = `sessions_spawn(runtime="subagent")`** — 不是旧 ACP 主链
+2. **taskwatcher = external async watcher/reconciler** — 不应被视为公司级 orchestration backbone
+3. **Lobster 是 P0/P1 最值得优先评估的 candidate** — OpenClaw-native typed macro engine
+4. **X/Moltbook/GitHub 外部证据已纳入** — Lobster 与 deterministic workflows/orchestration 强关联
+
+---
+
+## 外部证据来源
+
+- **GitHub**: `openclaw/lobster` — typed local-first workflow shell
+- **GitHub**: `temporal-community/temporal-ai-agent` — Temporal 作为 durable workflow backbone
+- **X**: Lobster 与 subagent spawning/recovery/orchestration 关联；Temporal 被用于 durable execution
+- **Moltbook**: workflow engines、state machines、execution receipts、idempotency 讨论
+
+---
+
+## 状态
+
+- **版本**: v2
+- **日期**: 2026-03-19
+- **更新**: 删除旧 ACP 主链口径，明确 Lobster 位置，收敛 taskwatcher 职责
