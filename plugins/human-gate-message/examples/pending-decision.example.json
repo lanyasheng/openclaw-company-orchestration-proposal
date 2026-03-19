@@ -1,0 +1,16 @@
+{
+  "hg_20260319_175700_ab12": {
+    "decisionId": "hg_20260319_175700_ab12",
+    "agentId": "main",
+    "sessionKey": "agent:main:discord:channel:1483883339701158102",
+    "channel": "1483883339701158102",
+    "messagePreview": "老板，是否现在把变更推到 main？",
+    "fullMessage": "老板，是否现在把变更推到 main？如果批准我就继续执行。",
+    "createdAt": "2026-03-19T17:57:00.000Z",
+    "expiresAt": "2026-03-19T18:02:00.000Z",
+    "status": "pending",
+    "verdictAt": null,
+    "verdictBy": null,
+    "verdictReason": null
+  }
+}

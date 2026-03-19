@@ -27,6 +27,14 @@
 
 ---
 
+## 代码归属（新增）
+
+- `plugins/human-gate-message/`：**human-gate 插件源码归这个 orchestration repo**
+- runtime repo：只保留最小 glue（加载插件、接入 message/browser/UI、回写 verdict）
+- `poc/`：repo-local validation / contract harness，不承载 runtime 主语义
+
+---
+
 ## 当前推荐路线
 
 ```

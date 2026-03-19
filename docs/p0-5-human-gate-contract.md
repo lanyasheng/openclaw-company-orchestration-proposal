@@ -19,6 +19,8 @@
 
 **冻结口径**：`task_id` 仍然是唯一 join key；不再新造第二套 approval registry。
 
+补充代码归属：`human-gate-message` 插件源码放在本 repo 的 `plugins/human-gate-message/`；runtime repo 只做加载与 verdict glue。
+
 ---
 
 ## 2. message 路径怎么接

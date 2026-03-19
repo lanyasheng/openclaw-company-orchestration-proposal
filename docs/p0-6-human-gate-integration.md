@@ -17,6 +17,18 @@
 3. `approve / reject / timeout / withdraw` 四种 verdict 都走统一 resolver
 4. `minimal task registry` 顶层 6 字段不变，细节全部写进 `evidence.human_gate`
 
+### 1.1 代码归属修正
+
+为避免把 `human-gate-message` 的业务语义继续塞进 runtime 主仓，插件源码已迁回本 repo：
+
+- `plugins/human-gate-message/`：插件源码 / README / examples / tests
+- runtime repo：只保留最小 glue
+  - 加载插件
+  - 暴露按钮 / CLI / webhook 等 verdict 入口
+  - 把 verdict 回写到插件共享存储
+
+也就是说：**contract / plugin / docs 都以 orchestration repo 为准；runtime repo 不再承载完整插件实现。**
+
 ---
 
 ## 2. 与 P0.5 契约的关系
