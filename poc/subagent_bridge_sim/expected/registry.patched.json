@@ -1,0 +1,26 @@
+{
+  "task_id": "tsk_p0_subagent_bridge_sim_001",
+  "owner": "lobster",
+  "runtime": "subagent",
+  "state": "completed",
+  "evidence": {
+    "workflow": "subagent-handoff-basic",
+    "child_session_key": "agent:main:subagent:sim-001",
+    "spawned_at": "2026-03-19T08:00:00Z",
+    "spawn_request": {
+      "label": "p0-5-subagent-bridge-sim",
+      "cwd": "/repo/openclaw-company-orchestration-proposal",
+      "task": "请完成 repo-local subagent bridge 最小闭环验证",
+      "timeout_ms": 1800000
+    },
+    "terminal_state": "completed",
+    "completed_at": "2026-03-19T08:12:00Z",
+    "summary": "child task completed and wrote final report",
+    "artifacts": {
+      "final_summary_path": "runs/p0-5-subagent-bridge-sim/final-summary.json",
+      "final_report_path": "runs/p0-5-subagent-bridge-sim/final-report.md"
+    },
+    "raw_event_ref": "runtime/events/tsk_p0_subagent_bridge_sim_001.terminal.json"
+  },
+  "callback_status": "pending"
+}

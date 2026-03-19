@@ -1,0 +1,12 @@
+{
+  "task_id": "tsk_p0_human_001",
+  "result": "degraded",
+  "sent_at": "2026-03-19T08:43:05.209192+00:00",
+  "summary": {
+    "workflow": "human-gate-basic",
+    "verdict": "withdraw",
+    "state": "degraded",
+    "runtime": "human",
+    "human_gate_transport": "file"
+  }
+}

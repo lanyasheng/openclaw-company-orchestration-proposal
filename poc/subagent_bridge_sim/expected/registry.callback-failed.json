@@ -1,0 +1,47 @@
+{
+  "task_id": "tsk_p0_subagent_bridge_sim_001",
+  "owner": "lobster",
+  "runtime": "subagent",
+  "state": "failed",
+  "evidence": {
+    "workflow": "subagent-handoff-basic",
+    "child_session_key": "agent:main:subagent:sim-001",
+    "spawned_at": "2026-03-19T08:00:00Z",
+    "spawn_request": {
+      "label": "p0-5-subagent-bridge-sim",
+      "cwd": "/repo/openclaw-company-orchestration-proposal",
+      "task": "请完成 repo-local subagent bridge 最小闭环验证",
+      "timeout_ms": 1800000
+    },
+    "terminal_state": "failed",
+    "completed_at": "2026-03-19T08:12:00Z",
+    "summary": "child task failed and wrote final report",
+    "artifacts": {
+      "final_summary_path": "runs/p0-6-callback-integration/final-summary.json",
+      "final_report_path": "runs/p0-6-callback-integration/final-report.md"
+    },
+    "raw_event_ref": "runtime/events/tsk_p0_subagent_bridge_sim_001.terminal.json",
+    "callback": {
+      "last_stage": "final_callback_failed",
+      "last_updated_at": "2026-03-19T08:13:00Z",
+      "history": [
+        {
+          "stage": "final_callback_failed",
+          "callback_status": "failed",
+          "occurred_at": "2026-03-19T08:13:00Z",
+          "summary": "repo-local callback delivery failed",
+          "raw_event_ref": "runtime/events/tsk_p0_subagent_bridge_sim_001.final_callback_failed.json",
+          "error": {
+            "code": "simulated_delivery_error",
+            "message": "callback inbox unreachable"
+          }
+        }
+      ],
+      "error": {
+        "code": "simulated_delivery_error",
+        "message": "callback inbox unreachable"
+      }
+    }
+  },
+  "callback_status": "failed"
+}

@@ -1,0 +1,16 @@
+{
+  "decision_id": "dec_20260319_reject_0001",
+  "task_id": "tsk_p0_human_001",
+  "resume_token": "lobster_resume_tsk_p0_human_001",
+  "verdict": "reject",
+  "source": {
+    "transport": "file",
+    "ref": "poc/lobster_minimal_validation/inputs/human-gate-decision-reject.json"
+  },
+  "actor": {
+    "id": "user_boss",
+    "name": "老板"
+  },
+  "decided_at": "2026-03-19T08:32:12Z",
+  "reason": "当前风险高于演示收益"
+}

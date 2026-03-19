@@ -1,0 +1,18 @@
+{
+  "task_id": "tsk_p0_subagent_registry_docs_20260319_1614",
+  "owner": "main",
+  "runtime": "subagent",
+  "state": "completed",
+  "evidence": {
+    "workflow": "subagent-handoff-basic",
+    "lobster_step": "handoff_to_subagent",
+    "subagent_session_id": "agent:main:subagent:500eca7a-6d3a-48e0-874b-4e5ac66860e4",
+    "result": "wrote schema, sample, and doc into openclaw-company-orchestration-proposal",
+    "artifacts": [
+      "schemas/minimal-task-registry.schema.json",
+      "examples/task-registry-sample.json",
+      "docs/p0-task-registry.md"
+    ]
+  },
+  "callback_status": "acked"
+}

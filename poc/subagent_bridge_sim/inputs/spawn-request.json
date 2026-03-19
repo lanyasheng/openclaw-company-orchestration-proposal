@@ -1,0 +1,11 @@
+{
+  "task_id": "tsk_p0_subagent_bridge_sim_001",
+  "label": "p0-5-subagent-bridge-sim",
+  "cwd": "/repo/openclaw-company-orchestration-proposal",
+  "task": "请完成 repo-local subagent bridge 最小闭环验证",
+  "timeout_ms": 1800000,
+  "owner": "lobster",
+  "workflow": "subagent-handoff-basic",
+  "simulated_child_session_key": "agent:main:subagent:sim-001",
+  "spawned_at": "2026-03-19T08:00:00Z"
+}

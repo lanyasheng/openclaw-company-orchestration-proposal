@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openclaw.local/schemas/minimal-task-registry.schema.json",
+  "title": "Minimal Task Registry (P0)",
+  "description": "P0 最小 task registry。顶层只允许 6 个字段：task_id / owner / runtime / state / evidence / callback_status。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "owner",
+    "runtime",
+    "state",
+    "evidence",
+    "callback_status"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^tsk_[A-Za-z0-9._:-]+$",
+      "description": "全局稳定任务 ID。建议使用 tsk_ 前缀，用于把 Lobster 节点、subagent 回执、final callback 串到同一条链上。"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "description": "任务责任人/责任角色，例如 main、zoe、ops。P0 不再拆更多 owner 字段。"
+    },
+    "runtime": {
+      "type": "string",
+      "enum": [
+        "lobster",
+        "subagent",
+        "human"
+      ],
+      "description": "当前执行主体。P0 只收敛为 lobster / subagent / human。"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "waiting_human",
+        "completed",
+        "failed",
+        "degraded"
+      ],
+      "description": "P0 统一状态机。允许值固定为 queued / running / waiting_human / completed / failed / degraded。"
+    },
+    "evidence": {
+      "description": "最小证据槽。P0 允许字符串或 JSON object；不要再新增顶层字段去承载 run_dir、session_id、decision、error 等证据。",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        }
+      ]
+    },
+    "callback_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "sent",
+        "acked",
+        "failed"
+      ],
+      "description": "是否已向上游/调用方完成 final callback。P0 只做 pending / sent / acked / failed。"
+    }
+  }
+}

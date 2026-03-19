@@ -1,0 +1,10 @@
+{
+  "task_id": "tsk_p0_human_001",
+  "change": "deploy-demo",
+  "requires_approval": true,
+  "resume_token": "lobster_resume_tsk_p0_human_001",
+  "request_transport": "file",
+  "request_source_ref": "local://human-gate/request/tsk_p0_human_001",
+  "approval_prompt": "是否批准 deploy-demo?",
+  "timeout_ms": 1800000
+}

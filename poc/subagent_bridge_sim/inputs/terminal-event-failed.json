@@ -1,0 +1,11 @@
+{
+  "child_session_key": "agent:main:subagent:sim-001",
+  "terminal_state": "failed",
+  "completed_at": "2026-03-19T08:12:00Z",
+  "summary": "child task failed and wrote final report",
+  "artifacts": {
+    "final_summary_path": "runs/p0-6-callback-integration/final-summary.json",
+    "final_report_path": "runs/p0-6-callback-integration/final-report.md"
+  },
+  "source": "subagent_ended"
+}

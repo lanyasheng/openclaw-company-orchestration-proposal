@@ -1,0 +1,12 @@
+{
+  "task_id": "tsk_p0_human_001",
+  "result": "completed",
+  "sent_at": "2026-03-19T08:43:05.075913+00:00",
+  "summary": {
+    "workflow": "human-gate-basic",
+    "verdict": "approve",
+    "state": "completed",
+    "runtime": "lobster",
+    "human_gate_transport": "file"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "decision_id": "dec_20260319_timeout_0001",
+  "task_id": "tsk_p0_human_001",
+  "resume_token": "lobster_resume_tsk_p0_human_001",
+  "verdict": "timeout",
+  "source": {
+    "transport": "file",
+    "ref": "poc/lobster_minimal_validation/inputs/human-gate-decision-timeout.json"
+  },
+  "actor": {
+    "id": "system",
+    "name": "system"
+  },
+  "decided_at": "2026-03-19T09:01:12Z",
+  "reason": "approval_timeout"
+}

@@ -1,0 +1,16 @@
+{
+  "decision_id": "dec_20260319_approve_0001",
+  "task_id": "tsk_p0_human_001",
+  "resume_token": "lobster_resume_tsk_p0_human_001",
+  "verdict": "approve",
+  "source": {
+    "transport": "file",
+    "ref": "poc/lobster_minimal_validation/inputs/human-gate-decision-approve.json"
+  },
+  "actor": {
+    "id": "user_boss",
+    "name": "老板"
+  },
+  "decided_at": "2026-03-19T08:31:12Z",
+  "reason": "批准演示环境发布"
+}

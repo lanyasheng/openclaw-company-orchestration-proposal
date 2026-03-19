@@ -1,0 +1,5 @@
+{
+  "task_id": "tsk_p0_fail_001",
+  "mode": "force_fail_step_b",
+  "target": "internal-demo"
+}

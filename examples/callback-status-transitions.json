@@ -1,0 +1,76 @@
+{
+  "version": "p0.5",
+  "rule": "callback_status may change from pending only after the final callback send step really executes",
+  "allowed_callback_transitions": {
+    "pending": ["pending", "sent", "failed"],
+    "sent": ["sent", "acked"],
+    "acked": ["acked"],
+    "failed": ["failed"]
+  },
+  "cases": [
+    {
+      "case_id": "ok_completed_then_sent_then_acked",
+      "expected_valid": true,
+      "description": "任务先 completed，但 callback_status 仍保持 pending；只有 final callback 真发出后才 sent，再收到 receipt 后 acked。",
+      "steps": [
+        {"event": "task_created", "state": "queued", "callback_status": "pending"},
+        {"event": "task_running", "state": "running", "callback_status": "pending"},
+        {"event": "child_terminal_completed", "state": "completed", "callback_status": "pending"},
+        {"event": "report_written", "state": "completed", "callback_status": "pending"},
+        {"event": "final_callback_sent", "state": "completed", "callback_status": "sent"},
+        {"event": "callback_receipt_acked", "state": "completed", "callback_status": "acked"}
+      ]
+    },
+    {
+      "case_id": "ok_failed_terminal_but_callback_still_pending",
+      "expected_valid": true,
+      "description": "任务失败终态成立，但 failure callback 还没真发出，所以 callback_status 仍是 pending。",
+      "steps": [
+        {"event": "task_created", "state": "queued", "callback_status": "pending"},
+        {"event": "task_running", "state": "running", "callback_status": "pending"},
+        {"event": "child_terminal_failed", "state": "failed", "callback_status": "pending"}
+      ]
+    },
+    {
+      "case_id": "ok_degraded_and_callback_send_failed",
+      "expected_valid": true,
+      "description": "任务降级收敛后尝试发送 final callback，但发送失败，所以 callback_status = failed。",
+      "steps": [
+        {"event": "task_created", "state": "queued", "callback_status": "pending"},
+        {"event": "task_running", "state": "running", "callback_status": "pending"},
+        {"event": "child_terminal_degraded", "state": "degraded", "callback_status": "pending"},
+        {"event": "final_callback_failed", "state": "degraded", "callback_status": "failed"}
+      ]
+    },
+    {
+      "case_id": "bad_terminal_ingest_marks_sent",
+      "expected_valid": false,
+      "why_invalid": "child terminal ingest 只能建立任务终态，不能直接宣称 final callback 已发送。",
+      "steps": [
+        {"event": "task_created", "state": "queued", "callback_status": "pending"},
+        {"event": "task_running", "state": "running", "callback_status": "pending"},
+        {"event": "child_terminal_completed", "state": "completed", "callback_status": "sent"}
+      ]
+    },
+    {
+      "case_id": "bad_report_written_marks_acked",
+      "expected_valid": false,
+      "why_invalid": "报告文件写出不等于 callback 已发且被确认。",
+      "steps": [
+        {"event": "task_created", "state": "queued", "callback_status": "pending"},
+        {"event": "child_terminal_completed", "state": "completed", "callback_status": "pending"},
+        {"event": "report_written", "state": "completed", "callback_status": "acked"}
+      ]
+    },
+    {
+      "case_id": "bad_pending_jumps_directly_to_acked",
+      "expected_valid": false,
+      "why_invalid": "P0.5 不允许 pending 直接跳到 acked，除非先有真实 send。",
+      "steps": [
+        {"event": "task_created", "state": "queued", "callback_status": "pending"},
+        {"event": "child_terminal_completed", "state": "completed", "callback_status": "pending"},
+        {"event": "callback_receipt_acked", "state": "completed", "callback_status": "acked"}
+      ]
+    }
+  ]
+}

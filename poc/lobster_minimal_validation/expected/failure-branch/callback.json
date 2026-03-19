@@ -1,0 +1,10 @@
+{
+  "task_id": "tsk_p0_fail_001",
+  "result": "degraded",
+  "sent_at": "2026-03-19T08:20:10.981808+00:00",
+  "summary": {
+    "workflow": "failure-branch-basic",
+    "final_state": "degraded",
+    "error": "forced_failure_at_step_b"
+  }
+}

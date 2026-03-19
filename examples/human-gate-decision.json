@@ -1,0 +1,16 @@
+{
+  "decision_id": "dec_20260319_0001",
+  "task_id": "tsk_p0_human_001",
+  "resume_token": "lobster_resume_abc123",
+  "verdict": "approve",
+  "source": {
+    "transport": "message",
+    "ref": "discord:channel:1483883339701158102:message:1483900000000000000"
+  },
+  "actor": {
+    "id": "user_boss",
+    "name": "老板"
+  },
+  "decided_at": "2026-03-19T08:31:12Z",
+  "reason": "批准演示环境发布"
+}
