@@ -13,8 +13,13 @@ import os from "os";
 import path from "path";
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-const POLL_INTERVAL_MS = 2000; // 2 seconds
 const DECISION_RETENTION_MS = 60 * 60 * 1000; // 1 hour
+const VERDICT_BY_STATUS = Object.freeze({
+  approved: "approve",
+  rejected: "reject",
+  timeout: "timeout",
+  withdrawn: "withdraw"
+});
 
 let pluginLogger = null;
 let pluginConfig = null;
@@ -33,15 +38,22 @@ export function getStoragePaths(config = pluginConfig) {
   return {
     dir,
     pendingFile: path.join(dir, "pending.json"),
-    decisionLog: path.join(dir, "decisions.jsonl")
+    decisionLog: path.join(dir, "decisions.jsonl"),
+    payloadDir: path.join(dir, "decision-payloads")
   };
+}
+
+function getDecisionPayloadPath(decisionId, config = pluginConfig) {
+  const { payloadDir } = getStoragePaths(config);
+  return path.join(payloadDir, `${decisionId}.json`);
 }
 
 // --- Persistence ---
 
 function ensureDir(config = pluginConfig) {
-  const { dir } = getStoragePaths(config);
+  const { dir, payloadDir } = getStoragePaths(config);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(payloadDir)) fs.mkdirSync(payloadDir, { recursive: true });
 }
 
 function loadPending(config = pluginConfig) {
@@ -84,15 +96,89 @@ function appendDecisionLog(entry, config = pluginConfig) {
   }
 }
 
+function writeDecisionPayload(decision, config = pluginConfig) {
+  try {
+    const payload = buildDecisionPayload(decision);
+    ensureDir(config);
+    const payloadPath = getDecisionPayloadPath(decision.decisionId, config);
+    const tmp = `${payloadPath}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+    fs.renameSync(tmp, payloadPath);
+    return payloadPath;
+  } catch (err) {
+    pluginLogger?.debug?.(`human-gate: skip payload export for ${decision?.decisionId}: ${err?.message}`);
+    return null;
+  }
+}
+
 function genId() {
   const ts = new Date().toISOString().replace(/[-:T:]/g, "").slice(0, 14);
   const r = Math.random().toString(36).slice(2, 6);
   return `hg_${ts}_${r}`;
 }
 
+function normalizeHumanGateContext(humanGate) {
+  if (!humanGate || typeof humanGate !== "object") return null;
+
+  const taskId = humanGate.taskId || humanGate.task_id;
+  const resumeToken = humanGate.resumeToken || humanGate.resume_token;
+  const sourceRef = humanGate.sourceRef || humanGate.source_ref;
+
+  if (!taskId || !resumeToken || !sourceRef) return null;
+
+  return {
+    taskId: String(taskId),
+    resumeToken: String(resumeToken),
+    sourceRef: String(sourceRef),
+    sourceTransport: String(humanGate.sourceTransport || humanGate.source_transport || "message"),
+    prompt: humanGate.prompt ? String(humanGate.prompt) : null
+  };
+}
+
+function extractHumanGateContext(args) {
+  return normalizeHumanGateContext(args?.humanGate || args?.metadata?.humanGate || null);
+}
+
+export function buildDecisionPayload(decision) {
+  if (!decision || typeof decision !== "object") {
+    throw new Error("decision record is required");
+  }
+
+  const verdict = VERDICT_BY_STATUS[decision.status];
+  if (!verdict) {
+    throw new Error(`decision ${decision.decisionId || "unknown"} is not terminal`);
+  }
+
+  const humanGate = normalizeHumanGateContext(decision.humanGate);
+  if (!humanGate) {
+    throw new Error(`decision ${decision.decisionId || "unknown"} missing humanGate context`);
+  }
+
+  const payload = {
+    decision_id: String(decision.decisionId),
+    task_id: humanGate.taskId,
+    resume_token: humanGate.resumeToken,
+    verdict,
+    source: {
+      transport: humanGate.sourceTransport,
+      ref: humanGate.sourceRef
+    },
+    actor: {
+      id: String(decision.verdictBy || "system")
+    },
+    decided_at: String(decision.verdictAt || decision.createdAt)
+  };
+
+  if (decision.verdictReason) {
+    payload.reason = String(decision.verdictReason);
+  }
+
+  return payload;
+}
+
 // --- Decision Management ---
 
-function createDecision(agentId, sessionKey, messageContent, timeoutMs) {
+function createDecision(agentId, sessionKey, messageContent, timeoutMs, humanGate = null) {
   const decisionId = genId();
   const now = new Date().toISOString();
 
@@ -110,6 +196,10 @@ function createDecision(agentId, sessionKey, messageContent, timeoutMs) {
     verdictBy: null,
     verdictReason: null
   };
+
+  if (humanGate) {
+    decision.humanGate = humanGate;
+  }
 
   pendingDecisions.set(decisionId, decision);
   savePending();
@@ -134,6 +224,7 @@ function updateDecision(decisionId, status, verdictBy, reason = null) {
 
   savePending();
   appendDecisionLog({ event: "updated", ...decision });
+  writeDecisionPayload(decision);
 
   pluginLogger?.info(`human-gate: decision ${decisionId} ${status} by ${verdictBy}`);
   return decision;
@@ -282,7 +373,8 @@ export function activate(api, ctx) {
     }
 
     const content = extractMessageContent(args);
-    const decision = createDecision(agentId, sessionKey, content, timeoutMs);
+    const humanGate = extractHumanGateContext(args);
+    const decision = createDecision(agentId, sessionKey, content, timeoutMs, humanGate);
 
     pluginLogger?.info(`human-gate: blocking message send for decision ${decision.decisionId}`);
 
@@ -372,4 +464,11 @@ export function cliGet(decisionId) {
   return getDecision(decisionId);
 }
 
-export { genId };
+export function cliGetDecisionPayload(decisionId) {
+  loadPending();
+  const decision = getDecision(decisionId);
+  if (!decision) return null;
+  return buildDecisionPayload(decision);
+}
+
+export { genId, getDecisionPayloadPath };

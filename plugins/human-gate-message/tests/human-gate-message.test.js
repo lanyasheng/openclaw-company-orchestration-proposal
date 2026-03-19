@@ -20,11 +20,23 @@ const {
   cliWithdraw,
   cliList,
   cliGet,
+  cliGetDecisionPayload,
   genId,
-  getStoragePaths
+  getStoragePaths,
+  getDecisionPayloadPath
 } = await import("../index.js");
 
 const { pendingFile, decisionLog } = getStoragePaths();
+
+function makeHumanGateContext() {
+  return {
+    taskId: "tsk_p0_human_001",
+    resumeToken: "lobster_resume_tsk_p0_human_001",
+    sourceRef: "discord:channel:1483883339701158102:message:1483900000000000000",
+    sourceTransport: "message",
+    prompt: "是否批准 deploy-demo?"
+  };
+}
 
 function seedDecision(overrides = {}) {
   const decisionId = overrides.decisionId || genId();
@@ -96,10 +108,38 @@ try {
   assert.equal(withdrawn.verdictReason, "user changed mind");
   console.log("✅ PASS: withdraw");
 
-  console.log("\n=== Test 6: audit log ===");
+  console.log("\n=== Test 6: approve writes unified decision payload ===");
+  const approveSeed = seedDecision({ humanGate: makeHumanGateContext() });
+  cliApprove(approveSeed.decisionId, "user_boss");
+  const approvePayload = cliGetDecisionPayload(approveSeed.decisionId);
+  assert.equal(approvePayload.decision_id, approveSeed.decisionId);
+  assert.equal(approvePayload.task_id, "tsk_p0_human_001");
+  assert.equal(approvePayload.resume_token, "lobster_resume_tsk_p0_human_001");
+  assert.equal(approvePayload.verdict, "approve");
+  assert.equal(approvePayload.source.transport, "message");
+  assert.equal(
+    approvePayload.source.ref,
+    "discord:channel:1483883339701158102:message:1483900000000000000"
+  );
+  assert.equal(approvePayload.actor.id, "user_boss");
+  assert.ok(fs.existsSync(getDecisionPayloadPath(approveSeed.decisionId)), "payload file should exist");
+  console.log("✅ PASS: approve payload export");
+
+  console.log("\n=== Test 7: reject writes unified decision payload ===");
+  const rejectPayloadSeed = seedDecision({ humanGate: makeHumanGateContext() });
+  cliReject(rejectPayloadSeed.decisionId, "user_boss", "change_risk_too_high");
+  const rejectPayload = cliGetDecisionPayload(rejectPayloadSeed.decisionId);
+  assert.equal(rejectPayload.decision_id, rejectPayloadSeed.decisionId);
+  assert.equal(rejectPayload.verdict, "reject");
+  assert.equal(rejectPayload.reason, "change_risk_too_high");
+  assert.equal(rejectPayload.actor.id, "user_boss");
+  assert.ok(fs.existsSync(getDecisionPayloadPath(rejectPayloadSeed.decisionId)), "payload file should exist");
+  console.log("✅ PASS: reject payload export");
+
+  console.log("\n=== Test 8: audit log ===");
   assert.ok(fs.existsSync(decisionLog), "decision log should exist");
   const lines = fs.readFileSync(decisionLog, "utf-8").trim().split("\n");
-  assert.ok(lines.length >= 3, "decision log should record updates");
+  assert.ok(lines.length >= 5, "decision log should record updates");
   console.log("✅ PASS: audit log");
 
   console.log("\n=== All Tests Passed ===\n");

@@ -16,27 +16,52 @@ class LobsterMinimalValidationTest(unittest.TestCase):
         self.addCleanup(temp_dir.cleanup)
         return PocRunner(Path(temp_dir.name))
 
-    def make_human_payload(self) -> dict:
+    def make_human_payload(
+        self,
+        *,
+        request_transport: str = "file",
+        request_source_ref: str | None = None,
+    ) -> dict:
+        if request_source_ref is None:
+            request_source_ref = (
+                "local://human-gate/request/tsk_p0_human_001"
+                if request_transport == "file"
+                else "discord:channel:1483883339701158102:message:1483900000000000000"
+            )
         return {
             "task_id": "tsk_p0_human_001",
             "change": "deploy-demo",
             "requires_approval": True,
             "resume_token": "lobster_resume_tsk_p0_human_001",
-            "request_transport": "file",
-            "request_source_ref": "local://human-gate/request/tsk_p0_human_001",
+            "request_transport": request_transport,
+            "request_source_ref": request_source_ref,
             "approval_prompt": "是否批准 deploy-demo?",
             "timeout_ms": 1_800_000,
         }
 
-    def make_decision_payload(self, verdict: str, *, actor_id: str = "user_boss", reason: str | None = None) -> dict:
+    def make_decision_payload(
+        self,
+        verdict: str,
+        *,
+        actor_id: str = "user_boss",
+        reason: str | None = None,
+        transport: str = "file",
+        ref: str | None = None,
+    ) -> dict:
+        if ref is None:
+            ref = (
+                f"poc/lobster_minimal_validation/inputs/human-gate-decision-{verdict}.json"
+                if transport == "file"
+                else "discord:channel:1483883339701158102:message:1483900000000000000"
+            )
         payload = {
             "decision_id": f"dec_{verdict}_001",
             "task_id": "tsk_p0_human_001",
             "resume_token": "lobster_resume_tsk_p0_human_001",
             "verdict": verdict,
             "source": {
-                "transport": "file",
-                "ref": f"poc/lobster_minimal_validation/inputs/human-gate-decision-{verdict}.json",
+                "transport": transport,
+                "ref": ref,
             },
             "actor": {
                 "id": actor_id,
@@ -76,6 +101,51 @@ class LobsterMinimalValidationTest(unittest.TestCase):
         self.assertEqual(human_gate["decision"]["verdict"], "approve")
         self.assertEqual(human_gate["resolution"]["status"], "resumed")
         self.assertEqual(result["callback"]["result"], "completed")
+
+    def test_human_gate_message_approve_path_consumes_message_decision_payload(self) -> None:
+        runner = self.make_runner()
+        human_payload = self.make_human_payload(request_transport="message")
+        result = runner.run_human_gate(
+            human_payload,
+            decision_payload=self.make_decision_payload(
+                "approve",
+                transport="message",
+                ref=human_payload["request_source_ref"],
+            ),
+        )
+        registry = result["registry"]
+        human_gate = registry["evidence"]["human_gate"]
+
+        self.assertEqual(registry["state"], "completed")
+        self.assertEqual(result["callback"]["result"], "completed")
+        self.assertEqual(human_gate["request"]["transport"], "message")
+        self.assertEqual(human_gate["request"]["source_ref"], human_payload["request_source_ref"])
+        self.assertEqual(human_gate["decision"]["source"]["transport"], "message")
+        self.assertEqual(human_gate["decision"]["source"]["ref"], human_payload["request_source_ref"])
+        self.assertEqual(human_gate["resolution"]["status"], "resumed")
+
+    def test_human_gate_message_reject_path_consumes_message_decision_payload(self) -> None:
+        runner = self.make_runner()
+        human_payload = self.make_human_payload(request_transport="message")
+        result = runner.run_human_gate(
+            human_payload,
+            decision_payload=self.make_decision_payload(
+                "reject",
+                transport="message",
+                ref=human_payload["request_source_ref"],
+                reason="change_risk_too_high",
+            ),
+        )
+        registry = result["registry"]
+        human_gate = registry["evidence"]["human_gate"]
+
+        self.assertEqual(registry["state"], "degraded")
+        self.assertEqual(result["callback"]["result"], "degraded")
+        self.assertEqual(human_gate["request"]["transport"], "message")
+        self.assertEqual(human_gate["decision"]["source"]["transport"], "message")
+        self.assertEqual(human_gate["decision"]["source"]["ref"], human_payload["request_source_ref"])
+        self.assertEqual(human_gate["resolution"]["status"], "rejected")
+        self.assertEqual(human_gate["resolution"]["reason"], "change_risk_too_high")
 
     def test_human_gate_non_approve_verdicts_follow_expected_terminal_states(self) -> None:
         runner = self.make_runner()
@@ -138,8 +208,11 @@ class LobsterMinimalValidationTest(unittest.TestCase):
             decision_path = temp_path / "decision.json"
             output_dir = temp_path / "run-output"
 
-            input_path.write_text(json.dumps(self.make_human_payload()), encoding="utf-8")
-            decision_path.write_text(json.dumps(self.make_decision_payload("approve")), encoding="utf-8")
+            input_path.write_text(json.dumps(self.make_human_payload(request_transport="message")), encoding="utf-8")
+            decision_path.write_text(
+                json.dumps(self.make_decision_payload("approve", transport="message")),
+                encoding="utf-8",
+            )
 
             completed = subprocess.run(
                 [
@@ -163,6 +236,7 @@ class LobsterMinimalValidationTest(unittest.TestCase):
             payload = json.loads(completed.stdout)
             self.assertEqual(payload["callback"]["result"], "completed")
             self.assertEqual(payload["registry"]["evidence"]["human_gate"]["decision"]["verdict"], "approve")
+            self.assertEqual(payload["registry"]["evidence"]["human_gate"]["decision"]["source"]["transport"], "message")
             self.assertTrue((output_dir / "registry.json").exists())
             self.assertTrue((output_dir / "callback.json").exists())
 

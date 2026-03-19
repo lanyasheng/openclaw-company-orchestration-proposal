@@ -87,6 +87,40 @@ withdrawn  -> message blocked
 timeout    -> message blocked
 ```
 
+## Lobster 最薄接线（O1）
+
+如果这条审批消息来自 Lobster 的 `human-gate`，可在 message args 中额外带一段可选上下文：
+
+```json
+{
+  "action": "send",
+  "message": "老板，是否批准 deploy-demo？",
+  "humanGate": {
+    "taskId": "tsk_p0_human_001",
+    "resumeToken": "lobster_resume_tsk_p0_human_001",
+    "sourceRef": "discord:channel:1483883339701158102:message:1483900000000000000",
+    "sourceTransport": "message",
+    "prompt": "是否批准 deploy-demo?"
+  }
+}
+```
+
+插件会把这段上下文落到 pending decision。等 verdict 进入终态后，会自动在：
+
+```text
+<storageDir>/decision-payloads/<decisionId>.json
+```
+
+落一份**统一 decision payload**，结构与 `examples/human-gate-decision.json` / POC adapter 契约一致，可直接给：
+
+```bash
+python3 -m poc.lobster_minimal_validation.run_poc human-gate \
+  --input poc/lobster_minimal_validation/inputs/human-gate-basic.json \
+  --decision-file ~/.openclaw/shared-context/human-gate/decision-payloads/<decisionId>.json
+```
+
+这一步只打通 **message -> 同一 decision payload**；不扩 browser，不改 POC schema。
+
 ## CLI 用法
 
 ```bash
@@ -95,6 +129,9 @@ node cli.js list
 
 # 查看单条 decision
 node cli.js get hg_20260319_175700_ab12
+
+# 查看统一 decision payload（需要 decision 已进入终态，且带 humanGate 上下文）
+node cli.js payload hg_20260319_175700_ab12
 
 # 批准
 node cli.js approve hg_20260319_175700_ab12
@@ -112,6 +149,7 @@ node cli.js withdraw hg_20260319_175700_ab12 "user changed mind"
 
 - `pending.json`：当前 decision 状态
 - `decisions.jsonl`：审计日志
+- `decision-payloads/<decisionId>.json`：可选；仅当该 decision 带 Lobster `humanGate` 上下文且进入终态时生成
 
 decision 记录最小结构：
 
@@ -128,7 +166,34 @@ decision 记录最小结构：
   "status": "pending|approved|rejected|timeout|withdrawn",
   "verdictAt": "2026-03-19T17:58:00.000Z",
   "verdictBy": "user123",
-  "verdictReason": "manual approval"
+  "verdictReason": "manual approval",
+  "humanGate": {
+    "taskId": "tsk_p0_human_001",
+    "resumeToken": "lobster_resume_tsk_p0_human_001",
+    "sourceRef": "discord:channel:1483883339701158102:message:1483900000000000000",
+    "sourceTransport": "message",
+    "prompt": "是否批准 deploy-demo?"
+  }
+}
+```
+
+归一化后的 decision payload 结构：
+
+```json
+{
+  "decision_id": "hg_20260319_175700_ab12",
+  "task_id": "tsk_p0_human_001",
+  "resume_token": "lobster_resume_tsk_p0_human_001",
+  "verdict": "approve",
+  "source": {
+    "transport": "message",
+    "ref": "discord:channel:1483883339701158102:message:1483900000000000000"
+  },
+  "actor": {
+    "id": "user123"
+  },
+  "decided_at": "2026-03-19T17:58:00.000Z",
+  "reason": "manual approval"
 }
 ```
 
@@ -146,3 +211,4 @@ npm test
 - 当前是阻塞式等待 verdict；长时间人审可能卡住上游 agent
 - 还没有内建 UI；需要 runtime glue 自己提供按钮、表单或 webhook
 - 目前按单机文件存储设计，不适合高并发审批面
+- 真实 runtime 还需要把 `humanGate` 上下文薄传到 message 调用；本 repo 这里只定义插件侧与 payload 侧契约

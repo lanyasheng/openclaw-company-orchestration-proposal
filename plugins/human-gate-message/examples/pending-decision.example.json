@@ -11,6 +11,13 @@
     "status": "pending",
     "verdictAt": null,
     "verdictBy": null,
-    "verdictReason": null
+    "verdictReason": null,
+    "humanGate": {
+      "taskId": "tsk_p0_human_001",
+      "resumeToken": "lobster_resume_tsk_p0_human_001",
+      "sourceRef": "discord:channel:1483883339701158102:message:1483900000000000000",
+      "sourceTransport": "message",
+      "prompt": "是否批准 deploy-demo?"
+    }
   }
 }
