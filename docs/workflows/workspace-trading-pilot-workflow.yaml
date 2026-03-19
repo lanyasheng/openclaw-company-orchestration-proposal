@@ -1,0 +1,152 @@
+apiVersion: proposal.openclaw/v0
+kind: WorkflowSpecDraft
+metadata:
+  workflowId: workspace-trading.acceptance-harness-dry-run.v1
+  name: 固定候选验收闭环（Acceptance Harness Dry-Run v1）
+  owner: main
+  status: frozen-for-p1-task1
+  businessRepo: workspace-trading
+  scope: offline-only
+  sideEffects:
+    liveTrading: forbidden
+    gatewayMutation: forbidden
+    orderPlacement: forbidden
+summary:
+  objective: >-
+    在 workspace-trading 中运行现有 acceptance harness CLI，生成 repo-native
+    acceptance artifact/report，并把 terminal/state/callback 收敛为一条固定 workflow。
+  rationale:
+    - acceptance harness CLI 已存在，今天可执行
+    - 输入/输出契约已存在，适合做首条 pilot
+    - 不依赖 live trading，不会产生真实交易副作用
+trigger:
+  type: manual
+  requiredInputs:
+    - task_id
+    - run_label
+  defaults:
+    input_config_path: research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json
+    artifacts_dir: artifacts/acceptance/${date}
+    reports_dir: reports/acceptance/${date}
+  guards:
+    - workspace_repo must equal workspace-trading
+    - input_config_path must be allowlisted
+    - no live trading or gateway command may appear in execution payload
+    - task_id must be unique
+nodes:
+  - id: init_registry
+    type: control.registry.create
+    outputs:
+      - task_id
+      - state=queued
+      - callback_status=pending
+  - id: validate_request
+    type: control.inline_check
+    dependsOn:
+      - init_registry
+  - id: dispatch_acceptance_subagent
+    type: subagent.run
+    dependsOn:
+      - validate_request
+    targetRepo: workspace-trading
+    timeoutSeconds: 300
+    command:
+      - python3
+      - research/run_acceptance_harness.py
+      - --input
+      - research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json
+      - --artifacts-dir
+      - artifacts/acceptance/${date}
+      - --reports-dir
+      - reports/acceptance/${date}
+      - --test-command
+      - python3 -m pytest tests/v2_portfolio/test_acceptance_harness.py -q
+      - --test-command
+      - python3 -m pytest tests/v2_portfolio/test_acceptance_harness.py tests/v2_portfolio/test_validation_harness.py tests/v2_portfolio/test_cli.py -q
+    outputs:
+      - child_session_key
+      - terminal_stdout_tail
+      - terminal_exit_code
+  - id: await_terminal
+    type: subagent.await_terminal
+    dependsOn:
+      - dispatch_acceptance_subagent
+  - id: collect_and_classify
+    type: control.collect_and_classify
+    dependsOn:
+      - await_terminal
+    checks:
+      - artifact_json exists
+      - acceptance_manifest exists
+      - acceptance_checklist exists
+      - summary.scenario_count == 4
+      - summary.dimensions_covered == [etf_basket, stock_basket, oos, regime]
+    classification:
+      completed:
+        - terminal_exit_code == 0
+        - business_overall_verdict == PASS
+      degraded:
+        - terminal_exit_code == 0
+        - business_overall_verdict in [CONDITIONAL, FAIL]
+      failed:
+        - terminal_exit_code != 0
+        - artifact missing
+        - manifest missing
+        - checklist missing
+        - scenario_count mismatch
+        - dimensions_covered mismatch
+      timeout:
+        - no terminal within 300s
+  - id: final_callback
+    type: callback.send_once
+    dependsOn:
+      - collect_and_classify
+    payloadFields:
+      - task_id
+      - workflow_id
+      - run_label
+      - candidate_id
+      - workflow_state
+      - business_overall_verdict
+      - artifact_json_path
+      - report_path
+      - child_session_key
+fanoutJoin:
+  controlPlane:
+    fanout: none
+    join: single-child-only
+  businessPlane:
+    fixedScenarioDimensions:
+      - etf_basket
+      - stock_basket
+      - oos
+      - regime
+    joinRule: all four dimensions must be present exactly once in the acceptance artifact summary
+artifacts:
+  business:
+    input_config: research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json
+    json_artifact: artifacts/acceptance/${date}/acceptance_harness_${run_label}.json
+    markdown_report: reports/acceptance/${date}/acceptance_harness_${run_label}.md
+  controlPlane:
+    registry: artifacts/workflow-runs/workspace-trading.acceptance-harness-dry-run.v1/${task_id}/registry.json
+    terminal: artifacts/workflow-runs/workspace-trading.acceptance-harness-dry-run.v1/${task_id}/terminal.json
+    callback: artifacts/workflow-runs/workspace-trading.acceptance-harness-dry-run.v1/${task_id}/callback.json
+    summary: artifacts/workflow-runs/workspace-trading.acceptance-harness-dry-run.v1/${task_id}/summary.md
+semantics:
+  stateAndCallbackStatusAreSeparated: true
+  callbackStatusAllowed:
+    - pending
+    - sent
+    - acked
+    - failed
+  callbackFailureDoesNotRewriteWorkflowState: true
+rollback:
+  - disable manual dispatch entry for this workflow
+  - revert to direct human execution of research/run_acceptance_harness.py
+  - generated artifacts may be removed without affecting trading core logic
+nonGoals:
+  - generic DAG support
+  - dynamic fanout
+  - multi-strategy parallel orchestration
+  - real backtest scenario generation
+  - premarket or intraday online trading workflows
