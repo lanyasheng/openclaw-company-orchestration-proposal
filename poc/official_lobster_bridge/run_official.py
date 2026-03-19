@@ -4,6 +4,7 @@ import argparse
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,9 +12,12 @@ from typing import Any, Dict, List, Optional
 
 
 ROOT = Path(__file__).resolve().parent
+REPO_ROOT = ROOT.parent.parent
 DEFAULT_OUTPUT_ROOT = ROOT / "runs"
 DEFAULT_WORKFLOW = ROOT / "workflows" / "chain-basic.lobster"
 DEFAULT_LOCAL_BIN = ROOT / "node_modules" / ".bin" / "lobster"
+CANONICAL_ENTRY = "python3 poc/official_lobster_bridge/run_official.py chain-basic --input poc/official_lobster_bridge/inputs/chain-basic.args.json"
+FALLBACK_ENTRY = "python3 -m poc.lobster_minimal_validation.run_poc chain --input poc/lobster_minimal_validation/inputs/chain-basic.json"
 
 
 def now_iso() -> str:
@@ -154,9 +158,12 @@ def build_chain_basic_artifacts(payload: Dict[str, Any], run_result: Dict[str, A
     registry.add_evidence(
         "official_runtime",
         {
+            "mode": "official",
             "bin": run_result["bin"],
             "workflow_file": run_result["workflow_file"],
             "envelope_status": run_result["envelope"].get("status"),
+            "canonical_entry": CANONICAL_ENTRY,
+            "fallback_entry": FALLBACK_ENTRY,
         },
     )
     registry.transition("completed", runtime="lobster", note="chain 完成")
@@ -170,6 +177,7 @@ def build_chain_basic_artifacts(payload: Dict[str, Any], run_result: Dict[str, A
             "ordered_steps": ["step_a", "step_b", "final_callback"],
             "evidence_keys": ["input", "step_a", "step_b", "official_runtime"],
             "runtime": "official-lobster-cli",
+            "fallback": False,
         },
     }
     registry.callback_status = "sent"
@@ -183,10 +191,73 @@ def build_chain_basic_artifacts(payload: Dict[str, Any], run_result: Dict[str, A
     }
 
 
+def build_poc_fallback_artifacts(
+    payload: Dict[str, Any],
+    output_dir: Path,
+    reason: str,
+    workflow_file: Path,
+    requested_lobster_bin: Optional[str],
+    source_input: Path,
+) -> Dict[str, Any]:
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+
+    from poc.lobster_minimal_validation.poc_runner import PocRunner
+
+    runner = PocRunner(output_dir=output_dir)
+    result = runner.run_chain(payload)
+    registry = result["registry"]
+    callback = result["callback"]
+
+    registry.setdefault("evidence", {})
+    registry["evidence"]["official_runtime"] = {
+        "mode": "fallback-poc",
+        "requested_bin": requested_lobster_bin,
+        "workflow_file": str(workflow_file),
+        "error": reason,
+        "canonical_entry": CANONICAL_ENTRY,
+        "fallback_entry": FALLBACK_ENTRY,
+    }
+    callback.setdefault("summary", {})
+    callback["summary"]["runtime"] = "legacy-poc-fallback"
+    callback["summary"]["fallback"] = True
+    callback["summary"].setdefault("evidence_keys", ["input", "step_a", "step_b"])
+    if "official_runtime" not in callback["summary"]["evidence_keys"]:
+        callback["summary"]["evidence_keys"].append("official_runtime")
+
+    artifacts = {
+        "registry": registry,
+        "callback": callback,
+        "lobster-envelope": {
+            "ok": False,
+            "status": "fallback",
+            "source": "legacy-poc-harness",
+            "error": reason,
+        },
+        "lobster-command": {
+            "argv": [
+                "python3",
+                "-m",
+                "poc.lobster_minimal_validation.run_poc",
+                "chain",
+                "--input",
+                str(source_input),
+            ]
+        },
+    }
+    persist_artifacts(output_dir, artifacts)
+    artifacts["output_dir"] = str(output_dir)
+    return artifacts
+
+
 def persist_artifacts(output_dir: Path, artifacts: Dict[str, Any]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     for name, payload in artifacts.items():
-        if name == "lobster-command":
+        if name == "output_dir":
+            continue
+        if name == "lobster-command" and isinstance(payload, dict) and "argv" in payload:
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+        elif name == "lobster-command":
             text = json.dumps({"argv": payload}, ensure_ascii=False, indent=2)
         else:
             text = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -198,11 +269,26 @@ def run_chain_basic(
     output_dir: Optional[Path] = None,
     workflow_file: Path = DEFAULT_WORKFLOW,
     lobster_bin: Optional[str] = None,
+    fallback_to_poc: bool = False,
 ) -> Dict[str, Any]:
     payload = load_json(input_file)
-    run_result = run_lobster_workflow(payload, workflow_file=workflow_file, lobster_bin=lobster_bin)
-    artifacts = build_chain_basic_artifacts(payload, run_result)
     final_output_dir = output_dir or (DEFAULT_OUTPUT_ROOT / "chain-basic")
+
+    try:
+        run_result = run_lobster_workflow(payload, workflow_file=workflow_file, lobster_bin=lobster_bin)
+    except OfficialLobsterRunnerError as exc:
+        if not fallback_to_poc:
+            raise
+        return build_poc_fallback_artifacts(
+            payload=payload,
+            output_dir=final_output_dir,
+            reason=str(exc),
+            workflow_file=workflow_file,
+            requested_lobster_bin=lobster_bin or str(DEFAULT_LOCAL_BIN),
+            source_input=input_file,
+        )
+
+    artifacts = build_chain_basic_artifacts(payload, run_result)
     persist_artifacts(final_output_dir, artifacts)
     artifacts["output_dir"] = str(final_output_dir)
     return artifacts
@@ -215,6 +301,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", help="输出目录；默认写到 poc/official_lobster_bridge/runs/<workflow>")
     parser.add_argument("--workflow-file", default=str(DEFAULT_WORKFLOW), help="官方 Lobster workflow 文件路径")
     parser.add_argument("--lobster-bin", help="显式指定 lobster 可执行文件")
+    parser.add_argument(
+        "--fallback-to-poc",
+        action="store_true",
+        help="当官方 runtime 不可用时，回退到旧的 poc.lobster_minimal_validation chain harness",
+    )
     return parser.parse_args()
 
 
@@ -228,6 +319,7 @@ def main() -> None:
         output_dir=Path(args.output_dir) if args.output_dir else None,
         workflow_file=Path(args.workflow_file),
         lobster_bin=args.lobster_bin,
+        fallback_to_poc=args.fallback_to_poc,
     )
     print(
         json.dumps(
@@ -236,6 +328,7 @@ def main() -> None:
                 "workflow": args.workflow,
                 "output_dir": artifacts["output_dir"],
                 "callback": artifacts["callback"],
+                "mode": artifacts["callback"]["summary"].get("runtime"),
             },
             ensure_ascii=False,
             indent=2,

@@ -1,8 +1,10 @@
 # 官方 Lobster 接入方案（batch1 冻结）
 
+> 更新（2026-03-19）：`chain-basic` 已按本方案完成切换，当前 canonical 路径为 `poc/official_lobster_bridge/`；旧 `poc/lobster_minimal_validation/` 仅保留 fallback。
+
 ## 结论先行
 
-**可以进入下一步 `chain-basic` 官方 runtime 切换准备，但还不建议直接宣称“已完成全面官方化”。**
+**`chain-basic` 的官方 runtime 切换已经完成；但仍然不能把这件事外推成“human-gate / subagent / failure-branch 也已官方化”。**
 
 本批次冻结结论如下：
 

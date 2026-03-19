@@ -2,7 +2,7 @@
 
 ## 结论先行
 
-这是三条样例里最接近 Lobster 原生能力的一条：**顺序 chain 已有本地可跑实现，且不依赖 stub。**
+这是三条样例里最接近 Lobster 原生能力的一条：**顺序 chain 仍有本地可跑 fallback 实现，且不依赖 stub；但当前仓库的 canonical 官方路径已经切到 `poc/official_lobster_bridge/`。**
 
 ## 输入
 
@@ -17,6 +17,15 @@
 ```
 
 ## 运行命令
+
+### canonical 官方路径
+
+```bash
+python3 poc/official_lobster_bridge/run_official.py chain-basic \
+  --input poc/official_lobster_bridge/inputs/chain-basic.args.json
+```
+
+### legacy fallback 路径
 
 ```bash
 python3 -m poc.lobster_minimal_validation.run_poc chain \

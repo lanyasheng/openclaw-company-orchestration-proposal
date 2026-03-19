@@ -2,9 +2,10 @@
 
 ## 结论先行
 
-当前仓库已经补出一套 **可审阅、可本地跑、边界明确** 的 Lobster 最小验证 POC：
+当前仓库已经补出一套 **可审阅、可本地跑、边界明确** 的 Lobster 最小验证资产：
 
-- **已真实可跑**：`chain-basic`
+- **已切为 canonical 官方路径**：`chain-basic`（`poc/official_lobster_bridge/`）
+- **保留 legacy fallback**：`chain-basic` 的旧 POC harness（`poc/lobster_minimal_validation/`）
 - **可本地跑，但依赖 placeholder/stub**：`human-gate-basic`、`failure-branch-basic`
 - **明确未做**：并发 / join、真实 message/browser/human 接线、真实 subagent handoff、真实 callback delivery
 
@@ -12,6 +13,10 @@
 
 ## 产物位置
 
+- `poc/official_lobster_bridge/README.md`
+- `poc/official_lobster_bridge/run_official.py`
+- `poc/official_lobster_bridge/workflows/`
+- `poc/official_lobster_bridge/inputs/`
 - `poc/lobster_minimal_validation/README.md`
 - `poc/lobster_minimal_validation/run_poc.py`
 - `poc/lobster_minimal_validation/poc_runner.py`
@@ -20,12 +25,13 @@
 - `poc/lobster_minimal_validation/inputs/`
 - `poc/lobster_minimal_validation/expected/`
 - `tests/test_lobster_minimal_validation.py`
+- `tests/test_official_lobster_bridge_runner.py`
 
 ## 分项状态
 
 | Workflow | 当前状态 | 是否真实可跑 | Stub / Placeholder | 说明 |
 |---|---|---:|---|---|
-| `chain-basic` | 已实现 | 是 | 无 | 顺序链、最小 registry、evidence、callback 收敛都已可跑 |
+| `chain-basic` | 已切到官方 canonical path；legacy POC 仍保留 | 是 | 无 | 默认走 `poc/official_lobster_bridge/`；旧 `poc/lobster_minimal_validation/` 仅作 fallback |
 | `human-gate-basic` | 已实现 | 是 | `HumanDecisionAdapterStub` | 用 CLI 参数模拟人工决定；真实消息/表单/审批通道未接 |
 | `failure-branch-basic` | 已实现 | 是 | `FailureBranchAdapterStub` | 用 adapter stub 显式模拟 fallback 分支；避免误报为 Lobster 原生能力 |
 

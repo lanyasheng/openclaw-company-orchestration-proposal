@@ -4,7 +4,7 @@
 
 这份 POC 已把 **chain / human-gate / failure-branch** 三条最小流程落成可审阅样例，并补了一个本地可运行 harness 来验证最小 registry、evidence、final callback 的收敛。
 
-- **真实可跑**：`chain-basic`
+- **legacy fallback baseline**：`chain-basic`（当前 canonical 官方路径已切到 `poc/official_lobster_bridge/`）
 - **repo-local 最小真实闭环**：`human-gate-basic`（不再直接吃 CLI verdict，而是读取统一 `decision payload` 文件）
 - **可跑但带 stub**：`failure-branch-basic`（failure branch 用 adapter stub 明示补位）
 - **明确未做**：真实 message/browser provider、并发 / join、真实 callback delivery、真实 subagent handoff
@@ -23,6 +23,7 @@
 在仓库根目录执行：
 
 ```bash
+# chain-basic 现在是 fallback 用法；默认请改走 official_lobster_bridge
 python3 -m poc.lobster_minimal_validation.run_poc chain \
   --input poc/lobster_minimal_validation/inputs/chain-basic.json
 
@@ -32,6 +33,13 @@ python3 -m poc.lobster_minimal_validation.run_poc human-gate \
 
 python3 -m poc.lobster_minimal_validation.run_poc failure-branch \
   --input poc/lobster_minimal_validation/inputs/failure-branch-basic.json
+```
+
+`chain-basic` 的 canonical 官方路径：
+
+```bash
+python3 poc/official_lobster_bridge/run_official.py chain-basic \
+  --input poc/official_lobster_bridge/inputs/chain-basic.args.json
 ```
 
 其他 human-gate verdict 可替换为：

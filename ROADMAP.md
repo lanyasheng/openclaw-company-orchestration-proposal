@@ -61,7 +61,7 @@ official lobster
 
 ### 任务
 - 官方 Lobster wrapper 接入
-- `chain-basic` 切到官方 runtime
+- ✅ `chain-basic` 已切到官方 runtime（canonical=`poc/official_lobster_bridge/`，fallback=`poc/lobster_minimal_validation/`）
 - Registry library（upsert / patch / atomic write）
 - 最小 scheduler / dispatcher
 - subagent dispatch adapter 升格

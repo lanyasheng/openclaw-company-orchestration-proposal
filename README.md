@@ -136,6 +136,46 @@
 
 ---
 
+## `chain-basic` 当前 canonical 运行路径
+
+`chain-basic` 这一条现在已经正式收敛为：
+
+### 1. canonical 官方路径（默认）
+
+```bash
+python3 poc/official_lobster_bridge/run_official.py chain-basic \
+  --input poc/official_lobster_bridge/inputs/chain-basic.args.json
+```
+
+- 官方 workflow / runner 位置：`poc/official_lobster_bridge/`
+- 输出目录默认：`poc/official_lobster_bridge/runs/chain-basic/`
+- 这是当前仓库对 `chain-basic` 的**默认、推荐、canonical** 路径
+- 本轮只切 `chain-basic`；`human-gate / subagent / failure-branch` 不在这次切换范围
+
+### 2. legacy fallback 路径（保留，不再默认）
+
+```bash
+python3 -m poc.lobster_minimal_validation.run_poc chain \
+  --input poc/lobster_minimal_validation/inputs/chain-basic.json
+```
+
+- 位置：`poc/lobster_minimal_validation/`
+- 用途：官方 runtime 不可用时的回退基线
+- 口径：**fallback only**，不再作为 `chain-basic` 主入口
+
+### 3. 最小自动化验证
+
+```bash
+python3 -m unittest tests.test_official_lobster_bridge_runner -v
+```
+
+这组测试同时覆盖：
+- 官方 runner 的 artifact 收敛
+- 请求 fallback 时退回 legacy POC harness
+- 本地已安装官方 Lobster CLI 时的真实 smoke
+
+---
+
 ## 全局路线图
 
 ### P0：重置主线，打通最小闭环
