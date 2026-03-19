@@ -432,21 +432,26 @@ def callback_send_once_handler(context: StepContext) -> StepOutcome:
         )
 
     callback_payload = _build_callback_payload(context)
-    callback_evidence = {
-        "last_payload": callback_payload,
-        "last_result": str(context.step.get("delivery_result", "acked")),
-    }
+    transport = FileCallbackTransport(context.registry.root_dir)
+    transport_result = transport.send(
+        task_id=context.task_id,
+        payload=callback_payload,
+        step_config=context.step,
+        workflow_state=state,
+    )
+    callback_evidence = _build_callback_evidence(context, callback_payload, transport_result)
+    summary = "final callback 已发送" if transport_result.callback_status != "failed" else "final callback 发送失败"
     return StepOutcome(
         kind="completed",
         state=state,
         runtime=context.record["runtime"],
-        callback_status=str(context.step.get("delivery_result", "acked")),
+        callback_status=transport_result.callback_status,
         step_output=callback_payload,
         evidence_merge={
             "callback": callback_evidence,
             context.step["id"]: callback_payload,
         },
-        summary="final callback 已发送",
+        summary=summary,
     )
 
 
