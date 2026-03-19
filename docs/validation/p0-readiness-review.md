@@ -25,13 +25,13 @@
   - 证据：`FailureBranchAdapterStub` + 对应用例/expected 输出
 - **callback_status 真值语义已冻结**
   - 已证明：`state` 与 `callback_status` 必须解耦；terminal 不等于 callback 已发。
-  - 证据：`docs/p0-5-callback-status.md`、`examples/callback-status-transitions.json`、`tests/test_callback_status_semantics.py`
+  - 证据：`docs/validation/p0-5-callback-status.md`、`examples/callback-status-transitions.json`、`tests/test_callback_status_semantics.py`
 - **subagent bridge 的 repo-local 最小闭环成立**
   - 已证明：`child_session_key -> task_id` 反查、`await_terminal` 真解阻、terminal evidence 回写 registry、且 terminal 后 `callback_status` 仍保持 `pending`。
-  - 证据：`docs/p0-5-bridge-simulator.md`、`poc/subagent_bridge_sim/`、`tests/test_subagent_bridge_sim.py`
+  - 证据：`docs/validation/p0-5-bridge-simulator.md`、`poc/subagent_bridge_sim/`、`tests/test_subagent_bridge_sim.py`
 - **human-gate 的统一 decision payload 契约已经写清楚**
   - `resume_token / source.ref / actor.id / decided_at` 的最小结构已经定稿。
-  - 证据：`docs/p0-5-human-gate-contract.md`、`examples/human-gate-decision.json`
+  - 证据：`docs/validation/p0-5-human-gate-contract.md`、`examples/human-gate-decision.json`
 
 ### 当前实测结果
 

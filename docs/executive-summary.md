@@ -1,184 +1,152 @@
-# 执行摘要 v2
+# 执行摘要：OpenClaw Workflow Engine 总方案
+
+> 日期：2026-03-19  
+> 口径：v3，主线重置版
 
 ## 一句话结论
 
-**OpenClaw 公司级编排不应「第一步自研 DAG 平台」或「全盘替换为 Temporal/LangGraph」。推荐路线是「Thin Orchestration Layer + 受限 templates + 分层选型」：**
+**这个仓库以后应被定义为 OpenClaw 公司级 workflow engine 方案仓。当前正确方向不是让 human-gate 或零散 POC 继续充当主线，而是明确五层架构：官方底座层、编排控制层、执行层、业务场景层，以及可选安全层。**
 
+---
+
+## 最终决策
+
+### 我们现在怎么做
+
+1. **官方底座层**：复用 `OpenClaw 原生能力 + Lobster 官方 workflow shell`
+2. **编排控制层**：自建公司协议，统一 `task registry / state machine / callback / timeline / retry / escalation`
+3. **执行层**：以 `subagent` 为默认内部执行主链，`browser / message / cron` 为标准 activity
+4. **业务场景层**：先落地 `workspace-trading`
+5. **可选安全层**：把 human-gate、审计、隔离、幂等、回退作为横切能力逐步补齐
+
+### 我们现在不做什么
+
+- 不自研通用 DAG 平台
+- 不把 `taskwatcher` 当 backbone
+- 不让 LangGraph 接管公司级执行总线
+- 不在 P0 就把 Temporal 全量引入
+- 不把 human-gate 插件或单个 POC 写成仓库主叙事
+
+---
+
+## 五层架构
+
+```text
+业务场景层
+└─ workspace-trading（首个落地）
+
+编排控制层
+└─ templates / registry / state machine / callback / timeline / routing
+
+执行层
+└─ subagent / browser / message / cron / external async / future Temporal
+
+官方底座层
+└─ OpenClaw session/tool/channel/plugin primitives
+└─ Lobster workflow shell / approval / invoke bridge
+
+可选安全层（横切）
+└─ human-gate / policy / audit / isolation / idempotency / rollback
 ```
-subagent（默认内部主链）
-    ↓
-Lobster（P0/P1 thin orchestration layer）
-    ↓
-Temporal（P2+ 关键高 SLA 流程）
 
-LangGraph（仅 agent 内部）
-taskwatcher（仅 external async watcher）
-```
+**关键判断**：
+- 官方底座层解决“原生能力与官方能力能做什么”
+- 编排控制层解决“公司级 workflow 怎么统一管理”
+- 执行层解决“谁去真正跑任务”
+- 业务场景层解决“先在哪个真实业务里落地”
+- 可选安全层解决“什么时候需要额外守门与审计”
 
 ---
 
-## 核心修正（v2 vs v1）
+## 为什么现在选这个方向
 
-| 维度 | v1（旧口径） | v2（新真值） |
-|------|-------------|-------------|
-| **默认执行主链** | 模糊提及 ACP/subagent | **明确 `sessions_spawn(runtime="subagent")`** |
-| **taskwatcher 位置** | 作为编排 backbone 候选 | **收敛为 external async watcher/reconciler**，不是 backbone |
-| **Lobster** | 未纳入 shortlist | **P0/P1 最优先评估的 OpenClaw-native 方案** |
-| **第一步建议** | 「OpenClaw Native+」增强 | **「Thin Orchestration Layer」**，不自研 DAG |
-| **外部证据** | 仅 GitHub | **GitHub + X + Moltbook 全纳入** |
+### 1. 已验证事实支持“薄控制层”而不是“重做引擎”
 
----
+已验证：
+- `subagent` 是默认内部长任务主链
+- Lobster 适合做薄工作流壳，尤其是顺序链、approval、tool bridge
+- `taskwatcher` 更像 external watcher / reconciler，而不是 backbone
+- callback / terminal / ack 的语义必须分离，不能混写成一个状态
 
-## 现成方案 Shortlist（按优先级）
+### 2. 当前最大问题不是“缺某个引擎”，而是“缺统一控制面”
 
-| 方案 | 优先级 | 适合位置 | 关键判断 |
-|------|--------|----------|----------|
-| **Lobster** | P0/P1 | Thin orchestration layer | OpenClaw-native typed macro engine，local-first，低侵入 |
-| **Temporal** | P2+ | Durable execution backbone | 跨天/强重试/强 SLA 流程，但短期成本过高 |
-| **LangGraph** | 按需 | Agent 内部子图 | checkpoint/HITL/reasoning，**不是公司级 backbone** |
-| **taskwatcher** | 保留 | External async watcher | 对外部任务的 callback/reconcile，**不是 backbone** |
+如果没有控制层：
+- 状态无法跨 runtime 对齐
+- 幂等 callback 无法沉淀为标准能力
+- human-gate 只能做局部技巧，无法成为公司协议
+- 业务 workflow 无法复制，只能复制脚本
 
----
+### 3. 直接上重型方案的代价现在不值
 
-## 为什么 taskwatcher 不能当 backbone
-
-| watcher 实际能力 | backbone 需要的能力 |
-|-----------------|-------------------|
-| 轮询/回调外部任务 | durable state + execution receipts |
-| 消费 status.json / milestones | idempotency + recovery semantics |
-| script-first reconciler | deterministic replay + audit trail |
-| 局部真值消费 | 跨-runtime 统一 timeline |
-
-**结论**：watcher 是外部任务的「通知接收器」，不是公司级编排的「状态/执行底座」。state/receipt/idempotency 才是 backbone 核心。
+| 方案 | 当前不选为主线的原因 |
+|------|----------------------|
+| Temporal-first | 成本高，worker/determinism/versioning 负担过重 |
+| LangGraph-first | 更适合 agent 内部 reasoning，不适合公司级 backbone |
+| 自研 DAG-first | 需求尚未稳定，过早抽象风险最大 |
 
 ---
 
-## 为什么第一步不该自研 workflow engine
+## 已验证 / 未验证
 
-1. **工程成本高**：DAG 平台需要 scheduler、executor、state store、recovery、versioning
-2. **维护负担重**：自研方案需要长期投入，容易成为瓶颈
-3. **需求验证优先**：先用现成方案（Lobster/Temporal）验证实际需求，再决定是否需要自研
-4. **OpenClaw 已有资产**：`subagent`、`taskwatcher`、`browser`、`message` 已经构成「thin layer」雏形，不需要重造
+### 已验证什么
 
----
-
-## Thin Orchestration Layer：P0 该做什么
-
-### 该做（thin layer）
-
-| 能力 | 说明 |
+| 主题 | 结论 |
 |------|------|
-| **统一 task registry** | 记录谁在跑、什么状态、谁负责 |
-| **受限 workflow templates** | chain / parallel / join / human-gate / failure-branch |
-| **幂等 callback** | task_id + state + content_hash + target |
-| **timeline/observability** | 跨-runtime 统一 audit trail |
-| **adapter 层** | subagent/browser/message/cron 统一接入 |
+| Lobster 顺序链 | 可作为 P0/P1 workflow shell |
+| Lobster approval | 可直接支撑 human-gate 类中断/恢复 |
+| `message/browser` bridge | 在官方能力上接线难度低 |
+| callback status | `terminal ≠ callback sent ≠ acked` 已有明确契约 |
+| P0 最小验证 | human-gate、failure-branch、subagent bridge 均已有 repo 级证据 |
 
-### 不该做（避免过重）
+### 还没验证什么
 
-| 能力 | 说明 |
+| 主题 | 结论 |
 |------|------|
-| 通用 DAG 引擎 | 图编排、动态节点、复杂依赖解析 |
-| 自研 workflow platform | worker pool、namespace、determinism 验证 |
-| LangGraph backbone | 让 LangGraph 接管公司级执行总线 |
-| Temporal 全迁 | 短期全量迁移，引入过高复杂度 |
+| Lobster → 真实 `subagent` 完整闭环 | 还没跑真实接线 |
+| 真并发 / 真 join | 不能提前承诺 |
+| 原生 failure-branch 语义 | 目前更像 adapter 路线 |
+| `workspace-trading` 首条真实流程 | 还没正式打穿 |
+| 何时必须引入 Temporal | 还没有足够业务证据 |
 
 ---
 
-## 受限 Workflow Templates（v2 新增）
+## 路线图
 
-第一步只支持以下受限模式，不做通用图引擎：
+### P0：主线重置 + 最小真实闭环
 
-```
-CHAIN:     A → B → C
-PARALLEL:  A → [B, C] → D
-JOIN:      [A, B] → C (等待全部完成)
-HUMAN-GATE: A → [等待人工] → B
-FAILURE-BRANCH: A → [成功:B | 失败:C]
-```
+目标：**把仓库从“方案碎片 + POC”重置为“可执行的 workflow engine 方案仓”。**
 
-**为什么受限？**
-- 覆盖 80% 实际场景
-- 实现简单，无需复杂图算法
-- 易于测试、审计、恢复
-- 避免过度设计
+交付：
+- 五层架构定稿
+- 主文档、执行摘要、README 重写
+- task registry / state machine / callback 口径冻结
+- 选 `workspace-trading` 做首条 dry-run / shadow-run 流程
 
----
+### P1：控制层可复用 + Trading Pilot 稳定化
 
-## Task Watcher / Subagent / ACP 职责边界（v2 明确）
+目标：**让 workflow engine 具备复用能力，而不只是一次性设计稿。**
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Control Plane (OpenClaw main)                          │
-│  - 用户入口、路由、权限、人审                            │
-└─────────────────────────────────────────────────────────┘
-                            ↓ sessions_spawn(runtime="subagent")
-┌─────────────────────────────────────────────────────────┐
-│  Execution Plane                                        │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │
-│  │ subagent    │  │ browser     │  │ message/cron    │ │
-│  │ (默认主链)   │  │ (外部操作)   │  │ (副作用通道)     │ │
-│  └─────────────┘  └─────────────┘  └─────────────────┘ │
-└─────────────────────────────────────────────────────────┘
-                            ↓ 状态变化
-┌─────────────────────────────────────────────────────────┐
-│  Watcher Layer (External)                               │
-│  - taskwatcher: 消费状态、callback、reconcile            │
-│  - 不是 backbone，只是 external async 通知层             │
-└─────────────────────────────────────────────────────────┘
-```
+交付：
+- `subagent / browser / message / cron` adapter contract
+- template 基线：chain / human-gate / failure-branch 优先
+- timeline / observability / escalation 基线
+- `workspace-trading` 成为首个稳定 pilot
 
-**关键边界**：
-- **subagent**：默认内部长任务执行主链
-- **taskwatcher**：外部异步任务的 watcher/callback，不持有 state-of-truth
-- **ACP**：外部系统接入（CI/人审），走 session bridge，**不是默认内部主链**
+### P2：选择性 durable execution + 安全层强化
+
+目标：**只把真正值得重型化的链路升级。**
+
+交付：
+- 跨天、强恢复、强审计流程再评估是否引入 Temporal
+- 安全层进入策略化与默认治理
+- 再决定是否需要更重的 workflow runtime
 
 ---
 
-## 一周内可落地路线图
+## 对老板的直接建议
 
-### Day 1-2：明确真值
-- [ ] 确认 `subagent` 为默认内部执行主链
-- [ ] 更新文档删除 ACP 主链旧口径
-- [ ] 收敛 `taskwatcher` 为 external watcher
-
-### Day 3-5：评估 Lobster
-- [ ] 阅读 `openclaw/lobster` README
-- [ ] 评估 Lobster 作为 thin orchestration layer 的可行性
-- [ ] 设计 Lobster → subagent/browser/message 的 adapter
-
-### Week 1 结束：受限 templates
-- [ ] 实现/评估 chain/parallel/join/human-gate/failure-branch
-- [ ] 统一 task registry schema
-- [ ] 幂等 callback 机制
-
----
-
-## 外部证据来源
-
-| 来源 | 证据 | 结论 |
-|------|------|------|
-| **GitHub** | `openclaw/lobster` | OpenClaw-native typed macro engine |
-| **GitHub** | `temporal-community/temporal-ai-agent` | Temporal 作为 durable workflow backbone |
-| **X** | Lobster + orchestration/subagent spawning | Lobster 与 deterministic workflows 强关联 |
-| **X** | Temporal + durable execution/agent orchestration | Temporal 被社区用于 durable execution |
-| **Moltbook** | workflow engines/state machines/idempotency | durable/state/receipt 比 watcher 更关键 |
-
----
-
-## 最终建议（5 条内）
-
-1. **Lobster 优先**：P0/P1 最优先评估 Lobster 作为 thin orchestration layer
-2. **subagent 主链**：明确 `sessions_spawn(runtime="subagent")` 是默认内部执行主链
-3. **watcher 收敛**：taskwatcher 只作为 external async watcher/reconciler，不是 backbone
-4. **Temporal 择机**：P2+ 或关键高 SLA 流程才考虑 Temporal
-5. **LangGraph 内部化**：只用于 agent 内部 reasoning/checkpoint/HITL
-
----
-
-## 删除的旧口径
-
-- ❌ "ACP 是主链之一" → ✅ "subagent 是默认内部主链"
-- ❌ "taskwatcher 作为编排 backbone 候选" → ✅ "taskwatcher 是 external watcher"
-- ❌ "第一步 OpenClaw Native+ 增强" → ✅ "第一步 Thin Orchestration Layer"
-- ❌ "LangGraph 公司级总编排候选" → ✅ "LangGraph 仅 agent 内部"
+1. **把这个仓库正式定为 workflow engine 方案仓**
+2. **主线只讲五层架构、验证边界、路线图和首个业务落地**
+3. **human-gate 与零散 POC 全部下沉为验证资产**
+4. **P0 先服务 `workspace-trading`，不要继续抽象空转**
+5. **等 P1 业务证据出来，再决定 Temporal 和更重安全层的投入规模**

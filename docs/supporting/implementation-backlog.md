@@ -2,7 +2,7 @@
 
 > 状态：draft-for-execution  
 > 日期：2026-03-19  
-> 依据文档：`README.md`、`docs/executive-summary.md`、`docs/thin-orchestration-layer.md`、`docs/openclaw-company-orchestration-proposal.md`、`docs/p0-poc-implementation-status.md`
+> 依据文档：`README.md`、`docs/executive-summary.md`、`docs/supporting/thin-orchestration-layer.md`、`docs/openclaw-company-orchestration-proposal.md`、`docs/validation/p0-poc-implementation-status.md`
 
 ---
 
@@ -126,7 +126,7 @@
   - 模板支持矩阵表
 - **测试/验收**：
   - 文档能唯一回答：每个 template 的输入、状态、终态、失败路径、是否支持并发
-  - 与 `docs/thin-orchestration-layer.md` 不冲突
+  - 与 `docs/supporting/thin-orchestration-layer.md` 不冲突
 - **依赖**：建议参考 E1-T1
 - **建议执行顺序**：04
 
@@ -289,7 +289,7 @@
   - 如有需要，更新 `schemas/minimal-task-registry.schema.json`
 - **测试/验收**：
   - 文档明确列出所有合法状态流转
-  - 与 `docs/p0-task-registry.md`、`docs/p0-5-callback-status.md` 不矛盾
+  - 与 `docs/validation/p0-task-registry.md`、`docs/validation/p0-5-callback-status.md` 不矛盾
 - **依赖**：无
 - **建议执行顺序**：07
 
@@ -614,3 +614,4 @@
 3. **状态收敛**：若涉及 workflow，能看到 terminal / callback 真值
 4. **回退明确**：feature flag、fallback 路径或 manual rollback 已写明
 5. **不越界**：不把 taskwatcher 重新写成 backbone，不把 trading pilot 扩成 live trading
+ve trading

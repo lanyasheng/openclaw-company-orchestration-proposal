@@ -11,7 +11,7 @@
     "artifacts": [
       "schemas/minimal-task-registry.schema.json",
       "examples/task-registry-sample.json",
-      "docs/p0-task-registry.md"
+      "docs/validation/p0-task-registry.md"
     ]
   },
   "callback_status": "acked"

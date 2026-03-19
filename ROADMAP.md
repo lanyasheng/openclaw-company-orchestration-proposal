@@ -42,7 +42,7 @@
 
 ### 完成定义
 - 以上 7 类文档全部落地
-- 与现有 `README.md` / `docs/executive-summary.md` / `docs/thin-orchestration-layer.md` 不冲突
+- 与现有 `README.md` / `docs/executive-summary.md` / `docs/supporting/thin-orchestration-layer.md` 不冲突
 
 ---
 

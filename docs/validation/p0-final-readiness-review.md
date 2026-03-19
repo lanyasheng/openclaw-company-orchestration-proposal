@@ -48,9 +48,9 @@ python3 -m unittest tests.test_lobster_minimal_validation tests.test_callback_st
 
 ### 产物 / 真值
 
-- `docs/p0-6-human-gate-integration.md`
-- `docs/p0-6-callback-integration.md`
-- `docs/p0-readiness-review.md`
+- `docs/validation/p0-6-human-gate-integration.md`
+- `docs/validation/p0-6-callback-integration.md`
+- `docs/validation/p0-readiness-review.md`
 - `poc/lobster_minimal_validation/`
   - `run_poc.py`
   - `poc_runner.py`
