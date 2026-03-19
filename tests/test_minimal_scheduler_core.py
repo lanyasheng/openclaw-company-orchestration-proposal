@@ -7,11 +7,14 @@ from pathlib import Path
 
 from orchestration_runtime import (
     FileTaskRegistry,
+    GatewayToolInvokeSubagentTransport,
     StepContext,
     StepOutcome,
+    SubagentDispatchRequest,
     WorkflowDispatcher,
     await_terminal_handler,
     callback_send_once_handler,
+    create_subagent_dispatch_handler,
     init_registry_handler,
     inline_payload_handler,
     load_json_file,
@@ -19,6 +22,46 @@ from orchestration_runtime import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHAIN_WORKFLOW_PATH = REPO_ROOT / "examples" / "workflows" / "chain-basic.scheduler.json"
+
+
+class _FakeSpawnTransport:
+    transport_name = "fake.sessions_spawn"
+
+    def __init__(self) -> None:
+        self.requests: list[SubagentDispatchRequest] = []
+
+    def spawn(self, request: SubagentDispatchRequest) -> dict:
+        self.requests.append(request)
+        return {
+            "status": "accepted",
+            "childSessionKey": "agent:main:subagent:child-001",
+            "runId": "run-child-001",
+            "mode": "run",
+        }
+
+
+class _FakeHttpResponse:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def read(self) -> bytes:
+        return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+    def __enter__(self) -> "_FakeHttpResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+class _FakeOpener:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        self.requests = []
+
+    def open(self, request):
+        self.requests.append(request)
+        return _FakeHttpResponse(self.payload)
 
 
 class FileTaskRegistryTest(unittest.TestCase):
@@ -61,34 +104,72 @@ class FileTaskRegistryTest(unittest.TestCase):
             self.assertTrue((Path(temp_dir) / "tasks" / "tsk_registry_core_001.json").exists())
 
 
+class GatewayTransportContractTest(unittest.TestCase):
+    def test_gateway_transport_uses_sessions_spawn_payload(self) -> None:
+        opener = _FakeOpener(
+            {
+                "ok": True,
+                "result": {
+                    "status": "accepted",
+                    "childSessionKey": "agent:main:subagent:child-transport-001",
+                    "runId": "run-transport-001",
+                    "mode": "run",
+                },
+            }
+        )
+        transport = GatewayToolInvokeSubagentTransport(
+            gateway_url="http://127.0.0.1:18789",
+            gateway_token="test-token",
+            session_key="agent:main",
+            opener=opener,
+        )
+
+        result = transport.spawn(
+            SubagentDispatchRequest(
+                task_id="tsk_transport_001",
+                workflow_id="workflow.transport.v1",
+                step_id="dispatch_subagent",
+                prompt="请执行 acceptance harness",
+                workdir="repos/workspace-trading",
+                label="transport-demo",
+                timeout_seconds=1800,
+                spawn_args={"mode": "run", "thinking": "low"},
+            )
+        )
+
+        self.assertEqual(result["childSessionKey"], "agent:main:subagent:child-transport-001")
+        request = opener.requests[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:18789/tools/invoke")
+        self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
+
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["tool"], "sessions_spawn")
+        self.assertEqual(payload["sessionKey"], "agent:main")
+        self.assertEqual(
+            payload["args"],
+            {
+                "runtime": "subagent",
+                "task": "请执行 acceptance harness",
+                "cwd": "repos/workspace-trading",
+                "label": "transport-demo",
+                "timeoutSeconds": 1800,
+                "mode": "run",
+                "thinking": "low",
+            },
+        )
+
+
 class MinimalSchedulerCoreTest(unittest.TestCase):
-    def make_dispatcher(self, registry_root: Path) -> WorkflowDispatcher:
+    def make_dispatcher(self, registry_root: Path, transport: _FakeSpawnTransport | None = None) -> WorkflowDispatcher:
         handlers = {
             "control.init_registry": init_registry_handler,
             "control.inline_payload": inline_payload_handler,
             "subagent.await_terminal": await_terminal_handler,
             "callback.send_once": callback_send_once_handler,
-            "subagent.dispatch": self.subagent_dispatch_handler,
+            "subagent.dispatch": create_subagent_dispatch_handler(transport or _FakeSpawnTransport()),
             "control.classify_terminal": self.classify_terminal_handler,
         }
         return WorkflowDispatcher(FileTaskRegistry(registry_root), handlers)
-
-    @staticmethod
-    def subagent_dispatch_handler(context: StepContext) -> StepOutcome:
-        child_session_key = f"agent:main:subagent:{context.task_id}"
-        payload = {
-            "child_session_key": child_session_key,
-            "command": ["python3", "research/run_acceptance_harness.py"],
-            "target_repo": context.request.get("workspace_repo", "workspace-trading"),
-        }
-        return StepOutcome(
-            kind="completed",
-            state="running",
-            runtime="subagent",
-            step_output=payload,
-            evidence_merge={context.step["id"]: payload},
-            summary="subagent 已派发",
-        )
 
     @staticmethod
     def classify_terminal_handler(context: StepContext) -> StepOutcome:
@@ -151,7 +232,7 @@ class MinimalSchedulerCoreTest(unittest.TestCase):
                 },
             )
 
-    def test_trading_like_workflow_waits_for_terminal_then_resumes(self) -> None:
+    def test_trading_like_workflow_waits_for_terminal_and_persists_dispatch_artifacts(self) -> None:
         workflow = {
             "workflow_id": "workspace-trading.acceptance-harness.scheduler.v1",
             "owner": "main",
@@ -163,11 +244,19 @@ class MinimalSchedulerCoreTest(unittest.TestCase):
                     "type": "control.inline_payload",
                     "state": "running",
                     "output": {
-                        "workspace_repo": "{{request.workspace_repo}}",
+                        "workspace_repo_path": "{{request.workspace_repo_path}}",
                         "input_config_path": "{{request.input_config_path}}",
                     },
                 },
-                {"id": "dispatch_acceptance_subagent", "type": "subagent.dispatch"},
+                {
+                    "id": "dispatch_acceptance_subagent",
+                    "type": "subagent.dispatch",
+                    "task": "python3 research/run_acceptance_harness.py --input {{request.input_config_path}}",
+                    "workdir": "{{request.workspace_repo_path}}",
+                    "label": "acceptance-{{request.run_label}}",
+                    "timeout_seconds": 1800,
+                    "spawn_args": {"mode": "run", "thinking": "low"},
+                },
                 {
                     "id": "await_terminal",
                     "type": "subagent.await_terminal",
@@ -178,24 +267,20 @@ class MinimalSchedulerCoreTest(unittest.TestCase):
                 {
                     "id": "final_callback",
                     "type": "callback.send_once",
-                    "payloadFields": [
-                        "task_id",
-                        "workflow_id",
-                        "workflow_state",
-                        "run_label"
-                    ]
+                    "payloadFields": ["task_id", "workflow_id", "workflow_state", "run_label"],
                 },
             ],
         }
         request = {
             "task_id": "tsk_trading_scheduler_001",
-            "workspace_repo": "workspace-trading",
+            "workspace_repo_path": "repos/workspace-trading",
             "input_config_path": "research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json",
             "run_label": "dry-run-001",
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            dispatcher = self.make_dispatcher(Path(temp_dir))
+            transport = _FakeSpawnTransport()
+            dispatcher = self.make_dispatcher(Path(temp_dir), transport=transport)
             first = dispatcher.dispatch(workflow, task_id=request["task_id"], request=request)
 
             self.assertEqual(first.status, "waiting")
@@ -204,7 +289,49 @@ class MinimalSchedulerCoreTest(unittest.TestCase):
             self.assertEqual(first.record["state"], "running")
             self.assertEqual(first.record["runtime"], "subagent")
             self.assertEqual(first.record["callback_status"], "pending")
-            self.assertNotIn("collect_and_classify", first.record["evidence"])
+            self.assertEqual(len(transport.requests), 1)
+
+            dispatch_step = first.record["evidence"]["dispatch_acceptance_subagent"]
+            self.assertEqual(dispatch_step["child_session_key"], "agent:main:subagent:child-001")
+            self.assertEqual(
+                dispatch_step["run_handle"],
+                {
+                    "status": "accepted",
+                    "mode": "run",
+                    "run_id": "run-child-001",
+                    "transport": "fake.sessions_spawn",
+                },
+            )
+
+            dispatch_evidence = dispatch_step["dispatch_evidence"]
+            request_path = Path(temp_dir) / dispatch_evidence["artifacts"]["request_path"]
+            response_path = Path(temp_dir) / dispatch_evidence["artifacts"]["response_path"]
+            mapping_path = Path(temp_dir) / dispatch_evidence["artifacts"]["child_session_mapping_path"]
+            self.assertTrue(request_path.exists())
+            self.assertTrue(response_path.exists())
+            self.assertTrue(mapping_path.exists())
+
+            request_artifact = json.loads(request_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                request_artifact["dispatch_request"],
+                {
+                    "task_id": "tsk_trading_scheduler_001",
+                    "workflow_id": "workspace-trading.acceptance-harness.scheduler.v1",
+                    "step_id": "dispatch_acceptance_subagent",
+                    "prompt": "python3 research/run_acceptance_harness.py --input research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json",
+                    "workdir": "repos/workspace-trading",
+                    "label": "acceptance-dry-run-001",
+                    "session_key": None,
+                    "timeout_seconds": 1800.0,
+                    "spawn_args": {"mode": "run", "thinking": "low"},
+                },
+            )
+
+            mapping_artifact = json.loads(mapping_path.read_text(encoding="utf-8"))
+            self.assertEqual(mapping_artifact["task_id"], "tsk_trading_scheduler_001")
+            self.assertEqual(mapping_artifact["workflow_id"], "workspace-trading.acceptance-harness.scheduler.v1")
+            self.assertEqual(mapping_artifact["step_id"], "dispatch_acceptance_subagent")
+            self.assertEqual(mapping_artifact["child_session_key"], "agent:main:subagent:child-001")
 
             still_waiting = dispatcher.dispatch(workflow, task_id=request["task_id"], request=request)
             self.assertEqual(still_waiting.status, "waiting")
@@ -238,7 +365,7 @@ class MinimalSchedulerCoreTest(unittest.TestCase):
                     "workflow_state": "degraded",
                     "business_overall_verdict": "CONDITIONAL",
                     "terminal_state": "completed",
-                    "child_session_key": "agent:main:subagent:tsk_trading_scheduler_001",
+                    "child_session_key": "agent:main:subagent:child-001",
                 },
             )
             self.assertEqual(

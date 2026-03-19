@@ -1,0 +1,11 @@
+{
+  "task_id": "tsk_workspace_trading_acceptance_example_002",
+  "run_label": "sample_20260319",
+  "workspace_repo": "workspace-trading",
+  "workspace_repo_path": "../../../workspace-trading",
+  "input_config_path": "research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json",
+  "artifacts_dir": "artifacts/acceptance/pilot-runtime-example",
+  "reports_dir": "reports/acceptance/pilot-runtime-example",
+  "artifact_json_path": "artifacts/acceptance/pilot-runtime-example/acceptance_harness_sample_20260319.json",
+  "report_path": "reports/acceptance/pilot-runtime-example/acceptance_harness_sample_20260319.md"
+}

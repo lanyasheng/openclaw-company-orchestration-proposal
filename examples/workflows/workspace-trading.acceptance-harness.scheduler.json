@@ -1,0 +1,113 @@
+{
+  "workflow_id": "workspace-trading.acceptance-harness-dry-run.v1",
+  "owner": "main",
+  "mode": "chain-basic",
+  "steps": [
+    {
+      "id": "init_registry",
+      "type": "control.init_registry"
+    },
+    {
+      "id": "validate_request",
+      "type": "control.inline_payload",
+      "state": "running",
+      "output": {
+        "workspace_repo": "{{request.workspace_repo}}",
+        "workspace_repo_path": "{{request.workspace_repo_path}}",
+        "input_config_path": "{{request.input_config_path}}",
+        "artifacts_dir": "{{request.artifacts_dir}}",
+        "reports_dir": "{{request.reports_dir}}",
+        "artifact_json_path": "{{request.artifact_json_path}}",
+        "report_path": "{{request.report_path}}",
+        "run_label": "{{request.run_label}}"
+      },
+      "summary": "trading pilot 请求已冻结"
+    },
+    {
+      "id": "dispatch_acceptance_subagent",
+      "type": "subagent.local_cli",
+      "workdir": "{{request.workspace_repo_path}}",
+      "timeoutSeconds": 300,
+      "command": [
+        "python3",
+        "research/run_acceptance_harness.py",
+        "--input",
+        "{{request.input_config_path}}",
+        "--artifacts-dir",
+        "{{request.artifacts_dir}}",
+        "--reports-dir",
+        "{{request.reports_dir}}",
+        "--test-command",
+        "python3 -m pytest tests/v2_portfolio/test_acceptance_harness.py -q",
+        "--test-command",
+        "python3 -m pytest tests/v2_portfolio/test_acceptance_harness.py tests/v2_portfolio/test_validation_harness.py tests/v2_portfolio/test_cli.py -q"
+      ],
+      "terminal_artifacts": {
+        "artifact_json_path": "{{request.artifact_json_path}}",
+        "report_path": "{{request.report_path}}"
+      },
+      "summary": "workspace-trading acceptance harness 本地 dry-run 已执行",
+      "timeoutSummary": "workspace-trading acceptance harness 本地 dry-run 超时"
+    },
+    {
+      "id": "await_terminal",
+      "type": "subagent.await_terminal",
+      "child_session_from": "dispatch_acceptance_subagent",
+      "signal_key": "terminal"
+    },
+    {
+      "id": "collect_and_classify",
+      "type": "control.collect_and_classify",
+      "required_scenario_count": 4,
+      "required_dimensions": [
+        "etf_basket",
+        "stock_basket",
+        "oos",
+        "regime"
+      ]
+    },
+    {
+      "id": "final_callback",
+      "type": "callback.send_once",
+      "payloadFields": [
+        "task_id",
+        "workflow_id",
+        "run_label",
+        "workflow_state",
+        {
+          "name": "business_overall_verdict",
+          "path": "steps.collect_and_classify.business_overall_verdict"
+        },
+        {
+          "name": "candidate_id",
+          "path": "steps.collect_and_classify.candidate_id"
+        },
+        {
+          "name": "artifact_json_path",
+          "path": "steps.collect_and_classify.artifact_json_path"
+        },
+        {
+          "name": "report_path",
+          "path": "steps.collect_and_classify.report_path"
+        },
+        {
+          "name": "child_session_key",
+          "path": "steps.collect_and_classify.child_session_key"
+        }
+      ],
+      "summary": {
+        "workflow": "workspace-trading.acceptance-harness-dry-run.v1",
+        "ordered_steps": [
+          "init_registry",
+          "validate_request",
+          "dispatch_acceptance_subagent",
+          "await_terminal",
+          "collect_and_classify",
+          "final_callback"
+        ],
+        "artifact_contract": "workspace-trading.acceptance-artifact.v1",
+        "business_repo": "{{request.workspace_repo}}"
+      }
+    }
+  ]
+}

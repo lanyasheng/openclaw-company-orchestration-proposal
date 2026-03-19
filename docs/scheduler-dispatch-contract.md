@@ -16,6 +16,8 @@
 - `orchestration_runtime/builtin_handlers.py`
 - `scripts/run_minimal_scheduler.py`
 - `examples/workflows/chain-basic.scheduler.json`
+- `examples/workflows/workspace-trading.acceptance-harness.scheduler.json`
+- `docs/workflows/workspace-trading-acceptance-artifact-contract.md`
 
 ---
 
@@ -37,9 +39,11 @@
 3. 提供最小内置 handler
    - `control.init_registry`
    - `control.inline_payload`
+   - `subagent.local_cli`
    - `subagent.await_terminal`
+   - `control.collect_and_classify`
    - `callback.send_once`
-4. 让 `chain-basic` 可以跑在这套 core 上
+4. 让 `chain-basic` 和 `workspace-trading` pilot runtime 都能跑在这套 core 上
 
 ### 明确不做
 
@@ -159,14 +163,25 @@ python3 scripts/run_minimal_scheduler.py \
 
 ### 4.2 trading pilot 所需的暂停/恢复语义
 
-这批已经有最小支持：
+这批已经有最小支持，而且 `subagent.dispatch` 不再只是 stub：
 
-- `subagent.dispatch` 可以作为自定义 handler 注入
+- `subagent.dispatch` 已接到 `orchestration_runtime/subagent_dispatch.py`
 - `subagent.await_terminal` 已支持 `waiting -> resume`
 - `collect_and_classify` 可以作为自定义 handler 注入
 - `callback.send_once` 已支持终态后的单次回调
 
-换句话说，**scheduler core 已具备 trading pilot 需要的顺序推进骨架**；还没做的是 trading repo 的真实业务 adapter。
+`subagent.dispatch` 当前最小 contract：
+
+- 输入至少包含：`task_id / workflow_id / step_id / task prompt / workdir`
+- 输出固定包含：`child_session_key / run_handle / dispatch_evidence`
+- 落盘工件：
+  - `subagent_dispatch/requests/<task_id>__<step_id>.json`
+  - `subagent_dispatch/responses/<task_id>__<step_id>.json`
+  - `subagent_dispatch/by-child-session/<child_session_key>.json`
+
+默认 transport 走 Gateway `POST /tools/invoke` 调 `sessions_spawn(runtime="subagent")`；因此需要显式放行 `sessions_spawn` 的 HTTP 调用。
+
+换句话说，**scheduler core 已具备 trading pilot 需要的顺序推进骨架**；当前仍未完成的是 trading repo 里的真实 terminal ingest / classify / callback 业务闭环。
 
 ---
 
@@ -185,19 +200,22 @@ python3 scripts/run_minimal_scheduler.py \
 
 ## 6. 接 trading pilot 还缺什么
 
-只差业务绑定层，不差 core：
+P1a-1 做完后，当前状态是：**runtime 骨架 + 真实 `subagent.dispatch` adapter 已接上，但 terminal ingest / callback transport 还没闭环**。
 
-1. **真实 `subagent.dispatch` adapter**
-   - 把 `sessions_spawn(runtime="subagent")` 的入参与回执接进 dispatcher
-2. **真实 `await_terminal` ingest**
-   - 用 child session key 对齐 terminal envelope
-3. **真实 `collect_and_classify` 规则**
-   - 读取 `workspace-trading` acceptance artifact / manifest / checklist
-   - 映射 `completed / degraded / failed`
-4. **真实 callback transport**
-   - 目前 `callback.send_once` 只是 core 里的状态推进，还没接外部 delivery
-5. **pilot workflow definition 落成 runtime 版**
-   - 把 `docs/workflows/workspace-trading-pilot-workflow.yaml` 对齐成真正可执行 definition
+1. ✅ **真实 `subagent.dispatch` adapter**
+   - 已通过 `orchestration_runtime/subagent_dispatch.py` 接入 `sessions_spawn(runtime="subagent")`
+   - 已补 request/response/mapping 落盘
+2. ✅ **`collect_and_classify` 真实规则**
+   - 已读取 `workspace-trading` acceptance artifact / manifest / checklist
+   - 已映射 `completed / degraded / failed`
+3. ✅ **pilot workflow definition runtime 版**
+   - 已补 `examples/workflows/workspace-trading-pilot.scheduler.json`
+4. ✅ **artifact 输入契约**
+   - 已冻结在 `docs/workflows/workspace-trading-acceptance-artifact-contract.md`
+5. ⏳ **真实 `await_terminal` ingest**
+   - 当前可消费 inline terminal 或 resume signal；下一步要接 child session terminal envelope
+6. ⏳ **真实 callback transport**
+   - 目前 `callback.send_once` 还是 registry 内状态推进，还没接外部 delivery
 
 ---
 

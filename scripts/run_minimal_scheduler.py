@@ -15,9 +15,12 @@ from orchestration_runtime import (
     WorkflowDispatcher,
     await_terminal_handler,
     callback_send_once_handler,
+    collect_and_classify_handler,
+    create_subagent_dispatch_handler,
     init_registry_handler,
     inline_payload_handler,
     load_json_file,
+    subagent_local_cli_handler,
     write_json_atomic,
 )
 
@@ -27,7 +30,10 @@ def build_dispatcher(run_dir: Path) -> WorkflowDispatcher:
     handlers = {
         "control.init_registry": init_registry_handler,
         "control.inline_payload": inline_payload_handler,
+        "subagent.dispatch": create_subagent_dispatch_handler(),
+        "subagent.local_cli": subagent_local_cli_handler,
         "subagent.await_terminal": await_terminal_handler,
+        "control.collect_and_classify": collect_and_classify_handler,
         "callback.send_once": callback_send_once_handler,
     }
     return WorkflowDispatcher(registry=registry, step_handlers=handlers)

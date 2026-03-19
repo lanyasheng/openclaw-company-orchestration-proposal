@@ -315,5 +315,69 @@ python3 scripts/run_minimal_scheduler.py \
 - **主线口径**：已重置为 workflow engine 总方案仓
 - **首个落地场景**：`workspace-trading`
 - **默认内部执行主链**：`sessions_spawn(runtime="subagent")`
+- **真实 `subagent.dispatch` adapter**：已落到 `orchestration_runtime/subagent_dispatch.py`（最小可复用版）
 - **重型引擎策略**：仅在 P2 选择性引入
 - **human-gate / POC 定位**：验证资产，不再主导仓库叙事
+
+## 真实 subagent.dispatch（P1a-1 最小实现）
+
+当前仓库已经提供可复用 adapter：`orchestration_runtime/subagent_dispatch.py`。
+
+它做的事很窄，但已经够 trading pilot / chain-basic 主链使用：
+
+- 从 workflow step 读取 `task_id / workflow_id / step_id / task prompt / workdir`
+- 通过 Gateway `POST /tools/invoke` 真调 `sessions_spawn(runtime="subagent")`
+- 归一化回执，产出：
+  - `child_session_key`
+  - `run_handle`
+  - `dispatch_evidence`
+- 落盘三类工件：
+  - dispatch request
+  - dispatch response
+  - `child_session_key -> task_id` 反查文件
+- 让 scheduler 继续沿用现有 `waiting -> resume -> callback` 语义
+
+### step 约定
+
+`subagent.dispatch` 最小需要：
+
+```json
+{
+  "id": "dispatch_acceptance_subagent",
+  "type": "subagent.dispatch",
+  "task": "python3 research/run_acceptance_harness.py --input {{request.input_config_path}}",
+  "workdir": "{{request.workspace_repo_path}}",
+  "label": "acceptance-{{request.run_label}}"
+}
+```
+
+可选字段：
+
+- `timeout_seconds`
+- `session_key`
+- `spawn_args`（会合并进 `sessions_spawn` 参数，但 `runtime/task/cwd/label` 仍由 adapter 兜底）
+
+### 示例
+
+- workflow：`examples/workflows/workspace-trading-pilot.scheduler.json`
+- input：`examples/workspace-trading-pilot.input.json`
+
+### 环境前提
+
+这版走 Gateway HTTP `tools/invoke`，所以需要：
+
+1. Gateway 可达（默认 `http://127.0.0.1:18789`）
+2. 能拿到 token（`OPENCLAW_GATEWAY_TOKEN` 或 `~/.openclaw/openclaw.json` 的 `gateway.auth.token`）
+3. Gateway 显式放行 `/tools/invoke` 对 `sessions_spawn` 的调用，例如：
+
+```json5
+{
+  "gateway": {
+    "tools": {
+      "allow": ["sessions_spawn"]
+    }
+  }
+}
+```
+
+> OpenClaw HTTP `/tools/invoke` 默认 deny `sessions_spawn`；不放行的话，adapter 会明确失败，而不是静默回退成假实现。

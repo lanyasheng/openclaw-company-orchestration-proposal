@@ -1,0 +1,52 @@
+{
+  "workflow_id": "workspace-trading.acceptance-harness.scheduler.v1",
+  "owner": "main",
+  "mode": "chain-basic",
+  "steps": [
+    {
+      "id": "init_registry",
+      "type": "control.init_registry"
+    },
+    {
+      "id": "validate_request",
+      "type": "control.inline_payload",
+      "state": "running",
+      "output": {
+        "workspace_repo_path": "{{request.workspace_repo_path}}",
+        "input_config_path": "{{request.input_config_path}}"
+      }
+    },
+    {
+      "id": "dispatch_acceptance_subagent",
+      "type": "subagent.dispatch",
+      "task": "python3 research/run_acceptance_harness.py --input {{request.input_config_path}}",
+      "workdir": "{{request.workspace_repo_path}}",
+      "label": "acceptance-{{request.run_label}}",
+      "timeout_seconds": 1800,
+      "spawn_args": {
+        "mode": "run",
+        "thinking": "low"
+      }
+    },
+    {
+      "id": "await_terminal",
+      "type": "subagent.await_terminal",
+      "child_session_from": "dispatch_acceptance_subagent",
+      "signal_key": "terminal"
+    },
+    {
+      "id": "collect_and_classify",
+      "type": "control.collect_and_classify"
+    },
+    {
+      "id": "final_callback",
+      "type": "callback.send_once",
+      "payloadFields": [
+        "task_id",
+        "workflow_id",
+        "workflow_state",
+        "run_label"
+      ]
+    }
+  ]
+}

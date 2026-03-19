@@ -22,6 +22,7 @@ class StepContext:
     request: Dict[str, Any]
     signal: Optional[Dict[str, Any]]
     record: Dict[str, Any]
+    registry: FileTaskRegistry
     scheduler: Dict[str, Any]
     step_outputs: Dict[str, Any]
 
@@ -100,13 +101,15 @@ class WorkflowDispatcher:
             )
 
         if scheduler.get("waiting_for") and signal is None:
-            return DispatchResult(
-                task_id=task_id,
-                status="waiting",
-                record=record,
-                current_step_id=scheduler.get("current_step_id"),
-                waiting_for=scheduler.get("waiting_for"),
-            )
+            waiting_for = scheduler.get("waiting_for")
+            if not self._can_resume_without_signal(task_id, waiting_for):
+                return DispatchResult(
+                    task_id=task_id,
+                    status="waiting",
+                    record=record,
+                    current_step_id=scheduler.get("current_step_id"),
+                    waiting_for=waiting_for,
+                )
 
         executed_steps: List[str] = []
         steps = normalized_workflow["steps"]
@@ -129,6 +132,7 @@ class WorkflowDispatcher:
                 record=record,
                 scheduler=scheduler,
                 step_outputs=dict(scheduler.get("outputs", {})),
+                registry=self.registry,
             )
 
             try:
@@ -245,6 +249,18 @@ class WorkflowDispatcher:
             current_step_id=None,
             waiting_for=None,
         )
+
+    def _can_resume_without_signal(self, task_id: str, waiting_for: Any) -> bool:
+        if not isinstance(waiting_for, dict):
+            return False
+        if waiting_for.get("kind") != "subagent_terminal":
+            return False
+        try:
+            from .terminal_ingest import SubagentTerminalIngest
+
+            return SubagentTerminalIngest(self.registry).load_waiter(task_id) is not None
+        except Exception:
+            return False
 
     def _normalize_workflow(self, workflow: Mapping[str, Any]) -> Dict[str, Any]:
         workflow_id = str(workflow.get("workflow_id") or workflow.get("id") or "").strip()

@@ -4,8 +4,11 @@ metadata:
   workflowId: workspace-trading.acceptance-harness-dry-run.v1
   name: 固定候选验收闭环（Acceptance Harness Dry-Run v1）
   owner: main
-  status: frozen-for-p1-task1
+  status: runtime-aligned-for-p1a-3
   businessRepo: workspace-trading
+  runtimeDefinition: examples/workflows/workspace-trading.acceptance-harness.scheduler.json
+  runtimeExampleInput: examples/inputs/workspace-trading.acceptance-harness.request.json
+  artifactContract: docs/workflows/workspace-trading-acceptance-artifact-contract.md
   scope: offline-only
   sideEffects:
     liveTrading: forbidden
@@ -24,10 +27,13 @@ trigger:
   requiredInputs:
     - task_id
     - run_label
-  defaults:
-    input_config_path: research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json
-    artifacts_dir: artifacts/acceptance/${date}
-    reports_dir: reports/acceptance/${date}
+    - workspace_repo
+    - workspace_repo_path
+    - input_config_path
+    - artifacts_dir
+    - reports_dir
+    - artifact_json_path
+    - report_path
   guards:
     - workspace_repo must equal workspace-trading
     - input_config_path must be allowlisted
@@ -35,82 +41,73 @@ trigger:
     - task_id must be unique
 nodes:
   - id: init_registry
-    type: control.registry.create
-    outputs:
-      - task_id
-      - state=queued
-      - callback_status=pending
+    type: control.init_registry
   - id: validate_request
-    type: control.inline_check
-    dependsOn:
-      - init_registry
+    type: control.inline_payload
   - id: dispatch_acceptance_subagent
-    type: subagent.run
-    dependsOn:
-      - validate_request
-    targetRepo: workspace-trading
+    type: subagent.local_cli
     timeoutSeconds: 300
-    command:
-      - python3
-      - research/run_acceptance_harness.py
-      - --input
-      - research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json
-      - --artifacts-dir
-      - artifacts/acceptance/${date}
-      - --reports-dir
-      - reports/acceptance/${date}
-      - --test-command
-      - python3 -m pytest tests/v2_portfolio/test_acceptance_harness.py -q
-      - --test-command
-      - python3 -m pytest tests/v2_portfolio/test_acceptance_harness.py tests/v2_portfolio/test_validation_harness.py tests/v2_portfolio/test_cli.py -q
-    outputs:
-      - child_session_key
-      - terminal_stdout_tail
-      - terminal_exit_code
   - id: await_terminal
     type: subagent.await_terminal
-    dependsOn:
-      - dispatch_acceptance_subagent
   - id: collect_and_classify
     type: control.collect_and_classify
-    dependsOn:
-      - await_terminal
-    checks:
-      - artifact_json exists
-      - acceptance_manifest exists
-      - acceptance_checklist exists
-      - summary.scenario_count == 4
-      - summary.dimensions_covered == [etf_basket, stock_basket, oos, regime]
-    classification:
-      completed:
-        - terminal_exit_code == 0
-        - business_overall_verdict == PASS
-      degraded:
-        - terminal_exit_code == 0
-        - business_overall_verdict in [CONDITIONAL, FAIL]
-      failed:
-        - terminal_exit_code != 0
-        - artifact missing
-        - manifest missing
-        - checklist missing
-        - scenario_count mismatch
-        - dimensions_covered mismatch
-      timeout:
-        - no terminal within 300s
+    artifactInputContract:
+      primaryArtifact: await_terminal.artifacts.artifact_json_path
+      optionalFallbacks:
+        - request.artifact_json_path
+      nestedObjectsRequired:
+        - acceptance_manifest
+        - acceptance_checklist
+      optionalSidecars:
+        - await_terminal.artifacts.acceptance_manifest_path
+        - await_terminal.artifacts.acceptance_checklist_path
+      requiredSummary:
+        scenario_count: 4
+        dimensions_covered:
+          - etf_basket
+          - stock_basket
+          - oos
+          - regime
+      businessVerdictPath: acceptance_manifest.verdict_summary.overall_verdict
+      allowedBusinessVerdicts:
+        - PASS
+        - CONDITIONAL
+        - FAIL
+      mapping:
+        completed:
+          - terminal_state == completed
+          - contract_valid == true
+          - business_overall_verdict == PASS
+        degraded:
+          - terminal_state == completed
+          - contract_valid == true
+          - business_overall_verdict in [CONDITIONAL, FAIL]
+        failed:
+          - terminal_state != completed
+          - artifact missing
+          - manifest missing
+          - checklist missing
+          - checklist contains FAIL item
+          - scenario_count mismatch
+          - dimensions_covered mismatch
+          - business_overall_verdict invalid
   - id: final_callback
     type: callback.send_once
-    dependsOn:
-      - collect_and_classify
     payloadFields:
       - task_id
       - workflow_id
       - run_label
-      - candidate_id
       - workflow_state
-      - business_overall_verdict
-      - artifact_json_path
-      - report_path
-      - child_session_key
+      - name: business_overall_verdict
+        path: steps.collect_and_classify.business_overall_verdict
+      - name: candidate_id
+        path: steps.collect_and_classify.candidate_id
+      - name: artifact_json_path
+        path: steps.collect_and_classify.artifact_json_path
+      - name: report_path
+        path: steps.collect_and_classify.report_path
+      - name: child_session_key
+        path: steps.collect_and_classify.child_session_key
 fanoutJoin:
   controlPlane:
     fanout: none
@@ -125,8 +122,8 @@ fanoutJoin:
 artifacts:
   business:
     input_config: research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json
-    json_artifact: artifacts/acceptance/${date}/acceptance_harness_${run_label}.json
-    markdown_report: reports/acceptance/${date}/acceptance_harness_${run_label}.md
+    json_artifact: artifacts/acceptance/<run-scope>/acceptance_harness_<run_label>.json
+    markdown_report: reports/acceptance/<run-scope>/acceptance_harness_<run_label>.md
   controlPlane:
     registry: artifacts/workflow-runs/workspace-trading.acceptance-harness-dry-run.v1/${task_id}/registry.json
     terminal: artifacts/workflow-runs/workspace-trading.acceptance-harness-dry-run.v1/${task_id}/terminal.json
@@ -140,6 +137,9 @@ semantics:
     - acked
     - failed
   callbackFailureDoesNotRewriteWorkflowState: true
+  timeoutHandling:
+    businessMeaning: timeout
+    runtimeV1Mapping: terminal_state=timeout + workflow_state=failed
 rollback:
   - disable manual dispatch entry for this workflow
   - revert to direct human execution of research/run_acceptance_harness.py
