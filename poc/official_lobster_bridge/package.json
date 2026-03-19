@@ -1,0 +1,16 @@
+{
+  "name": "official-lobster-bridge",
+  "private": true,
+  "type": "module",
+  "description": "Repo-local wrapper for the official Lobster runtime",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "doctor": "lobster doctor",
+    "version": "lobster version"
+  },
+  "dependencies": {
+    "@clawdbot/lobster": "2026.1.24"
+  }
+}
