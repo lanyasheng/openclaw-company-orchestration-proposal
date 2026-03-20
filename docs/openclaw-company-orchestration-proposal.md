@@ -294,7 +294,9 @@ P0 / P1 只允许以下模板进入主方案：
 - 当前 `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 频道已成为第二个真实场景
 - 当前频道已进入白名单默认 auto-dispatch：dispatch plan 默认 `triggered`
 - 其他频道仍默认 `skipped`
-- 回退仍简单：移出白名单、关闭 auto-dispatch，或退回手动 continuation
+- trading 当前只对 **clean PASS** 默认 `triggered`，其余结果继续默认 `skipped`
+- `tmux` 已进入**正式可选 continuation backend**，但 trading real run 当前仍只到 **dry-run**；真实 artifact-backed clean PASS 仍缺
+- 回退仍简单：移出白名单、关闭 auto-dispatch、收紧 clean PASS 条件，或退回手动 continuation
 
 这里要特别强调：这仍然是**薄桥接线**，不是把 runtime 做了一轮大 refactor，也不是把公司级编排直接升级成默认全自动闭环。
 
@@ -417,6 +419,8 @@ P0 / P1 只允许以下模板进入主方案：
 | 原生 failure-branch | 未证实 | 先走 adapter / 控制层策略 |
 | Trading 通用 workflow engine 化 | `trading_roundtable` continuation 已最小落地，但仍是 safe semi-auto | 继续把 trading 从单点最小接线推进到更通用、可复用 workflow |
 | channel_roundtable 跨频道 rollout | 通用适配器已落地；当前架构频道默认 `triggered`，其他频道仍 `skipped` | 继续保持 allowlist + 最小契约，不默认全频道放开 |
+| trading clean PASS 自动续跑闭环 | 当前只到 clean PASS 默认 `triggered` 这一层策略 | 不能把它写成真实 artifact-backed clean PASS 已稳定跑通 |
+| `tmux` backend 的生产闭环 | 已纳入正式可选 continuation backend，但 trading real run 当前仍只到 dry-run | 继续把 tmux 的能力边界、工件契约与回退条件写清 |
 | 何时必须上 Temporal | 业务证据不足 | P2 再决策 |
 | 安全层策略化 | 只有原则，无完整实施 | 分阶段补齐 |
 
@@ -450,7 +454,7 @@ P0 / P1 只允许以下模板进入主方案：
 
 **把仓库与方案叙事彻底收敛，并在 trading / channel 两类真实场景上继续把最小闭环做实。**
 
-> 进度口径更新（2026-03-20）：`trading_roundtable` continuation 与当前架构频道 `channel_roundtable` 已完成最小 live 接线；但仍属于 thin-bridge、allowlist、safe semi-auto 阶段。
+> 进度口径更新（2026-03-20）：`trading_roundtable` continuation 与当前架构频道 `channel_roundtable` 已完成最小 live 接线；当前白名单架构频道默认 `triggered`、trading 仅 clean PASS 默认 `triggered`、`tmux` 已进入正式可选 backend 口径；但整体仍属于 thin-bridge、allowlist、safe semi-auto 阶段。
 
 ### 交付
 

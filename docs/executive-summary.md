@@ -1,7 +1,7 @@
 # 执行摘要：OpenClaw Workflow Engine 总方案
 
-> 日期：2026-03-19  
-> 口径：v3，主线重置版
+> 日期：2026-03-20  
+> 口径：v3.1，补入 live continuation / whitelist / tmux backend 真值
 
 ## 一句话结论
 
@@ -26,6 +26,22 @@
 - 不让 LangGraph 接管公司级执行总线
 - 不在 P0 就把 Temporal 全量引入
 - 不把 human-gate 插件或单个 POC 写成仓库主叙事
+
+---
+
+## 当前成熟度（2026-03-20）
+
+这份执行摘要也要补齐本轮 live 真值，而不是停留在 2026-03-19 的纯方案口径：
+
+- `trading_roundtable` continuation 已最小落地，但仍是 **safe semi-auto**
+- `channel_roundtable` 已落地为通用最小适配器
+- 当前 `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 频道已成为**第二个真实场景**
+- 当前白名单架构频道默认 auto-dispatch：dispatch plan 默认 `triggered`
+- 其他频道默认仍是 `skipped`
+- trading 侧当前策略更收紧：**仅 clean PASS 默认 `triggered`，其余结果默认 `skipped`**
+- `tmux` 已成为**正式可选 continuation backend**，但 trading real run 当前仍只到 **dry-run**；真实 artifact-backed clean PASS 仍缺
+
+一句话：**仓库已经从纯方案/POC 推进到双场景最小接线，但总体仍是 thin bridge / allowlist / safe semi-auto。**
 
 ---
 
@@ -97,6 +113,8 @@
 | `message/browser` bridge | 在官方能力上接线难度低 |
 | callback status | `terminal ≠ callback sent ≠ acked` 已有明确契约 |
 | P0 最小验证 | human-gate、failure-branch、subagent bridge 均已有 repo 级证据 |
+| live continuation 最小接线 | trading + 当前架构频道已形成两条真实场景 |
+| `tmux` backend 选项 | 已进入正式口径，但当前仍按收紧边界使用 |
 
 ### 还没验证什么
 
@@ -105,7 +123,9 @@
 | Lobster → 真实 `subagent` 完整闭环 | 还没跑真实接线 |
 | 真并发 / 真 join | 不能提前承诺 |
 | 原生 failure-branch 语义 | 目前更像 adapter 路线 |
-| `workspace-trading` 首条真实流程 | 还没正式打穿 |
+| trading 通用 workflow engine 化 | `trading_roundtable` continuation 已最小落地，但还不能等同于 trading 全面 workflow 化 |
+| trading clean PASS 自动续跑 | 当前只到 clean PASS 默认 `triggered`，并不等于 trading 任意结果都自动 continuation |
+| `tmux` 的生产闭环程度 | trading real run 当前仍只到 dry-run，真实 artifact-backed clean PASS 仍缺 |
 | 何时必须引入 Temporal | 还没有足够业务证据 |
 
 ---

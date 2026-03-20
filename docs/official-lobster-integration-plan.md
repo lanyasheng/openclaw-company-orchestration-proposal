@@ -1,5 +1,7 @@
 # 官方 Lobster 接入方案（batch1 冻结）
 
+> **Historical / superseded note（2026-03-20）**：这份文档保留的是 batch1 的接入决策与切换计划，不是当前仓库整体成熟度入口。当前 canonical 总口径请优先看：`../README.md`、`CURRENT_TRUTH.md`、`validation-status.md`。
+>
 > 更新（2026-03-19）：`chain-basic` 已按本方案完成切换，当前 canonical 路径为 `poc/official_lobster_bridge/`；旧 `poc/lobster_minimal_validation/` 仅保留 fallback。
 
 ## 结论先行

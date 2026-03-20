@@ -1,5 +1,7 @@
 # 独立架构审查报告
 
+> **Historical review note（2026-03-20）**：本报告正确反映了 2026-03-19 时点的风险判断，但其中部分“尚未打通”的表述已经被后续最小 live integration 部分更新（例如 trading/channel continuation、白名单默认 `triggered`、以及 `tmux` 作为正式可选 backend）。阅读时请结合 `../CURRENT_TRUTH.md` 与 `../validation-status.md`。
+
 **审查日期**: 2026-03-19  
 **审查对象**: `openclaw-company-orchestration-proposal` 仓库  
 **最新 Commit**: `c2a2649 feat: add minimal scheduler dispatcher core`  

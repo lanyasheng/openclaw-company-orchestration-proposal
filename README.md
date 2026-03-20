@@ -116,10 +116,12 @@
 - `trading_roundtable` continuation 已有**最小落地**，但定位仍是 **safe semi-auto**，不是无人值守自动闭环
 - `channel_roundtable` **通用适配器**已落地，其他频道后续可按最小契约接入
 - 当前 `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 频道已成为**第二个真实场景**
-- runtime bridge 仍是**薄桥**：只有当前白名单频道默认 auto-dispatch，当前频道的 dispatch plan 默认 `triggered`，其他频道默认 `skipped`
-- 回退仍然简单：关闭白名单 auto-dispatch 或退回手动 continuation，不需要大规模 refactor
+- runtime bridge 仍是**薄桥**：当前白名单架构频道默认 auto-dispatch，dispatch plan 默认 `triggered`；其他频道默认 `skipped`
+- trading continuation 的当前策略更收紧：**仅 clean PASS 默认 `triggered`，其余结果默认 `skipped`**
+- `tmux` 已进入**正式可选 continuation backend**，但 trading real run 当前仍只到 **dry-run**；真实 artifact-backed clean PASS 仍缺
+- 回退仍然简单：关闭白名单 auto-dispatch、收紧 clean PASS 条件，或退回手动 continuation，不需要大规模 refactor
 
-一句话：**P0 已从纯文档验证推进到双场景最小接线，但还没有升级成通用全自动 workflow engine。**
+一句话：**P0 已从纯文档验证推进到双场景最小接线，但还没有升级成通用全自动 workflow engine；总体定位仍是 thin bridge / allowlist / safe semi-auto。**
 
 ---
 
@@ -135,6 +137,8 @@
 | `subagent` 默认主链 | 是当前内部长任务执行事实 |
 | callback status 语义 | `terminal ≠ callback sent ≠ acked` 已明确 |
 | human-gate / failure-branch 最小 POC | 已有 repo-local harness 与测试 |
+| trading / current-channel 最小 live continuation | 已出现两条真实场景，但仍受 allowlist / 条件触发约束 |
+| `tmux` continuation backend | 已是正式可选 backend，但当前边界仍收紧 |
 
 ### 未验证
 
@@ -144,6 +148,8 @@
 | 真并发 / 真 join / 原生 failure-branch | 还未证明，不应提前承诺 |
 | Trading 通用 workflow engine 化 | `trading_roundtable` continuation 已最小落地，但仍是 safe semi-auto；更通用的 trading / workspace-trading workflow 仍待继续打穿 |
 | 跨频道默认 auto-dispatch | 目前只对白名单中的当前架构频道默认 `triggered`；其他频道仍默认 `skipped` |
+| trading clean PASS 自动续跑 | 当前只到“clean PASS 默认 `triggered`”；并不等于 trading 任意 PASS 都自动 continuation |
+| `tmux` backend 的 production 边界 | 已纳入正式可选 backend，但 trading real run 当前仍只到 dry-run，真实 artifact-backed clean PASS 仍缺 |
 | 跨天 / 强恢复 / 强审计流程 | 暂未证明需要 Temporal |
 | 安全层的完整策略化 | 仍停留在原则与局部验证 |
 
@@ -274,10 +280,11 @@ python3 scripts/run_minimal_scheduler.py \
 ### 主线文档
 
 1. `docs/executive-summary.md` — 给老板和评审的 5 分钟版本
-2. `docs/openclaw-company-orchestration-proposal.md` — 仓库主方案文档
-3. `docs/architecture-layering.md` — 五层架构拆解与接口边界
-4. `docs/validation-status.md` — 已验证 / 未验证 / 选择理由
-5. `docs/roadmap.md` — P0 / P1 / P2 路线图
+2. `docs/CURRENT_TRUTH.md` — 当前 live 真值 / whitelist / tmux backend / historical 文档入口
+3. `docs/openclaw-company-orchestration-proposal.md` — 仓库主方案文档
+4. `docs/architecture-layering.md` — 五层架构拆解与接口边界
+5. `docs/validation-status.md` — 已验证 / 未验证 / 选择理由
+6. `docs/roadmap.md` — P0 / P1 / P2 路线图
 
 ### 支撑文档
 
@@ -326,8 +333,9 @@ python3 scripts/run_minimal_scheduler.py \
 
 ### 想 5 分钟抓住主线
 1. `docs/executive-summary.md`
-2. `docs/validation-status.md`
-3. `docs/roadmap.md`
+2. `docs/CURRENT_TRUTH.md`
+3. `docs/validation-status.md`
+4. `docs/roadmap.md`
 
 ### 想完整评审方案
 1. `docs/openclaw-company-orchestration-proposal.md`

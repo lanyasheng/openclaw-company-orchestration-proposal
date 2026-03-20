@@ -86,6 +86,7 @@ live bridge 已能把同一批次下的 task 结果做 fan-in 归并，形成 ba
 1. **`trading_roundtable` continuation**
    - 已最小落地
    - 但仍明确是 **safe semi-auto**，不是默认无人值守自动续跑
+   - trading 当前策略更收紧：**仅 clean PASS 默认 `triggered`，其余结果默认 `skipped`**
 
 2. **`channel_roundtable` 通用适配器**
    - 已落地为最小契约
@@ -93,7 +94,13 @@ live bridge 已能把同一批次下的 task 结果做 fan-in 归并，形成 ba
    - 当前频道在白名单内，dispatch plan 默认 `triggered`
    - 其他频道默认仍为 `skipped`
 
-这说明 runtime 已经从“只有原型映射点”推进到“少量 live scene 可对照”，但范围仍被故意限制在 allowlist 内。
+3. **`tmux` continuation backend**
+   - 已进入正式可选 backend 口径
+   - 适合需要中间态可见性、可 attach、可人工介入的 continuation 场景
+   - 但 trading real run 当前仍只到 **dry-run**
+   - 真实 artifact-backed clean PASS 仍缺，因此不能写成“tmux 已完成 trading 真实自动闭环”
+
+这说明 runtime 已经从“只有原型映射点”推进到“少量 live scene 可对照”，但范围仍被故意限制在 allowlist 与条件触发内。
 
 ---
 
@@ -107,7 +114,9 @@ live bridge 已能把同一批次下的 task 结果做 fan-in 归并，形成 ba
 - 当前架构频道可以默认生成 `triggered` 的 dispatch plan
 - 其他频道默认仍是 `skipped`
 - trading 侧也只是 continuation 已最小落地，口径仍是 safe semi-auto
-- 回退方式仍保持简单：移出白名单、关闭 auto-dispatch，或退回手动 continuation / summary-only
+- trading 只对 **clean PASS** 保持默认 `triggered`；其余结果继续默认 `skipped`
+- `tmux` 虽已进入正式可选 backend，但 trading real run 当前仍只到 dry-run
+- 回退方式仍保持简单：移出白名单、关闭 auto-dispatch、收紧 clean PASS 条件，或退回手动 continuation / summary-only
 
 主要原因如下：
 
@@ -195,4 +204,6 @@ runtime 仓负责：
 - 当前 live 已接上：**task state / batch summary / decision**
 - 当前 live 已有两条最小真实场景：`trading_roundtable` continuation + 当前架构频道 `channel_roundtable`
 - 当前 live **不做全局默认自动 spawn**；仅白名单当前频道默认 `triggered`，其他频道默认 `skipped`
+- trading 当前只对 **clean PASS** 默认 `triggered`；其余结果继续默认 `skipped`
+- `tmux` 已是正式可选 continuation backend，但 trading real run 当前仍只到 dry-run，真实 artifact-backed clean PASS 仍缺
 - proposal 仓负责**原型与边界**，runtime 仓负责**live patch 与生产接线**

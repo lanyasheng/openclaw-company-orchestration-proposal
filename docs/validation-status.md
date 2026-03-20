@@ -54,8 +54,10 @@
 | `channel_roundtable` 通用适配器 | 已落地，其他频道可按最小契约接入 | runtime repo commits `171944e` |
 | 当前架构频道 demo | `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 已成为第二个真实场景 | runtime repo commits `2383487` |
 | 白名单默认 auto-dispatch | 当前频道 dispatch plan 默认 `triggered`，其他频道仍默认 `skipped` | runtime repo commits `482fe03` |
+| trading clean PASS 条件触发 | trading 当前只对 clean PASS 默认 `triggered`，其余结果默认 `skipped` | runtime live truth synced on 2026-03-20 |
+| `tmux` continuation backend | 已进入正式可选 backend 口径 | runtime live truth synced on 2026-03-20 |
 
-**结论**：proposal 主线已经有两条真实场景可对照，但它们仍处在 **thin bridge + allowlist + safe semi-auto** 阶段，不能误写成“通用全自动编排已完成”。
+**结论**：proposal 主线已经有两条真实场景可对照，并且 dispatch 口径已经细化到“白名单频道默认 triggered / trading 仅 clean PASS 默认 triggered / `tmux` 为正式可选 backend”。但整体仍处在 **thin bridge + allowlist + safe semi-auto** 阶段，不能误写成“通用全自动编排已完成”。
 
 ---
 
@@ -69,6 +71,8 @@
 | 原生 `failure-branch` | 未证实 | 当前更接近 adapter / 控制层策略 |
 | Trading 通用 workflow engine 化 | `trading_roundtable` continuation 已最小落地，但仍是 safe semi-auto | 不能把单点最小接线升级表述为 trading 全面 workflow 化 |
 | channel_roundtable 跨频道 rollout | 通用适配器虽已落地，但默认 auto-dispatch 只对白名单当前频道开启 | 其他频道继续默认 `skipped` |
+| trading clean PASS 自动续跑的完整闭环 | 目前只验证到 clean PASS 默认 `triggered` 这一层策略 | 不能把它写成 artifact-backed clean PASS 已稳定跑通 |
+| `tmux` backend 的生产闭环 | 已进入正式 backend 口径，但 trading real run 当前仍只到 dry-run | 不能把 tmux 写成已完成 trading 真实自动闭环 |
 | 何时需要 Temporal | 业务证据不足 | P2 再决策 |
 | 安全层策略系统化 | 仅有方向，无系统实现 | P1/P2 再补 |
 
@@ -120,4 +124,4 @@
 
 **我们现在选“五层架构 + 薄控制层 + Trading 首落地”，不是因为它已经全部被证明，而是因为它是当前“已验证事实最多、未验证风险最可控、与现有资产最连续”的方向。**
 
-补一句当前成熟度口径：**仓库已从纯方案 / POC 推进到 trading + current-channel 两个真实场景的最小接线，但仍明确停留在 thin bridge、allowlist、safe semi-auto，而不是默认全自动。**
+补一句当前成熟度口径：**仓库已从纯方案 / POC 推进到 trading + current-channel 两个真实场景的最小接线，并补入“白名单默认 triggered / trading 仅 clean PASS 默认 triggered / `tmux` 为正式可选 backend”的口径；但仍明确停留在 thin bridge、allowlist、safe semi-auto，而不是默认全自动。**

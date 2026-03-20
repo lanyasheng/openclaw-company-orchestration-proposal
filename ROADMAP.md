@@ -1,5 +1,7 @@
 # OpenClaw Thin Orchestration Roadmap
 
+> **Historical / superseded note（2026-03-20）**：这份根目录 ROADMAP 保留为较早阶段的工作草案；其中多处表述早于 trading/channel live continuation、clean PASS 条件触发、以及 `tmux` backend 的当前口径。当前 canonical 路线图请看：`docs/roadmap.md`；当前 live 真值请看：`docs/CURRENT_TRUTH.md`。
+>
 > 配套详单：`docs/implementation-backlog.md`
 
 ## 一句话目标

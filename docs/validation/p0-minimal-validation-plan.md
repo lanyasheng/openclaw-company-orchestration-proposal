@@ -1,5 +1,7 @@
 # P0-2：Lobster 最小验证 POC 设计
 
+> **Historical / superseded note（2026-03-20）**：这是一份 pre-live 的 P0 设计稿，保留作为原始假设与验证计划证据。当前仓库默认口径已推进到 trading/channel 两条真实场景，并补入 clean PASS 条件触发与 `tmux` backend 边界；请优先看 `../CURRENT_TRUTH.md` 与 `../validation-status.md`。
+
 ## 0. 目标与边界
 
 - [ ] 目标：验证 Lobster 能否作为 **thin orchestration shell**，先跑通最小编排闭环

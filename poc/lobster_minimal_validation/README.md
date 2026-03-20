@@ -1,5 +1,7 @@
 # Lobster 最小验证 POC
 
+> **Legacy fallback / historical note（2026-03-20）**：这个目录仍然重要，但它的定位已经收敛为 **validation asset + legacy fallback baseline**。其中 `chain-basic` 不再是 canonical 路径；当前总口径请优先看 `../../docs/CURRENT_TRUTH.md`。
+
 ## 结论先行
 
 这份 POC 已把 **chain / human-gate / failure-branch** 三条最小流程落成可审阅样例，并补了一个本地可运行 harness 来验证最小 registry、evidence、final callback 的收敛。
