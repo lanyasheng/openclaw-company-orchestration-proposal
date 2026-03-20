@@ -79,13 +79,37 @@ live bridge 已能把同一批次下的 task 结果做 fan-in 归并，形成 ba
 
 这对应原型里的 `orchestrator.py` 决策规则集合。
 
+### 2.4 当前新增的最小真实场景
+
+截至 2026-03-20，live bridge 之上又补了两条最小真实接线：
+
+1. **`trading_roundtable` continuation**
+   - 已最小落地
+   - 但仍明确是 **safe semi-auto**，不是默认无人值守自动续跑
+
+2. **`channel_roundtable` 通用适配器**
+   - 已落地为最小契约
+   - 当前 `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 频道已成为第二个真实场景
+   - 当前频道在白名单内，dispatch plan 默认 `triggered`
+   - 其他频道默认仍为 `skipped`
+
+这说明 runtime 已经从“只有原型映射点”推进到“少量 live scene 可对照”，但范围仍被故意限制在 allowlist 内。
+
 ---
 
-## 3. 当前**故意**没有自动 spawn 下一轮
+## 3. 当前**不做全局自动 spawn**；只保留白名单最小 auto-dispatch
 
 这是刻意设计，不是遗漏。
 
-当前 live patch **没有**把 decision 无条件接成下一轮真实 `spawn`，主要因为下面几个原因：
+当前 live patch **没有**把 decision 无条件接成下一轮真实 `spawn`。最新真值是：**只在白名单内保留最小 auto-dispatch**，而不是对所有 channel / workflow 默认放开。
+
+也就是说：
+- 当前架构频道可以默认生成 `triggered` 的 dispatch plan
+- 其他频道默认仍是 `skipped`
+- trading 侧也只是 continuation 已最小落地，口径仍是 safe semi-auto
+- 回退方式仍保持简单：移出白名单、关闭 auto-dispatch，或退回手动 continuation / summary-only
+
+主要原因如下：
 
 1. **安全边界还没完全收敛**
    - 自动下一轮派发会把系统从“可观测原型”升级成“主动扩散执行器”
@@ -107,7 +131,7 @@ live bridge 已能把同一批次下的 task 结果做 fan-in 归并，形成 ba
 
 所以当前口径应写成：
 
-> **live bridge 已经接到 decision，但故意停在 decision，不默认自动 spawn 下一轮。**
+> **live bridge 已经接到 decision，但不做全局默认自动 spawn；当前只有白名单内的最小 auto-dispatch，且仍属于 thin bridge / safe semi-auto。**
 
 ---
 
@@ -134,7 +158,8 @@ runtime 仓负责：
 - live hook / interceptor / plugin 生命周期代码
 - feature flag、灰度开关、回退路径
 - 真实运行时状态落盘、事件来源、异常处理、观测与运维约束
-- 后续是否打开自动下一轮 spawn 的生产策略
+- 白名单 auto-dispatch 的生产策略与默认值（如当前频道 `triggered`、其他频道 `skipped`）
+- 后续是否进一步打开自动下一轮 spawn 的生产策略
 
 适合放在 runtime 仓的内容：
 - `spawn-interceptor` live patch
@@ -168,5 +193,6 @@ runtime 仓负责：
 - callback-driven orchestrator v1 的**原型快照**已进入 proposal 仓
 - live runtime bridge 的真实落点是 **`spawn-interceptor`**
 - 当前 live 已接上：**task state / batch summary / decision**
-- 当前 live 故意**未默认自动 spawn 下一轮**
+- 当前 live 已有两条最小真实场景：`trading_roundtable` continuation + 当前架构频道 `channel_roundtable`
+- 当前 live **不做全局默认自动 spawn**；仅白名单当前频道默认 `triggered`，其他频道默认 `skipped`
 - proposal 仓负责**原型与边界**，runtime 仓负责**live patch 与生产接线**

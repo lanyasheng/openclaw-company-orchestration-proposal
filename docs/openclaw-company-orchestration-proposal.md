@@ -285,6 +285,19 @@ P0 / P1 只允许以下模板进入主方案：
 | 对审计要求高 | 需要 timeline、回执、终态区分 |
 | 自动化边界清晰 | 很适合验证控制层与安全层 |
 
+### 当前 live 真值补充（2026-03-20）
+
+在不改这份主方案主线的前提下，runtime 侧已经出现两条最小真实接线：
+
+- `trading_roundtable` continuation 已最小落地，但口径仍是 **safe semi-auto**
+- `channel_roundtable` 通用适配器已落地，其他频道后续可按最小契约接入
+- 当前 `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 频道已成为第二个真实场景
+- 当前频道已进入白名单默认 auto-dispatch：dispatch plan 默认 `triggered`
+- 其他频道仍默认 `skipped`
+- 回退仍简单：移出白名单、关闭 auto-dispatch，或退回手动 continuation
+
+这里要特别强调：这仍然是**薄桥接线**，不是把 runtime 做了一轮大 refactor，也不是把公司级编排直接升级成默认全自动闭环。
+
 ### 首批建议落地流程
 
 #### 流程 A：盘前 preflight
@@ -402,7 +415,8 @@ P0 / P1 只允许以下模板进入主方案：
 | Lobster → 真实 `subagent` 闭环 | 未真正打穿 | 不口头升级为已完成 |
 | 真并发 / 真 join | 未证实 | 不纳入 P0 承诺 |
 | 原生 failure-branch | 未证实 | 先走 adapter / 控制层策略 |
-| Trading 真实工作流 | 未跑 | 作为 P0 首个业务验证 |
+| Trading 通用 workflow engine 化 | `trading_roundtable` continuation 已最小落地，但仍是 safe semi-auto | 继续把 trading 从单点最小接线推进到更通用、可复用 workflow |
+| channel_roundtable 跨频道 rollout | 通用适配器已落地；当前架构频道默认 `triggered`，其他频道仍 `skipped` | 继续保持 allowlist + 最小契约，不默认全频道放开 |
 | 何时必须上 Temporal | 业务证据不足 | P2 再决策 |
 | 安全层策略化 | 只有原则，无完整实施 | 分阶段补齐 |
 
@@ -434,7 +448,9 @@ P0 / P1 只允许以下模板进入主方案：
 
 ### 目标
 
-**把仓库与方案叙事彻底收敛，并用 `workspace-trading` 跑出第一条真实 workflow。**
+**把仓库与方案叙事彻底收敛，并在 trading / channel 两类真实场景上继续把最小闭环做实。**
+
+> 进度口径更新（2026-03-20）：`trading_roundtable` continuation 与当前架构频道 `channel_roundtable` 已完成最小 live 接线；但仍属于 thin-bridge、allowlist、safe semi-auto 阶段。
 
 ### 交付
 

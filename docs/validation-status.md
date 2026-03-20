@@ -46,6 +46,17 @@
 
 **结论**：这些资产足以支撑路线判断，但还不能自动升级为平台级“已完成能力”。
 
+### 1.5 trading / channel roundtable 已进入最小 live integration
+
+| 主题 | 当前结论 | 证据位置 |
+|------|----------|----------|
+| `trading_roundtable` continuation | 已最小落地，但仍是 safe semi-auto | runtime repo commits `b1f44b4` |
+| `channel_roundtable` 通用适配器 | 已落地，其他频道可按最小契约接入 | runtime repo commits `171944e` |
+| 当前架构频道 demo | `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 已成为第二个真实场景 | runtime repo commits `2383487` |
+| 白名单默认 auto-dispatch | 当前频道 dispatch plan 默认 `triggered`，其他频道仍默认 `skipped` | runtime repo commits `482fe03` |
+
+**结论**：proposal 主线已经有两条真实场景可对照，但它们仍处在 **thin bridge + allowlist + safe semi-auto** 阶段，不能误写成“通用全自动编排已完成”。
+
 ---
 
 ## 2. 未验证的内容
@@ -56,7 +67,8 @@
 | 真并发 `parallel` | 未证实 | 不进入 P0 默认承诺 |
 | 真 `join` / barrier | 未证实 | 不进入 P0 默认承诺 |
 | 原生 `failure-branch` | 未证实 | 当前更接近 adapter / 控制层策略 |
-| Trading 首条真实 workflow | 未打穿 | 作为 P0 首个业务交付 |
+| Trading 通用 workflow engine 化 | `trading_roundtable` continuation 已最小落地，但仍是 safe semi-auto | 不能把单点最小接线升级表述为 trading 全面 workflow 化 |
+| channel_roundtable 跨频道 rollout | 通用适配器虽已落地，但默认 auto-dispatch 只对白名单当前频道开启 | 其他频道继续默认 `skipped` |
 | 何时需要 Temporal | 业务证据不足 | P2 再决策 |
 | 安全层策略系统化 | 仅有方向，无系统实现 | P1/P2 再补 |
 
@@ -107,3 +119,5 @@
 ## 5. 最终口径
 
 **我们现在选“五层架构 + 薄控制层 + Trading 首落地”，不是因为它已经全部被证明，而是因为它是当前“已验证事实最多、未验证风险最可控、与现有资产最连续”的方向。**
+
+补一句当前成熟度口径：**仓库已从纯方案 / POC 推进到 trading + current-channel 两个真实场景的最小接线，但仍明确停留在 thin bridge、allowlist、safe semi-auto，而不是默认全自动。**

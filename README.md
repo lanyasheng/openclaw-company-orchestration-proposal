@@ -109,6 +109,20 @@
 
 ---
 
+## 当前成熟度（2026-03-20）
+
+当前仓库口径已经不再只是“方案 + POC”。最新 live integration 真值是：
+
+- `trading_roundtable` continuation 已有**最小落地**，但定位仍是 **safe semi-auto**，不是无人值守自动闭环
+- `channel_roundtable` **通用适配器**已落地，其他频道后续可按最小契约接入
+- 当前 `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 频道已成为**第二个真实场景**
+- runtime bridge 仍是**薄桥**：只有当前白名单频道默认 auto-dispatch，当前频道的 dispatch plan 默认 `triggered`，其他频道默认 `skipped`
+- 回退仍然简单：关闭白名单 auto-dispatch 或退回手动 continuation，不需要大规模 refactor
+
+一句话：**P0 已从纯文档验证推进到双场景最小接线，但还没有升级成通用全自动 workflow engine。**
+
+---
+
 ## 已验证 / 未验证
 
 ### 已验证
@@ -128,7 +142,8 @@
 |------|----------|
 | Lobster → 真实 `subagent` 闭环 | 仍需真实接线，不可口头替代 |
 | 真并发 / 真 join / 原生 failure-branch | 还未证明，不应提前承诺 |
-| workspace-trading 首条真实工作流 | 还未作为业务首例跑通 |
+| Trading 通用 workflow engine 化 | `trading_roundtable` continuation 已最小落地，但仍是 safe semi-auto；更通用的 trading / workspace-trading workflow 仍待继续打穿 |
+| 跨频道默认 auto-dispatch | 目前只对白名单中的当前架构频道默认 `triggered`；其他频道仍默认 `skipped` |
 | 跨天 / 强恢复 / 强审计流程 | 暂未证明需要 Temporal |
 | 安全层的完整策略化 | 仍停留在原则与局部验证 |
 
