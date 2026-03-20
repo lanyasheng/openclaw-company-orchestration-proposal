@@ -206,6 +206,22 @@ python3 scripts/run_minimal_scheduler.py \
 
 ---
 
+## 新增：callback-driven orchestrator v1 原型快照
+
+为了让 proposal 仓直接反映这轮主线推进，仓库新增了：
+
+- `prototype/callback_driven_orchestrator_v1/`：callback-driven orchestrator v1 的最小原型快照
+- `docs/runtime-integration/spawn-interceptor-live-bridge.md`：live bridge 的真实落点与当前已接/未接边界说明
+
+当前口径：
+- proposal 仓已能直接展示 **task state → batch summary → decision** 这条最小闭环
+- live bridge 的真实接线落在 runtime 侧的 **`spawn-interceptor`**
+- 当前 live 已接上 task state / batch summary / decision，但**故意未默认自动 spawn 下一轮**
+
+这保证 proposal 仓同步保留“原型真值”，同时不把 runtime 仓里的 live patch 与生产细节直接混进方案主线。
+
+---
+
 ## 全局路线图
 
 ### P0：重置主线，打通最小闭环
