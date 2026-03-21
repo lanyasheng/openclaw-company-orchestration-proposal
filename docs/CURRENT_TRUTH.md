@@ -102,9 +102,10 @@
 这轮 canonical 计划入口改为：
 
 1. `overall-plan.md` — 当前真值 + P0/P1/P2 计划 + 明确边界
-2. `roadmap.md` — 按阶段展开的最小路线图
-3. `validation-status.md` — 已验证 / 未验证边界
-4. `runtime-integration/spawn-interceptor-live-bridge.md` — live bridge 当前已接/未接边界
+2. `p0-execution-backlog-2026-03-21.md` — P0 第一批执行清单、顺序与 cut line
+3. `roadmap.md` — 按阶段展开的最小路线图
+4. `validation-status.md` — 已验证 / 未验证边界
+5. `runtime-integration/spawn-interceptor-live-bridge.md` — live bridge 当前已接/未接边界
 
 如果只想先抓一句话：
 
