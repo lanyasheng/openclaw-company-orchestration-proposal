@@ -70,6 +70,15 @@
 - **但总体仍停留在 thin bridge / allowlist / safe semi-auto**；
 - **外部框架讨论的是下一阶段增强点，不是当前主链 owner。**
 
+### 2.5 WS3 暴露的是机制缺口，不是单一个案
+
+当前新增口径：
+- WS3 暴露的“waiting 但 active=0”属于 **waiting integrity / hard-close / fail-fast / anomaly detection** 机制缺口；
+- 处理顺序必须是：**先修机制，再处理个案**；
+- `heartbeat` 仍只在治理外环，负责发现异常等待并请求重查，不负责代替主链写终态。
+
+正式约束入口：`waiting-integrity-hard-close-policy-2026-03-21.md`
+
 ---
 
 ## 3. 为什么 agent 做完就停，以及接下来怎么修
