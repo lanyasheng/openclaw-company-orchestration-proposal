@@ -40,6 +40,13 @@ class _FakeSpawnTransport:
         }
 
 
+class _ZeroActiveFakeSpawnTransport(_FakeSpawnTransport):
+    def spawn(self, request: SubagentDispatchRequest) -> dict:
+        payload = super().spawn(request)
+        payload["activeTaskCount"] = 0
+        return payload
+
+
 class _FakeHttpResponse:
     def __init__(self, payload: dict) -> None:
         self.payload = payload
@@ -490,6 +497,96 @@ class MinimalSchedulerCoreTest(unittest.TestCase):
             )
             self.assertIsNone(resumed.current_step_id)
             self.assertIsNone(resumed.waiting_for)
+
+    def test_trading_like_waiting_without_active_execution_is_hard_closed(self) -> None:
+        workflow = {
+            "workflow_id": "workspace-trading.acceptance-harness.scheduler.v1",
+            "owner": "main",
+            "mode": "chain-basic",
+            "steps": [
+                {"id": "init_registry", "type": "control.init_registry"},
+                {
+                    "id": "validate_request",
+                    "type": "control.inline_payload",
+                    "state": "running",
+                    "output": {
+                        "workspace_repo_path": "{{request.workspace_repo_path}}",
+                        "input_config_path": "{{request.input_config_path}}",
+                    },
+                },
+                {
+                    "id": "dispatch_acceptance_subagent",
+                    "type": "subagent.dispatch",
+                    "task": "python3 research/run_acceptance_harness.py --input {{request.input_config_path}}",
+                    "workdir": "{{request.workspace_repo_path}}",
+                    "label": "acceptance-{{request.run_label}}",
+                    "timeout_seconds": 1800,
+                    "spawn_args": {"mode": "run", "thinking": "low"},
+                },
+                {
+                    "id": "await_terminal",
+                    "type": "subagent.await_terminal",
+                    "child_session_from": "dispatch_acceptance_subagent",
+                    "signal_key": "terminal",
+                },
+                {"id": "collect_and_classify", "type": "control.classify_terminal"},
+                {
+                    "id": "final_callback",
+                    "type": "callback.send_once",
+                    "payloadFields": ["task_id", "workflow_id", "workflow_state", "run_label"],
+                },
+            ],
+        }
+        request = {
+            "task_id": "tsk_trading_scheduler_zero_active_001",
+            "workspace_repo_path": "repos/workspace-trading",
+            "input_config_path": "research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json",
+            "run_label": "dry-run-zero-active",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            transport = _ZeroActiveFakeSpawnTransport()
+            dispatcher = self.make_dispatcher(Path(temp_dir), transport=transport)
+            result = dispatcher.dispatch(workflow, task_id=request["task_id"], request=request)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.record["state"], "failed")
+            self.assertEqual(result.record["runtime"], "lobster")
+            self.assertEqual(result.record["callback_status"], "pending")
+            self.assertEqual(
+                result.record["continuation"],
+                {
+                    "next_step": "rerun_subagent_dispatch_with_fresh_session",
+                    "next_owner": "main",
+                    "next_backend": "manual",
+                    "auto_continue_if": ["operator_confirms_rerun"],
+                    "stop_if": ["manual_closeout", "accept_missing_artifact"],
+                    "stopped_because": "subagent_waiting_without_active_execution",
+                },
+            )
+            self.assertEqual(
+                result.record["evidence"]["waiting_anomaly"],
+                {
+                    "code": "subagent_waiting_without_active_execution",
+                    "resolution": "dropped",
+                    "summary": "waiting_for=subagent_terminal for agent:main:subagent:child-001 but active_task_count=0",
+                    "child_session_key": "agent:main:subagent:child-001",
+                    "active_task_count": 0,
+                },
+            )
+            self.assertEqual(
+                result.record["evidence"]["closeout"],
+                {
+                    "stopped_because": "subagent_waiting_without_active_execution",
+                    "next_step": "rerun_subagent_dispatch_with_fresh_session",
+                    "next_owner": "main",
+                    "dispatch_readiness": "blocked",
+                },
+            )
+            self.assertEqual(result.record["evidence"]["scheduler"]["steps"]["await_terminal"]["status"], "dropped")
+            self.assertIsNone(result.record["evidence"]["scheduler"]["waiting_for"])
+            self.assertIsNone(result.waiting_for)
+            self.assertEqual(len(transport.requests), 1)
 
 
 if __name__ == "__main__":

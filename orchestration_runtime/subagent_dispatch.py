@@ -279,6 +279,7 @@ class SubagentDispatchAdapter:
         run_id = payload.get("runId") or payload.get("run_id")
         status = str(payload.get("status") or "accepted")
         mode = str(payload.get("mode") or dispatch_request.spawn_args.get("mode") or "run")
+        active_task_count = payload.get("activeTaskCount") if "activeTaskCount" in payload else payload.get("active_task_count")
 
         run_handle = {
             "status": status,
@@ -286,6 +287,8 @@ class SubagentDispatchAdapter:
             "run_id": run_id,
             "transport": self.transport.transport_name,
         }
+        if active_task_count is not None:
+            run_handle["active_task_count"] = active_task_count
         dispatch_evidence = {
             "transport": self.transport.transport_name,
             "task_id": dispatch_request.task_id,
@@ -301,6 +304,7 @@ class SubagentDispatchAdapter:
                 "mode": mode,
                 "run_id": run_id,
                 "child_session_key": child_session_key,
+                "active_task_count": active_task_count,
             },
             "prompt_preview": dispatch_request.prompt[:240],
         }

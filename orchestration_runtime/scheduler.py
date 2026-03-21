@@ -111,6 +111,15 @@ class WorkflowDispatcher:
         if scheduler.get("waiting_for") and signal is None:
             waiting_for = scheduler.get("waiting_for")
             if not self._can_resume_without_signal(task_id, waiting_for):
+                anomaly = self._detect_waiting_anomaly(record, scheduler, waiting_for)
+                if anomaly is not None:
+                    return self._hard_close_waiting_anomaly(
+                        task_id=task_id,
+                        record=record,
+                        scheduler=scheduler,
+                        waiting_for=waiting_for,
+                        anomaly=anomaly,
+                    )
                 return DispatchResult(
                     task_id=task_id,
                     status="waiting",
@@ -160,18 +169,25 @@ class WorkflowDispatcher:
                     "last_updated_at": _now_iso(),
                     "summary": str(exc),
                 }
+                continuation = self._build_failure_continuation(step_id, str(exc))
+                evidence_merge = {
+                    "scheduler": scheduler,
+                    "failure": {
+                        "failed_step": step_id,
+                        "error": str(exc),
+                    },
+                }
+                evidence_merge = self._attach_closeout_evidence(
+                    evidence_merge,
+                    record={**record, "state": "failed", "runtime": "lobster"},
+                    continuation=continuation,
+                )
                 record = self.registry.patch(
                     task_id,
                     state="failed",
                     runtime="lobster",
-                    evidence_merge={
-                        "scheduler": scheduler,
-                        "failure": {
-                            "failed_step": step_id,
-                            "error": str(exc),
-                        },
-                    },
-                    continuation=self._build_failure_continuation(step_id, str(exc)),
+                    evidence_merge=evidence_merge,
+                    continuation=continuation,
                 )
                 return DispatchResult(
                     task_id=task_id,
@@ -226,11 +242,26 @@ class WorkflowDispatcher:
                     next_callback_status=outcome.callback_status,
                 )
                 continuation = self._resolve_continuation(preview_context, outcome)
+                anomaly = self._detect_waiting_anomaly(preview_context.record, scheduler, waiting_for)
+                if anomaly is not None:
+                    return self._hard_close_waiting_anomaly(
+                        task_id=task_id,
+                        record=record,
+                        scheduler=scheduler,
+                        waiting_for=waiting_for,
+                        anomaly=anomaly,
+                        executed_steps=executed_steps,
+                    )
+                evidence_merge = self._attach_closeout_evidence(
+                    self._build_evidence_merge(scheduler, outcome),
+                    record=preview_context.record,
+                    continuation=continuation,
+                )
                 record = self.registry.patch(
                     task_id,
                     state=wait_state,
                     runtime=wait_runtime,
-                    evidence_merge=self._build_evidence_merge(scheduler, outcome),
+                    evidence_merge=evidence_merge,
                     callback_status=outcome.callback_status,
                     continuation=continuation,
                 )
@@ -267,11 +298,16 @@ class WorkflowDispatcher:
                 next_callback_status=outcome.callback_status,
             )
             continuation = self._resolve_continuation(preview_context, outcome)
+            evidence_merge = self._attach_closeout_evidence(
+                self._build_evidence_merge(scheduler, outcome),
+                record=preview_context.record,
+                continuation=continuation,
+            )
             record = self.registry.patch(
                 task_id,
                 state=next_state,
                 runtime=next_runtime,
-                evidence_merge=self._build_evidence_merge(scheduler, outcome),
+                evidence_merge=evidence_merge,
                 callback_status=outcome.callback_status,
                 continuation=continuation,
             )
@@ -358,6 +394,250 @@ class WorkflowDispatcher:
         evidence_merge = dict(outcome.evidence_merge)
         evidence_merge["scheduler"] = scheduler
         return evidence_merge
+
+    def _attach_closeout_evidence(
+        self,
+        evidence_merge: Dict[str, Any],
+        *,
+        record: Dict[str, Any],
+        continuation: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        merged = dict(evidence_merge)
+        closeout = self._build_closeout_payload(record, continuation)
+        if closeout is not None:
+            merged["closeout"] = closeout
+        return merged
+
+    def _build_closeout_payload(
+        self,
+        record: Mapping[str, Any],
+        continuation: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(continuation, Mapping):
+            return None
+        stopped_because = str(continuation.get("stopped_because") or "").strip()
+        if not stopped_because:
+            return None
+
+        state = str(record.get("state") or "").strip()
+        next_owner = continuation.get("next_owner")
+        next_backend = continuation.get("next_backend")
+        dispatch_readiness = "not_applicable"
+
+        if state == "waiting_human" or next_owner == "human" or next_backend == "human":
+            dispatch_readiness = "human_gate"
+        elif stopped_because.startswith("waiting_for_"):
+            dispatch_readiness = "blocked"
+        elif stopped_because == "final_callback_delivery_failed":
+            dispatch_readiness = "blocked"
+        elif stopped_because.startswith("step_failed:") or state in {"failed", "degraded"}:
+            dispatch_readiness = "blocked"
+        elif state == "completed":
+            dispatch_readiness = "ready" if continuation.get("next_step") else "not_applicable"
+        elif state in {"queued", "running"}:
+            dispatch_readiness = "blocked"
+
+        return {
+            "stopped_because": stopped_because,
+            "next_step": continuation.get("next_step"),
+            "next_owner": next_owner,
+            "dispatch_readiness": dispatch_readiness,
+        }
+
+    def _detect_waiting_anomaly(
+        self,
+        record: Mapping[str, Any],
+        scheduler: Mapping[str, Any],
+        waiting_for: Any,
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(waiting_for, Mapping):
+            return None
+        if waiting_for.get("kind") != "subagent_terminal":
+            return None
+
+        evidence = record.get("evidence")
+        if not isinstance(evidence, Mapping):
+            return {
+                "code": "subagent_waiting_without_evidence",
+                "resolution": "dropped",
+                "summary": "waiting_for=subagent_terminal but evidence is missing, so waiting cannot be trusted",
+            }
+
+        step_id = str(waiting_for.get("step_id") or scheduler.get("current_step_id") or "await_terminal")
+        step_evidence = evidence.get(step_id)
+        child_session_key = None
+        if isinstance(step_evidence, Mapping):
+            raw_child_session_key = step_evidence.get("child_session_key")
+            if raw_child_session_key is not None:
+                child_session_key = str(raw_child_session_key)
+        if child_session_key is None and evidence.get("child_session_key") is not None:
+            child_session_key = str(evidence.get("child_session_key"))
+
+        if not child_session_key:
+            return {
+                "code": "subagent_waiting_without_child_session_key",
+                "resolution": "dropped",
+                "summary": "waiting_for=subagent_terminal but child_session_key is missing, so there is no bound execution to wait on",
+            }
+
+        dispatch_handle = self._find_subagent_dispatch_handle(evidence, child_session_key)
+        if dispatch_handle is None:
+            return {
+                "code": "subagent_waiting_without_dispatch_evidence",
+                "resolution": "dropped",
+                "summary": f"waiting_for=subagent_terminal for {child_session_key} but no dispatch/run_handle evidence remains",
+                "child_session_key": child_session_key,
+            }
+
+        run_handle = dispatch_handle.get("run_handle") if isinstance(dispatch_handle.get("run_handle"), Mapping) else {}
+        active_task_count = self._coerce_optional_int(
+            self._first_non_empty(
+                run_handle.get("active_task_count"),
+                dispatch_handle.get("active_task_count"),
+                self._nested_get(dispatch_handle, "dispatch_evidence", "active_task_count"),
+                self._nested_get(dispatch_handle, "dispatch_evidence", "response_excerpt", "active_task_count"),
+            )
+        )
+        if active_task_count is not None and active_task_count <= 0:
+            return {
+                "code": "subagent_waiting_without_active_execution",
+                "resolution": "dropped",
+                "summary": f"waiting_for=subagent_terminal for {child_session_key} but active_task_count={active_task_count}",
+                "child_session_key": child_session_key,
+                "active_task_count": active_task_count,
+            }
+
+        run_status = str(
+            self._first_non_empty(
+                run_handle.get("status"),
+                dispatch_handle.get("status"),
+                self._nested_get(dispatch_handle, "dispatch_evidence", "response_excerpt", "status"),
+            )
+            or ""
+        ).strip().lower()
+        if run_status in {"failed", "timeout", "timed_out", "cancelled", "canceled", "dropped", "rejected", "closed", "exited"}:
+            return {
+                "code": f"subagent_waiting_after_{run_status}",
+                "resolution": "dropped",
+                "summary": f"waiting_for=subagent_terminal for {child_session_key} but run_handle.status={run_status}",
+                "child_session_key": child_session_key,
+                "run_status": run_status,
+            }
+
+        return None
+
+    def _hard_close_waiting_anomaly(
+        self,
+        *,
+        task_id: str,
+        record: Dict[str, Any],
+        scheduler: Dict[str, Any],
+        waiting_for: Mapping[str, Any],
+        anomaly: Mapping[str, Any],
+        executed_steps: Optional[List[str]] = None,
+    ) -> DispatchResult:
+        step_id = str(waiting_for.get("step_id") or scheduler.get("current_step_id") or "await_terminal")
+        summary = str(anomaly.get("summary") or anomaly.get("code") or "waiting anomaly hard-closed")
+        scheduler["status"] = "failed"
+        scheduler["waiting_for"] = None
+        scheduler["current_step_id"] = None
+        scheduler.setdefault("timeline", []).append(
+            {
+                "step_id": step_id,
+                "event": "hard_closed",
+                "at": _now_iso(),
+                "summary": summary,
+                "reason_code": anomaly.get("code"),
+            }
+        )
+        scheduler.setdefault("steps", {})[step_id] = {
+            "status": str(anomaly.get("resolution") or "dropped"),
+            "last_updated_at": _now_iso(),
+            "summary": summary,
+            "anomaly": dict(anomaly),
+        }
+
+        continuation = build_continuation_contract(
+            next_step="rerun_subagent_dispatch_with_fresh_session",
+            next_owner="main",
+            next_backend="manual",
+            auto_continue_if=["operator_confirms_rerun"],
+            stop_if=["manual_closeout", "accept_missing_artifact"],
+            stopped_because=str(anomaly.get("code") or "subagent_waiting_without_active_execution"),
+        )
+        evidence_merge = {
+            "scheduler": scheduler,
+            "waiting_anomaly": dict(anomaly),
+        }
+        preview_record = {**record, "state": "failed", "runtime": "lobster"}
+        evidence_merge = self._attach_closeout_evidence(
+            evidence_merge,
+            record=preview_record,
+            continuation=continuation,
+        )
+        patched = self.registry.patch(
+            task_id,
+            state="failed",
+            runtime="lobster",
+            evidence_merge=evidence_merge,
+            continuation=continuation,
+        )
+        return DispatchResult(
+            task_id=task_id,
+            status="failed",
+            record=patched,
+            executed_steps=list(executed_steps or []),
+            current_step_id=None,
+            waiting_for=None,
+            error=summary,
+        )
+
+    @staticmethod
+    def _find_subagent_dispatch_handle(evidence: Mapping[str, Any], child_session_key: str) -> Optional[Dict[str, Any]]:
+        top_level_run_handle = evidence.get("run_handle")
+        if isinstance(top_level_run_handle, Mapping) and evidence.get("child_session_key") == child_session_key:
+            return {
+                "child_session_key": child_session_key,
+                "run_handle": dict(top_level_run_handle),
+            }
+
+        for value in evidence.values():
+            if not isinstance(value, Mapping):
+                continue
+            candidate_child_session_key = value.get("child_session_key")
+            if candidate_child_session_key is not None and str(candidate_child_session_key) != child_session_key:
+                continue
+            if isinstance(value.get("run_handle"), Mapping) or isinstance(value.get("dispatch_evidence"), Mapping):
+                return dict(value)
+        return None
+
+    @staticmethod
+    def _nested_get(value: Any, *path: str) -> Any:
+        current = value
+        for segment in path:
+            if not isinstance(current, Mapping):
+                return None
+            current = current.get(segment)
+        return current
+
+    @staticmethod
+    def _first_non_empty(*values: Any) -> Any:
+        for value in values:
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            return value
+        return None
+
+    @staticmethod
+    def _coerce_optional_int(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _build_preview_context(
         self,
