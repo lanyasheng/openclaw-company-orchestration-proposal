@@ -2,101 +2,102 @@
 
 ## 结论先行
 
-**路线图不是按“技术酷炫度”排优先级，而是按“先统一主线、再跑真实业务、最后再上重型能力”排序。**
+**接下来的路线图不再按“先上更多框架/更多循环”排序，而是按“先规划、先 contract、再自动推进、最后才 selective heavy pilot”排序。**
 
 ---
 
-## P0：主线重置 + Trading 最小闭环
+## P0：planning default + continuation contract + issue lane baseline + heartbeat boundary freeze
 
 ### 目标
 
-把仓库从“零散验证资产集合”重置为“workflow engine 方案仓”，并让 `workspace-trading` 成为首个真实落地场景。
+先把系统为什么停、停在哪、下一步怎么接这件事说清楚，并变成默认协议。
 
 ### 必交付
 
-1. README / 执行摘要 / 主方案文档完成重写
-2. 五层架构口径冻结
-3. task registry / state machine / callback 语义冻结
-4. 文档结构分层：主线 / supporting / validation
-5. `workspace-trading` 选定 1 条 dry-run 或 shadow-run 流程
+1. **gstack-style planning default**
+   - 非 trivial feature / bugfix / workflow 设计先出 planning artifact；
+   - planning artifact 至少包含：目标/非目标、范围拆分、风险/失败路径、验证/测试、下一步 owner。
 
-### 推荐流程
+2. **continuation contract v1**
+   - 统一 closeout 字段：`summary`、`decision`、`stopped_because`、`next_step`、`next_owner`、`dispatch_readiness`。
 
-- 盘前 preflight
-- 盘中风险守门
-- 盘后回执与总结
+3. **coding issue lane baseline**
+   - 先冻结 `issue_to_patch.v1` 这类窄 lane 的输入输出；
+   - 让单 issue、单仓、单 acceptance 的 coding continuation 可标准化。
+
+4. **heartbeat boundary freeze**
+   - heartbeat 只用于 wake / liveness / 巡检 / 催办 / 告警；
+   - 禁止 heartbeat 写 terminal truth、直接 dispatch 下一跳、接管 gate。
 
 ### P0 完成标准
 
-- 新人 5 分钟内能看懂仓库主线
-- `subagent` / watcher / human-gate 的边界不再混乱
-- 至少 1 条 Trading 流程进入 workflow engine 视角
-- 所有“已验证”与“未验证”边界写清楚
+- 默认回答“为什么 agent 停了”不再靠聊天猜；
+- 执行层 closeout 能说明当前为何停、谁该接、是否可 dispatch；
+- 至少有一条 coding 窄 lane 可被稳定 handoff；
+- heartbeat 不再被误当状态机。
 
 ---
 
-## P1：控制层可复用 + Trading Pilot 稳定化
+## P1：DeepAgents / SWE-agent leaf pilots + planning->execution handoff standardization + stopped_because/next_step contract
 
 ### 目标
 
-让 workflow engine 从“能说清楚”变成“能复用”。
+在不动 control plane 的前提下，验证叶子执行增强是否真能提升完成质量与 handoff 质量。
 
 ### 必交付
 
-1. `subagent / browser / message / cron` adapter contract
-2. CHAIN / HUMAN_GATE / FAILURE_BRANCH 模板固化
-3. timeline / observability / escalation / retry 基线
-4. Trading pilot 稳定化 + 回退开关
-5. human-gate / callback / outbox 进入控制层标准能力
+1. **DeepAgents / SWE-agent leaf pilots**
+   - DeepAgents 风格 profile 只进 `coding-subagent` 内部；
+   - SWE-agent 只进 `issue_to_patch` 窄 lane。
 
-### 有条件交付
+2. **planning -> execution handoff 标准化**
+   - planning artifact 字段稳定，执行、review、QA 可以直接消费；
+   - 避免每层重新解释一次任务定义。
 
-以下能力只有在真实验证通过后才进入：
-- `parallel`
-- `join`
-- 更复杂失败补偿树
+3. **closeout 标准字段落地**
+   - `stopped_because / next_step / next_owner` 成为默认 closeout 字段；
+   - callback 与 operator 视角都能直接读懂当前状态。
 
 ### P1 完成标准
 
-- 模板与状态机可被复用
-- Trading pilot 能稳定跑
-- callback、审计、证据链不依赖单个 POC
+- 叶子层完成率、artifact 完整度或 callback 清晰度明显优于现状；
+- control plane 没被外部框架接管；
+- 人工补洞成本下降。
 
 ---
 
-## P2：Selective Durability + 安全层策略化
+## P2：selective durable / analysis-graph pilot（LangGraph/Temporal 继续观察，不进主链）
 
 ### 目标
 
-只把真正值得重型化的链路升级，而不是全仓库进入基础设施改造期。
+只在高价值少数场景试重型能力，不把全仓迁成 durable/graph-first。
 
 ### 必交付
 
-1. 识别跨天、强恢复、强审计场景
-2. 决定哪些流程需要 Temporal 级 durable execution
-3. 安全层进入策略化：policy / allowlist / isolation / approval trail
-4. 明确多业务场景扩展边界
+1. 识别跨天、强恢复、强审计的高价值 durable 场景；
+2. 识别单 agent 内确实复杂、值得 graph 化的 analysis 场景；
+3. 只对这些场景做 fenced pilot，继续观察 LangGraph / Temporal。
 
-### 不做什么
+### 明确不做什么
 
-- 不全量迁移到 Temporal
-- 不在没有业务证据时自研通用 DAG 平台
-- 不让 LangGraph 进入公司级 backbone 位置
+- 不把 LangGraph 抬成公司级 control plane；
+- 不做 Temporal-first 全局迁移；
+- 不因为“框架先进”就反向改写 OpenClaw 主链。
 
 ### P2 完成标准
 
-- 重型 runtime 只服务高价值链路
-- 所有升级均可 cutover / rollback
-- 安全层不再只是原则，而是制度化能力
+- durable/graph 只进入高价值少数场景；
+- 任一 pilot 都可 rollback；
+- OpenClaw 仍持有 control plane。
 
 ---
 
 ## 最终节奏
 
 ```text
-P0：把仓库主线和首条真实业务跑通
-P1：把控制层做成可复用能力
-P2：只把必须重型化的部分升级
+P0：先把 planning、contract、issue lane、heartbeat boundary 定成默认
+P1：再用 DeepAgents / SWE-agent 做叶子 pilot，补齐 handoff 标准
+P2：最后只对少数高价值 durable / analysis-graph 场景做 selective 试点
 ```
 
-**先统一，后复用，再重型化。**
+**先规划，先 contract，再自动推进；最后才 selective heavy pilot。**
