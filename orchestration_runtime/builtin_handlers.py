@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, Optional
 
 from .callback_transport import CallbackTransportResult, FileCallbackTransport
 from .scheduler import StepContext, StepOutcome
-from .task_registry import TERMINAL_STATES
+from .task_registry import TERMINAL_STATES, build_continuation_contract, normalize_continuation_contract
 from .terminal_ingest import SubagentTerminalIngest
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
@@ -431,7 +431,8 @@ def callback_send_once_handler(context: StepContext) -> StepOutcome:
             summary="callback 已存在，跳过重复发送",
         )
 
-    callback_payload = _build_callback_payload(context)
+    callback_continuation = _build_callback_continuation(context)
+    callback_payload = _build_callback_payload(context, continuation=callback_continuation)
     transport = FileCallbackTransport(context.registry.root_dir)
     transport_result = transport.send(
         task_id=context.task_id,
@@ -441,6 +442,16 @@ def callback_send_once_handler(context: StepContext) -> StepOutcome:
     )
     callback_evidence = _build_callback_evidence(context, callback_payload, transport_result)
     summary = "final callback 已发送" if transport_result.callback_status != "failed" else "final callback 发送失败"
+    outcome_continuation = callback_continuation
+    if transport_result.callback_status == "failed":
+        outcome_continuation = build_continuation_contract(
+            next_step="retry_final_callback_delivery",
+            next_owner="callback_plane",
+            next_backend="callback",
+            auto_continue_if=["callback_transport_recovered", "manual_retry_requested"],
+            stop_if=["manual_abort", "task_cancelled"],
+            stopped_because="final_callback_delivery_failed",
+        )
     return StepOutcome(
         kind="completed",
         state=state,
@@ -452,6 +463,7 @@ def callback_send_once_handler(context: StepContext) -> StepOutcome:
             context.step["id"]: callback_payload,
         },
         summary=summary,
+        continuation=outcome_continuation,
     )
 
 
@@ -483,14 +495,59 @@ def _build_callback_evidence(
 
 
 
-def _build_callback_payload(context: StepContext) -> Dict[str, Any]:
+def _build_callback_payload(
+    context: StepContext,
+    *,
+    continuation: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     payload = {}
     for field_name, source in _iter_payload_fields(context.step.get("payloadFields", [])):
         payload[field_name] = _resolve_callback_field(source, context)
+    if continuation is not None:
+        payload["continuation"] = continuation
     summary_template = context.step.get("summary")
     if summary_template is not None:
         payload["summary"] = _render_value(summary_template, context)
     return payload
+
+
+
+def _build_callback_continuation(context: StepContext) -> Dict[str, Any]:
+    configured = context.step.get("continuation")
+    if isinstance(configured, dict):
+        return normalize_continuation_contract(_render_value(configured, context))
+
+    existing = context.record.get("continuation")
+    if isinstance(existing, dict):
+        return normalize_continuation_contract(existing)
+
+    state = context.record["state"]
+    if state == "completed":
+        return build_continuation_contract(
+            next_step="review_result_and_decide_followup_dispatch",
+            next_owner="main",
+            next_backend="manual",
+            auto_continue_if=[],
+            stop_if=["no_follow_up_needed", "manual_closeout"],
+            stopped_because="workflow_completed",
+        )
+    if state == "degraded":
+        return build_continuation_contract(
+            next_step="review_degraded_result_and_decide_retry_or_fallback",
+            next_owner="main",
+            next_backend="manual",
+            auto_continue_if=["operator_confirms_retry", "operator_confirms_followup_dispatch"],
+            stop_if=["manual_closeout", "accept_degraded_outcome"],
+            stopped_because="workflow_degraded",
+        )
+    return build_continuation_contract(
+        next_step="triage_failure_and_decide_retry_or_fallback",
+        next_owner="main",
+        next_backend="manual",
+        auto_continue_if=["operator_confirms_retry", "operator_confirms_fallback_dispatch"],
+        stop_if=["manual_closeout", "cancel_task"],
+        stopped_because="workflow_failed",
+    )
 
 
 
@@ -514,6 +571,8 @@ def _resolve_callback_field(field: str, context: StepContext) -> Any:
         return context.workflow["workflow_id"]
     if field == "workflow_state":
         return context.record["state"]
+    if field == "continuation":
+        return context.record.get("continuation")
     if field in context.request:
         return context.request[field]
     if field in context.step_outputs:

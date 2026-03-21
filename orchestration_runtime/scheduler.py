@@ -4,7 +4,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from .task_registry import FileTaskRegistry, TERMINAL_STATES
+from .context_render import render_context_value
+from .task_registry import (
+    FileTaskRegistry,
+    TERMINAL_STATES,
+    build_continuation_contract,
+    deep_merge,
+    normalize_continuation_contract,
+)
 
 
 StepHandler = Callable[["StepContext"], "StepOutcome"]
@@ -37,6 +44,7 @@ class StepOutcome:
     step_output: Any = None
     wait_kind: Optional[str] = None
     summary: Optional[str] = None
+    continuation: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -163,6 +171,7 @@ class WorkflowDispatcher:
                             "error": str(exc),
                         },
                     },
+                    continuation=self._build_failure_continuation(step_id, str(exc)),
                 )
                 return DispatchResult(
                     task_id=task_id,
@@ -203,12 +212,27 @@ class WorkflowDispatcher:
                 scheduler["waiting_for"] = waiting_for
                 wait_state = outcome.state or ("waiting_human" if outcome.wait_kind == "human" else "running")
                 wait_runtime = outcome.runtime or ("human" if outcome.wait_kind == "human" else "subagent")
+                preview_context = self._build_preview_context(
+                    workflow=normalized_workflow,
+                    step=step,
+                    task_id=task_id,
+                    request=request,
+                    signal=signal,
+                    record=record,
+                    scheduler=scheduler,
+                    outcome=outcome,
+                    next_state=wait_state,
+                    next_runtime=wait_runtime,
+                    next_callback_status=outcome.callback_status,
+                )
+                continuation = self._resolve_continuation(preview_context, outcome)
                 record = self.registry.patch(
                     task_id,
                     state=wait_state,
                     runtime=wait_runtime,
                     evidence_merge=self._build_evidence_merge(scheduler, outcome),
                     callback_status=outcome.callback_status,
+                    continuation=continuation,
                 )
                 return DispatchResult(
                     task_id=task_id,
@@ -229,12 +253,27 @@ class WorkflowDispatcher:
             next_runtime = outcome.runtime or "lobster"
             scheduler["status"] = next_state if next_state in TERMINAL_STATES else "running"
 
+            preview_context = self._build_preview_context(
+                workflow=normalized_workflow,
+                step=step,
+                task_id=task_id,
+                request=request,
+                signal=signal,
+                record=record,
+                scheduler=scheduler,
+                outcome=outcome,
+                next_state=next_state,
+                next_runtime=next_runtime,
+                next_callback_status=outcome.callback_status,
+            )
+            continuation = self._resolve_continuation(preview_context, outcome)
             record = self.registry.patch(
                 task_id,
                 state=next_state,
                 runtime=next_runtime,
                 evidence_merge=self._build_evidence_merge(scheduler, outcome),
                 callback_status=outcome.callback_status,
+                continuation=continuation,
             )
 
         final_status = record["state"] if record["state"] in TERMINAL_STATES else "completed"
@@ -319,6 +358,137 @@ class WorkflowDispatcher:
         evidence_merge = dict(outcome.evidence_merge)
         evidence_merge["scheduler"] = scheduler
         return evidence_merge
+
+    def _build_preview_context(
+        self,
+        *,
+        workflow: Dict[str, Any],
+        step: Dict[str, Any],
+        task_id: str,
+        request: Dict[str, Any],
+        signal: Optional[Dict[str, Any]],
+        record: Dict[str, Any],
+        scheduler: Dict[str, Any],
+        outcome: StepOutcome,
+        next_state: str,
+        next_runtime: str,
+        next_callback_status: Optional[str],
+    ) -> StepContext:
+        preview_record = dict(record)
+        preview_record["state"] = next_state
+        preview_record["runtime"] = next_runtime
+        if next_callback_status is not None:
+            preview_record["callback_status"] = next_callback_status
+        preview_record["evidence"] = deep_merge(record.get("evidence", {}), self._build_evidence_merge(scheduler, outcome))
+
+        preview_outputs = dict(scheduler.get("outputs", {}))
+        if outcome.step_output is not None:
+            preview_outputs[step["id"]] = outcome.step_output
+
+        return StepContext(
+            workflow=workflow,
+            step=step,
+            task_id=task_id,
+            request=request,
+            signal=signal,
+            record=preview_record,
+            registry=self.registry,
+            scheduler=scheduler,
+            step_outputs=preview_outputs,
+        )
+
+    def _resolve_continuation(self, context: StepContext, outcome: StepOutcome) -> Optional[Dict[str, Any]]:
+        if outcome.continuation is not None:
+            return normalize_continuation_contract(outcome.continuation)
+
+        configured = context.step.get("continuation")
+        if isinstance(configured, Mapping):
+            rendered = render_context_value(configured, context)
+            return normalize_continuation_contract(rendered)
+
+        if outcome.kind == "waiting":
+            return self._build_waiting_continuation(context, outcome)
+
+        callback_status = context.record.get("callback_status")
+        if callback_status == "failed":
+            return build_continuation_contract(
+                next_step="retry_final_callback_delivery",
+                next_owner="callback_plane",
+                next_backend="callback",
+                auto_continue_if=["callback_transport_recovered", "manual_retry_requested"],
+                stop_if=["manual_abort", "task_cancelled"],
+                stopped_because="final_callback_delivery_failed",
+            )
+
+        state = context.record.get("state")
+        if state == "completed":
+            return build_continuation_contract(
+                next_step="review_result_and_decide_followup_dispatch",
+                next_owner="main",
+                next_backend="manual",
+                auto_continue_if=[],
+                stop_if=["no_follow_up_needed", "manual_closeout"],
+                stopped_because="workflow_completed",
+            )
+        if state == "degraded":
+            return build_continuation_contract(
+                next_step="review_degraded_result_and_decide_retry_or_fallback",
+                next_owner="main",
+                next_backend="manual",
+                auto_continue_if=["operator_confirms_retry", "operator_confirms_followup_dispatch"],
+                stop_if=["manual_closeout", "accept_degraded_outcome"],
+                stopped_because="workflow_degraded",
+            )
+        if state == "failed":
+            return build_continuation_contract(
+                next_step="triage_failure_and_decide_retry_or_fallback",
+                next_owner="main",
+                next_backend="manual",
+                auto_continue_if=["operator_confirms_retry", "operator_confirms_fallback_dispatch"],
+                stop_if=["manual_closeout", "cancel_task"],
+                stopped_because="workflow_failed",
+            )
+        return None
+
+    def _build_waiting_continuation(self, context: StepContext, outcome: StepOutcome) -> Dict[str, Any]:
+        wait_kind = outcome.wait_kind or "external"
+        if wait_kind == "human":
+            return build_continuation_contract(
+                next_step=context.step["id"],
+                next_owner="human",
+                next_backend="human",
+                auto_continue_if=["human_decision_received"],
+                stop_if=["decision_timeout", "manual_abort"],
+                stopped_because="waiting_for_human_decision",
+            )
+        if wait_kind == "subagent_terminal":
+            return build_continuation_contract(
+                next_step=context.step["id"],
+                next_owner="subagent",
+                next_backend="subagent",
+                auto_continue_if=["subagent_terminal_received"],
+                stop_if=["subagent_timeout", "manual_abort"],
+                stopped_because="waiting_for_subagent_terminal",
+            )
+        return build_continuation_contract(
+            next_step=context.step["id"],
+            next_owner=context.workflow.get("owner", "main"),
+            next_backend="manual",
+            auto_continue_if=[f"{wait_kind}_signal_received"],
+            stop_if=["manual_abort"],
+            stopped_because=f"waiting_for_{wait_kind}",
+        )
+
+    @staticmethod
+    def _build_failure_continuation(step_id: str, error: str) -> Dict[str, Any]:
+        return build_continuation_contract(
+            next_step="triage_failure_and_decide_retry_or_fallback",
+            next_owner="main",
+            next_backend="manual",
+            auto_continue_if=["operator_confirms_retry", "operator_confirms_fallback_dispatch"],
+            stop_if=["manual_closeout", "cancel_task"],
+            stopped_because=f"step_failed:{step_id}:{error}",
+        )
 
 
 def _now_iso() -> str:

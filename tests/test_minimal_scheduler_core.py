@@ -92,6 +92,14 @@ class FileTaskRegistryTest(unittest.TestCase):
                     "child": {"b": 2},
                     "summary": "spawned",
                 },
+                continuation={
+                    "next_step": "await_terminal",
+                    "next_owner": "subagent",
+                    "next_backend": "subagent",
+                    "auto_continue_if": "subagent_terminal_received",
+                    "stop_if": ["manual_abort"],
+                    "stopped_because": "waiting_for_subagent_terminal",
+                },
             )
 
             self.assertEqual(record["task_id"], "tsk_registry_core_001")
@@ -101,6 +109,17 @@ class FileTaskRegistryTest(unittest.TestCase):
             self.assertEqual(record["evidence"]["workflow"], {"id": "chain-basic", "version": "v1"})
             self.assertEqual(record["evidence"]["child"], {"a": 1, "b": 2})
             self.assertEqual(record["evidence"]["summary"], "spawned")
+            self.assertEqual(
+                record["continuation"],
+                {
+                    "next_step": "await_terminal",
+                    "next_owner": "subagent",
+                    "next_backend": "subagent",
+                    "auto_continue_if": ["subagent_terminal_received"],
+                    "stop_if": ["manual_abort"],
+                    "stopped_because": "waiting_for_subagent_terminal",
+                },
+            )
             self.assertTrue((Path(temp_dir) / "tasks" / "tsk_registry_core_001.json").exists())
 
 
@@ -224,11 +243,73 @@ class MinimalSchedulerCoreTest(unittest.TestCase):
                     "task_id": "tsk_chain_scheduler_001",
                     "workflow_id": "chain-basic.scheduler.v1",
                     "workflow_state": "completed",
+                    "continuation": {
+                        "next_step": "review_result_and_decide_followup_dispatch",
+                        "next_owner": "main",
+                        "next_backend": "manual",
+                        "auto_continue_if": [],
+                        "stop_if": ["no_follow_up_needed", "manual_closeout"],
+                        "stopped_because": "workflow_completed",
+                    },
                     "summary": {
                         "workflow": "chain-basic",
                         "ordered_steps": ["step_a", "step_b", "final_callback"],
                         "evidence_keys": ["input", "step_a", "step_b"],
                     },
+                },
+            )
+            self.assertEqual(
+                result.record["continuation"],
+                {
+                    "next_step": "review_result_and_decide_followup_dispatch",
+                    "next_owner": "main",
+                    "next_backend": "manual",
+                    "auto_continue_if": [],
+                    "stop_if": ["no_follow_up_needed", "manual_closeout"],
+                    "stopped_because": "workflow_completed",
+                },
+            )
+
+    def test_callback_failure_promotes_continuation_to_retry_callback_delivery(self) -> None:
+        workflow = load_json_file(CHAIN_WORKFLOW_PATH)
+        workflow["steps"][-1]["transport"] = {
+            "simulate": "failed",
+            "error_code": "receiver_down",
+            "error_message": "receiver unavailable",
+        }
+        request = {
+            "task_id": "tsk_chain_scheduler_callback_failed_001",
+            "topic": "hello",
+            "target": "internal-demo",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dispatcher = self.make_dispatcher(Path(temp_dir))
+            result = dispatcher.dispatch(workflow, task_id=request["task_id"], request=request)
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.record["state"], "completed")
+            self.assertEqual(result.record["callback_status"], "failed")
+            self.assertEqual(
+                result.record["evidence"]["callback"]["last_payload"]["continuation"],
+                {
+                    "next_step": "review_result_and_decide_followup_dispatch",
+                    "next_owner": "main",
+                    "next_backend": "manual",
+                    "auto_continue_if": [],
+                    "stop_if": ["no_follow_up_needed", "manual_closeout"],
+                    "stopped_because": "workflow_completed",
+                },
+            )
+            self.assertEqual(
+                result.record["continuation"],
+                {
+                    "next_step": "retry_final_callback_delivery",
+                    "next_owner": "callback_plane",
+                    "next_backend": "callback",
+                    "auto_continue_if": ["callback_transport_recovered", "manual_retry_requested"],
+                    "stop_if": ["manual_abort", "task_cancelled"],
+                    "stopped_because": "final_callback_delivery_failed",
                 },
             )
 
@@ -289,6 +370,17 @@ class MinimalSchedulerCoreTest(unittest.TestCase):
             self.assertEqual(first.record["state"], "running")
             self.assertEqual(first.record["runtime"], "subagent")
             self.assertEqual(first.record["callback_status"], "pending")
+            self.assertEqual(
+                first.record["continuation"],
+                {
+                    "next_step": "await_terminal",
+                    "next_owner": "subagent",
+                    "next_backend": "subagent",
+                    "auto_continue_if": ["subagent_terminal_received"],
+                    "stop_if": ["subagent_timeout", "manual_abort"],
+                    "stopped_because": "waiting_for_subagent_terminal",
+                },
+            )
             self.assertEqual(len(transport.requests), 1)
 
             dispatch_step = first.record["evidence"]["dispatch_acceptance_subagent"]
@@ -375,6 +467,25 @@ class MinimalSchedulerCoreTest(unittest.TestCase):
                     "workflow_id": "workspace-trading.acceptance-harness.scheduler.v1",
                     "workflow_state": "degraded",
                     "run_label": "dry-run-001",
+                    "continuation": {
+                        "next_step": "review_degraded_result_and_decide_retry_or_fallback",
+                        "next_owner": "main",
+                        "next_backend": "manual",
+                        "auto_continue_if": ["operator_confirms_retry", "operator_confirms_followup_dispatch"],
+                        "stop_if": ["manual_closeout", "accept_degraded_outcome"],
+                        "stopped_because": "workflow_degraded",
+                    },
+                },
+            )
+            self.assertEqual(
+                resumed.record["continuation"],
+                {
+                    "next_step": "review_degraded_result_and_decide_retry_or_fallback",
+                    "next_owner": "main",
+                    "next_backend": "manual",
+                    "auto_continue_if": ["operator_confirms_retry", "operator_confirms_followup_dispatch"],
+                    "stop_if": ["manual_closeout", "accept_degraded_outcome"],
+                    "stopped_because": "workflow_degraded",
                 },
             )
             self.assertIsNone(resumed.current_step_id)

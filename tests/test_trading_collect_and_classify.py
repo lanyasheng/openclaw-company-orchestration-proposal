@@ -116,6 +116,21 @@ class TradingCollectAndClassifyTest(unittest.TestCase):
                             "path": "steps.collect_and_classify.candidate_id",
                         },
                     ],
+                    "continuation": {
+                        "next_step": "review_acceptance_result_and_decide_dispatch",
+                        "next_owner": "main",
+                        "next_backend": "manual",
+                        "auto_continue_if": [
+                            "business_overall_verdict=PASS",
+                            "whitelist_allows_triggered_dispatch",
+                        ],
+                        "stop_if": [
+                            "business_overall_verdict!=PASS",
+                            "artifacts_incomplete",
+                            "human_override_stop",
+                        ],
+                        "stopped_because": "acceptance_result_ready_for_dispatch_decision",
+                    },
                 },
             ],
         }
@@ -230,6 +245,42 @@ class TradingCollectAndClassifyTest(unittest.TestCase):
             self.assertEqual(
                 result.record["evidence"]["callback"]["last_payload"]["candidate_id"],
                 f"candidate-{verdict.lower()}",
+            )
+            self.assertEqual(
+                result.record["evidence"]["callback"]["last_payload"]["continuation"],
+                {
+                    "next_step": "review_acceptance_result_and_decide_dispatch",
+                    "next_owner": "main",
+                    "next_backend": "manual",
+                    "auto_continue_if": [
+                        "business_overall_verdict=PASS",
+                        "whitelist_allows_triggered_dispatch",
+                    ],
+                    "stop_if": [
+                        "business_overall_verdict!=PASS",
+                        "artifacts_incomplete",
+                        "human_override_stop",
+                    ],
+                    "stopped_because": "acceptance_result_ready_for_dispatch_decision",
+                },
+            )
+            self.assertEqual(
+                result.record["continuation"],
+                {
+                    "next_step": "review_acceptance_result_and_decide_dispatch",
+                    "next_owner": "main",
+                    "next_backend": "manual",
+                    "auto_continue_if": [
+                        "business_overall_verdict=PASS",
+                        "whitelist_allows_triggered_dispatch",
+                    ],
+                    "stop_if": [
+                        "business_overall_verdict!=PASS",
+                        "artifacts_incomplete",
+                        "human_override_stop",
+                    ],
+                    "stopped_because": "acceptance_result_ready_for_dispatch_decision",
+                },
             )
 
     def test_pass_verdict_maps_to_completed(self) -> None:

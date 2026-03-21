@@ -19,12 +19,22 @@ from .subagent_dispatch import (
     SubagentDispatchResult,
     create_subagent_dispatch_handler,
 )
-from .task_registry import FileTaskRegistry, build_task_record, deep_merge, load_json_file, write_json_atomic
+from .task_registry import (
+    FileTaskRegistry,
+    build_continuation_contract,
+    build_task_record,
+    deep_merge,
+    load_json_file,
+    normalize_continuation_contract,
+    write_json_atomic,
+)
 from .terminal_ingest import SubagentTerminalIngest, TerminalIngestError
 
 __all__ = [
     "FileTaskRegistry",
     "build_task_record",
+    "build_continuation_contract",
+    "normalize_continuation_contract",
     "deep_merge",
     "load_json_file",
     "write_json_atomic",

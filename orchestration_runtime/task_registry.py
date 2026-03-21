@@ -4,7 +4,7 @@ import json
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Mapping, MutableMapping, Optional
+from typing import Any, Dict, Mapping, Optional
 
 REQUIRED_FIELDS = (
     "task_id",
@@ -13,6 +13,14 @@ REQUIRED_FIELDS = (
     "state",
     "evidence",
     "callback_status",
+)
+CONTINUATION_FIELDS = (
+    "next_step",
+    "next_owner",
+    "next_backend",
+    "auto_continue_if",
+    "stop_if",
+    "stopped_because",
 )
 ALLOWED_RUNTIMES = {"lobster", "subagent", "human"}
 ALLOWED_STATES = {"queued", "running", "waiting_human", "completed", "failed", "degraded"}
@@ -57,6 +65,79 @@ def _validate_evidence(evidence: Any) -> None:
     raise TaskRegistryError("evidence 只允许 string 或 object")
 
 
+def _normalize_optional_string(value: Any, *, field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    return normalized
+
+
+def _normalize_condition_list(value: Any, *, field_name: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, list):
+        items = value
+    else:
+        raise TaskRegistryError(f"continuation.{field_name} 必须是 string[] 或 string")
+
+    normalized: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def normalize_continuation_contract(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise TaskRegistryError("continuation 必须是 object")
+
+    missing = [field for field in CONTINUATION_FIELDS if field not in value]
+    if missing:
+        raise TaskRegistryError(f"continuation 缺少字段: {', '.join(missing)}")
+
+    stopped_because = _normalize_optional_string(value.get("stopped_because"), field_name="stopped_because")
+    if stopped_because is None:
+        raise TaskRegistryError("continuation.stopped_because 不能为空")
+
+    return {
+        "next_step": _normalize_optional_string(value.get("next_step"), field_name="next_step"),
+        "next_owner": _normalize_optional_string(value.get("next_owner"), field_name="next_owner"),
+        "next_backend": _normalize_optional_string(value.get("next_backend"), field_name="next_backend"),
+        "auto_continue_if": _normalize_condition_list(
+            value.get("auto_continue_if"),
+            field_name="auto_continue_if",
+        ),
+        "stop_if": _normalize_condition_list(value.get("stop_if"), field_name="stop_if"),
+        "stopped_because": stopped_because,
+    }
+
+
+def build_continuation_contract(
+    *,
+    next_step: Optional[str],
+    next_owner: Optional[str],
+    next_backend: Optional[str],
+    auto_continue_if: Optional[list[str]] = None,
+    stop_if: Optional[list[str]] = None,
+    stopped_because: str,
+) -> Dict[str, Any]:
+    return normalize_continuation_contract(
+        {
+            "next_step": next_step,
+            "next_owner": next_owner,
+            "next_backend": next_backend,
+            "auto_continue_if": list(auto_continue_if or []),
+            "stop_if": list(stop_if or []),
+            "stopped_because": stopped_because,
+        }
+    )
+
+
 def validate_record(record: Mapping[str, Any]) -> Dict[str, Any]:
     missing = [field for field in REQUIRED_FIELDS if field not in record]
     if missing:
@@ -81,7 +162,7 @@ def validate_record(record: Mapping[str, Any]) -> Dict[str, Any]:
         raise TaskRegistryError(f"callback_status 不合法: {callback_status}")
     _validate_evidence(evidence)
 
-    return {
+    normalized = {
         "task_id": task_id,
         "owner": owner,
         "runtime": runtime,
@@ -89,6 +170,9 @@ def validate_record(record: Mapping[str, Any]) -> Dict[str, Any]:
         "evidence": evidence,
         "callback_status": callback_status,
     }
+    if "continuation" in record and record["continuation"] is not None:
+        normalized["continuation"] = normalize_continuation_contract(record["continuation"])
+    return normalized
 
 
 def build_task_record(
@@ -99,17 +183,19 @@ def build_task_record(
     state: str = "queued",
     evidence: Optional[Dict[str, Any]] = None,
     callback_status: str = "pending",
+    continuation: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
-    return validate_record(
-        {
-            "task_id": task_id,
-            "owner": owner,
-            "runtime": runtime,
-            "state": state,
-            "evidence": evidence or {},
-            "callback_status": callback_status,
-        }
-    )
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "owner": owner,
+        "runtime": runtime,
+        "state": state,
+        "evidence": evidence or {},
+        "callback_status": callback_status,
+    }
+    if continuation is not None:
+        payload["continuation"] = dict(continuation)
+    return validate_record(payload)
 
 
 class FileTaskRegistry:
@@ -146,6 +232,7 @@ class FileTaskRegistry:
         state: str = "queued",
         evidence: Optional[Dict[str, Any]] = None,
         callback_status: str = "pending",
+        continuation: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         if self.exists(task_id):
             return self.load(task_id)
@@ -157,6 +244,7 @@ class FileTaskRegistry:
                 state=state,
                 evidence=evidence,
                 callback_status=callback_status,
+                continuation=continuation,
             )
         )
 
@@ -169,6 +257,7 @@ class FileTaskRegistry:
         evidence_merge: Optional[Mapping[str, Any]] = None,
         evidence_replace: Optional[Any] = None,
         callback_status: Optional[str] = None,
+        continuation: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             record = self.load(task_id)
@@ -185,6 +274,8 @@ class FileTaskRegistry:
                 record["evidence"] = deep_merge(current, dict(evidence_merge))
             if callback_status is not None:
                 record["callback_status"] = callback_status
+            if continuation is not None:
+                record["continuation"] = dict(continuation)
             normalized = validate_record(record)
             write_json_atomic(self.task_path(task_id), normalized)
             return normalized

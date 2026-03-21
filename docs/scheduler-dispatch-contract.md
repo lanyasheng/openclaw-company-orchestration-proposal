@@ -5,7 +5,7 @@
 这一批已经把 **task registry library + 顺序 scheduler/dispatcher core** 连成最小闭环，但范围严格收口：
 
 - **只支持顺序链**，不做 DAG / parallel / join
-- **顶层 registry 仍冻结为 6 字段**，不为了 `waiting_subagent` 改 schema
+- **顶层 registry 仍保持 6 个必填控制字段**；另外新增一个 **可选 `continuation` closeout object**，专门描述 why-stop / next-step，不为了 `waiting_subagent` 扩状态枚举
 - `waiting_subagent` 这类暂停态，**只写进 `evidence.scheduler.waiting_for`**；顶层 `state` 仍保持 `running`
 - `callback_status` 继续与 `state` 分离，callback 失败**不会**回写业务终态
 
@@ -58,7 +58,7 @@
 
 ## 2. Registry Contract
 
-顶层记录仍保持：
+顶层记录仍保持 6 个必填控制字段，同时允许一个可选的 `continuation`：
 
 ```json
 {
@@ -67,9 +67,23 @@
   "runtime": "lobster|subagent|human",
   "state": "queued|running|waiting_human|completed|failed|degraded",
   "evidence": {},
-  "callback_status": "pending|sent|acked|failed"
+  "callback_status": "pending|sent|acked|failed",
+  "continuation": {
+    "next_step": "review_acceptance_result_and_decide_dispatch",
+    "next_owner": "main",
+    "next_backend": "manual",
+    "auto_continue_if": ["business_overall_verdict=PASS"],
+    "stop_if": ["human_override_stop"],
+    "stopped_because": "acceptance_result_ready_for_dispatch_decision"
+  }
 }
 ```
+
+`continuation` 不改写 `state` / `callback_status` 的语义；它只补充 closeout contract。
+
+补充说明：`callback.send_once` 现在会把 `continuation` 一并带进 final callback payload，因此上游不仅能看到 terminal state，还能看到“为什么停、下一步谁接”。
+
+详细口径见：`docs/continuation-contract-v1.md`
 
 ### 2.1 为什么不新增 `waiting_subagent`
 

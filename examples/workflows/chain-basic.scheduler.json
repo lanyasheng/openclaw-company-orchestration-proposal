@@ -36,6 +36,17 @@
         "workflow_id",
         "workflow_state"
       ],
+      "continuation": {
+        "next_step": "review_result_and_decide_followup_dispatch",
+        "next_owner": "main",
+        "next_backend": "manual",
+        "auto_continue_if": [],
+        "stop_if": [
+          "no_follow_up_needed",
+          "manual_closeout"
+        ],
+        "stopped_because": "workflow_completed"
+      },
       "summary": {
         "workflow": "chain-basic",
         "ordered_steps": [

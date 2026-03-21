@@ -210,9 +210,10 @@ python3 -m unittest tests.test_official_lobster_bridge_runner -v
 关键口径：
 
 - 只支持 **顺序链**，不做 DAG / parallel / join
-- 顶层 registry 仍冻结为 6 字段
+- 顶层 registry 仍保留 6 个必填控制字段，但现在允许一个可校验的 `continuation` closeout object
 - `waiting_subagent` 不新增顶层 state，而是写进 `evidence.scheduler.waiting_for`
 - `callback_status` 与业务终态继续分离
+- `callback.send_once` 会把 `continuation` 一并带进 final callback payload
 
 快速 sample：
 
@@ -224,6 +225,8 @@ python3 scripts/run_minimal_scheduler.py \
 ```
 
 详细 contract：`docs/scheduler-dispatch-contract.md`
+
+Continuation baseline：`docs/continuation-contract-v1.md`
 
 ---
 
