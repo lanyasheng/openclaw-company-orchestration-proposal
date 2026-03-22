@@ -70,7 +70,21 @@
 - **但总体仍停留在 thin bridge / allowlist / safe semi-auto**；
 - **外部框架讨论的是下一阶段增强点，不是当前主链 owner。**
 
-### 2.5 WS3 暴露的是机制缺口，不是单一个案
+### 2.5 其他频道接入的 discoverability 已补到 runtime contract
+
+新增真值（2026-03-22）：
+- runtime 工作区已补一个极短的 **bootstrap capability card** 到 orchestration entry contract；
+- 目标是把“其他频道如何接入”从长文档说明推进成 **contract 内默认可见** 的 discoverability；
+- 非 trading 场景默认仍走 `channel_roundtable`，**不需要新 adapter**；
+- 首次接入仍建议 `allow_auto_dispatch=false`，先证明 callback / ack / dispatch artifacts 稳定，再决定是否放开默认自动续跑；
+- operator-facing 接入入口仍是 `orchestrator/examples/generic_channel_roundtable_onboarding_kit.md` 与配套 example contract / callback。
+
+边界同样要写清：
+- 这次补的是 **discoverability**，不是新的 runtime 强制逻辑；
+- 这不代表“其他频道零配置默认全自动”；
+- 当前 proposal repo 只是同步阅读口径，runtime 实现远端仍以实现仓 push 真值为准。
+
+### 2.6 WS3 暴露的是机制缺口，不是单一个案
 
 当前新增口径：
 - WS3 暴露的“waiting 但 active=0”属于 **waiting integrity / hard-close / fail-fast / anomaly detection** 机制缺口；

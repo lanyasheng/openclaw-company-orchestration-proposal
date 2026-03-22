@@ -56,8 +56,9 @@
 | 白名单默认 auto-dispatch | 当前频道 dispatch plan 默认 `triggered`，其他频道仍默认 `skipped` | runtime repo commits `482fe03` |
 | trading clean PASS 条件触发 | trading 当前只对 clean PASS 默认 `triggered`，其余结果默认 `skipped` | runtime live truth synced on 2026-03-20 |
 | `tmux` continuation backend | 已进入正式可选 backend 口径 | runtime live truth synced on 2026-03-20 |
+| 其他频道接入 discoverability | runtime contract 已开始内嵌 bootstrap capability card，明确 `channel_roundtable` 为非 trading 默认接缝，并给出 operator kit / example 路径 | runtime workspace local commit `c4b0213` + `tests/orchestrator/test_orch_command.py` 12 passed |
 
-**结论**：proposal 主线已经有两条真实场景可对照，并且 dispatch 口径已经细化到“白名单频道默认 triggered / trading 仅 clean PASS 默认 triggered / `tmux` 为正式可选 backend”。但整体仍处在 **thin bridge + allowlist + safe semi-auto** 阶段，不能误写成“通用全自动编排已完成”。
+**结论**：proposal 主线已经有两条真实场景可对照，并且 dispatch 口径已经细化到“白名单频道默认 triggered / trading 仅 clean PASS 默认 triggered / `tmux` 为正式可选 backend”。同时，其他频道接入的 discoverability 已开始从长文档前移到 runtime contract 本身。但整体仍处在 **thin bridge + allowlist + safe semi-auto** 阶段，不能误写成“通用全自动编排已完成”。
 
 ---
 
