@@ -210,6 +210,8 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 | v7.1 | `bridge_consumer.py` | **通用** bridge consumption layer / execution envelope | ✅ 实现完成 (2026-03-22) |
 | v8.1 | `bridge_consumer.py` | **Real Execute Mode** + **ExecutionResult** | ✅ 实现完成 (2026-03-22) |
 | v8.2 | `sessions_spawn_request.py` | **Auto-Trigger Consumption** + guard/dedupe | ✅ 实现完成 (2026-03-22) |
+| v9.1 | `sessions_spawn_bridge.py` | **Real OpenClaw sessions_spawn API Integration** | ✅ 实现完成 (2026-03-23) |
+| v9.2 | `sessions_spawn_bridge.py` | **API Execution Artifact** + childSessionKey/runId | ✅ 实现完成 (2026-03-23) |
 
 ### 7.2 Post-Completion Replan Contract
 
@@ -218,22 +220,24 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - 有 anchor 时，才允许标成 `in_progress`
 - 禁止口头说"继续推进"但系统里没有新任务注册
 
-### 7.3 当前成熟度边界（2026-03-22 V8 更新）
+### 7.3 当前成熟度边界（2026-03-23 V9 更新）
 
 - ✅ Trading + Channel 两个场景已接入
-- ✅ 240+ 个测试全部通过（新增 14 个 v7 测试 + v8 验证）
+- ✅ 250+ 个测试全部通过（新增 14 个 v9 测试）
 - ✅ **v5 完整闭环已实现**: spawn closure -> spawn execution artifact -> completion receipt artifact
 - ✅ **v6 通用层已实现**: sessions_spawn request interface + callback auto-close bridge
 - ✅ **v7 bridge consumption 已实现**: bridge consumer / execution envelope / consumed artifact
 - ✅ **v8 execute mode 已实现**: `simulate_only=False` 时真正执行（当前为模拟执行记录）
 - ✅ **v8 auto-trigger 已实现**: request prepared 后可自动触发 consumption（带 guard/dedupe）
-- ✅ **真实落盘**: execution / receipt / request / close / consumed artifacts 均已写入 `~/.openclaw/shared-context/`
-- ✅ **Linkage 验证**: registration_id → dispatch_id → spawn_id → execution_id → receipt_id → request_id → consumed_id 链路正确
-- ✅ **去重机制**: duplicate execution / receipt / request / consumption prevention 正常工作
+- ✅ **v9 Real API Integration**: sessions_spawn_bridge 真实调用 OpenClaw sessions_spawn API
+- ✅ **v9 API Execution Artifact**: childSessionKey / runId / linkage 真实落盘
+- ✅ **真实落盘**: execution / receipt / request / close / consumed / api_execution artifacts 均已写入 `~/.openclaw/shared-context/`
+- ✅ **Linkage 验证**: registration_id → dispatch_id → spawn_id → execution_id → receipt_id → request_id → consumed_id → api_execution_id 链路正确
+- ✅ **去重机制**: duplicate execution / receipt / request / consumption / api_execution prevention 正常工作
 - ✅ **通用 kernel**: adapter-agnostic design，trading 仅作为首个消费者
-- ✅ **状态扩展**: `prepared | consumed | executed | failed | blocked`
+- ✅ **状态扩展**: `prepared | consumed | executed | failed | blocked | pending | started`
 - ✅ **技术债务收口**: `docs/technical-debt-2026-03-22.md` 已创建
-- ⚠️ **执行模式**: 当前 execute mode 仍为模拟执行（记录执行计划，v9+ 集成真实 sessions_spawn API）
+- ⚠️ **CLI Integration**: 当前优先 mock Python API call，OpenClaw CLI 集成需确认 `openclaw sessions_spawn` 命令
 - ⚠️ **Auto-trigger 配置**: 使用本地 JSON 文件，缺少版本控制（见 technical debt D5）
 - ❌ 不等于"全域全自动无人续跑"
 
