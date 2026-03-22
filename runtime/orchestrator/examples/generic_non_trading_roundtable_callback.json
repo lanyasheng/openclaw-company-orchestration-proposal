@@ -1,0 +1,27 @@
+{
+  "summary": "Product launch review completed with actionable recommendations.",
+  "verdict": "PASS",
+  "channel_roundtable": {
+    "packet": {
+      "packet_version": "channel_roundtable_v1",
+      "scenario": "product_launch_roundtable",
+      "channel_id": "discord:channel:4242",
+      "channel_name": "product-launch-review",
+      "topic": "Product Launch Review",
+      "owner": "content",
+      "generated_at": "2026-03-22T12:30:00+08:00",
+      "artifact": {
+        "path": "docs/product/launch-review-2026-03-22.md",
+        "exists": true
+      }
+    },
+    "roundtable": {
+      "conclusion": "PASS",
+      "blocker": "none",
+      "owner": "content",
+      "next_step": "Schedule follow-up marketing sync and prepare launch checklist v2.",
+      "completion_criteria": "Launch checklist v2 reviewed and approved by marketing lead."
+    },
+    "summary": "Product launch review passed with minor adjustments needed for marketing timeline."
+  }
+}
