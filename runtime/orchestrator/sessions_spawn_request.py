@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sessions_spawn_request.py — Universal Partial-Completion Continuation Framework v6
+sessions_spawn_request.py — Universal Partial-Completion Continuation Framework v8
 
 目标：实现 **通用** sessions_spawn-compatible request interface（adapter-agnostic）。
 
@@ -10,10 +10,11 @@ sessions_spawn_request.py — Universal Partial-Completion Continuation Framewor
 3. 记录状态：spawn_request_status = prepared | emitted | blocked | failed
 4. 不绑定特定场景（trading / channel / generic 均可消费）
 5. 提供 helper/CLI 产出 request，可被上层 OpenClaw bridge 直接消费
+6. **V8 新增**: 支持 auto-trigger consumption（request prepared 后自动触发消费）
 
-当前阶段：canonical spawn request artifact / interface（不是全域无人值守执行）
+当前阶段：canonical spawn request artifact / interface + auto-trigger（V8 新增）
 
-这是 v6 新增模块，通用 kernel，trading 仅作为首个消费者/样例。
+这是 v8 模块，通用 kernel，trading 仅作为首个消费者/样例。
 """
 
 from __future__ import annotations
@@ -59,6 +60,12 @@ SPAWN_REQUEST_DIR = Path(
 
 # Completion receipt -> Spawn request 映射索引文件
 REQUEST_INDEX_FILE = SPAWN_REQUEST_DIR / "request_index.json"
+
+# Auto-trigger 索引文件（V8 新增）
+AUTO_TRIGGER_INDEX_FILE = SPAWN_REQUEST_DIR / "auto_trigger_index.json"
+
+# Auto-trigger 配置（V8 新增）
+AUTO_TRIGGER_CONFIG_FILE = SPAWN_REQUEST_DIR / "auto_trigger_config.json"
 
 
 def _ensure_request_dir():
@@ -128,6 +135,253 @@ def _is_duplicate_request(dedupe_key: str) -> bool:
     """检查是否已存在 request（去重）"""
     index = _load_request_index()
     return dedupe_key in index
+
+
+# ==================== V8 Auto-Trigger Functions ====================
+
+def _load_auto_trigger_index() -> Dict[str, str]:
+    """
+    加载 auto-trigger 索引（request_id -> consumed_id 映射）。
+    
+    用于追踪已自动触发的 request。
+    """
+    _ensure_request_dir()
+    if not AUTO_TRIGGER_INDEX_FILE.exists():
+        return {}
+    
+    try:
+        with open(AUTO_TRIGGER_INDEX_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, KeyError):
+        return {}
+
+
+def _save_auto_trigger_index(index: Dict[str, str]):
+    """保存 auto-trigger 索引"""
+    _ensure_request_dir()
+    tmp_file = AUTO_TRIGGER_INDEX_FILE.with_suffix(".tmp")
+    with open(tmp_file, "w") as f:
+        json.dump(index, f, indent=2)
+    tmp_file.replace(AUTO_TRIGGER_INDEX_FILE)
+
+
+def _load_auto_trigger_config() -> Dict[str, Any]:
+    """
+    加载 auto-trigger 配置。
+    
+    配置格式：
+    {
+        "enabled": bool,
+        "allowlist": List[str],  # scenario allowlist
+        "denylist": List[str],   # scenario denylist
+        "require_manual_approval": bool,
+    }
+    """
+    _ensure_request_dir()
+    if not AUTO_TRIGGER_CONFIG_FILE.exists():
+        return {
+            "enabled": False,
+            "allowlist": [],
+            "denylist": [],
+            "require_manual_approval": True,
+        }
+    
+    try:
+        with open(AUTO_TRIGGER_CONFIG_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, KeyError):
+        return {
+            "enabled": False,
+            "allowlist": [],
+            "denylist": [],
+            "require_manual_approval": True,
+        }
+
+
+def _save_auto_trigger_config(config: Dict[str, Any]):
+    """保存 auto-trigger 配置"""
+    _ensure_request_dir()
+    tmp_file = AUTO_TRIGGER_CONFIG_FILE.with_suffix(".tmp")
+    with open(tmp_file, "w") as f:
+        json.dump(config, f, indent=2)
+    tmp_file.replace(AUTO_TRIGGER_CONFIG_FILE)
+
+
+def _is_auto_triggered(request_id: str) -> bool:
+    """检查 request 是否已自动触发"""
+    index = _load_auto_trigger_index()
+    return request_id in index
+
+
+def _record_auto_trigger(request_id: str, consumed_id: str):
+    """记录 auto-trigger"""
+    index = _load_auto_trigger_index()
+    index[request_id] = consumed_id
+    _save_auto_trigger_index(index)
+
+
+def _should_auto_trigger(request: SessionsSpawnRequest) -> tuple[bool, str]:
+    """
+    评估是否应该自动触发 consumption。
+    
+    V8 新增：auto-trigger guard / dedupe 机制。
+    
+    Args:
+        request: Sessions spawn request
+    
+    Returns:
+        (should_trigger, reason)
+    """
+    config = _load_auto_trigger_config()
+    
+    # Check 1: auto-trigger enabled
+    if not config.get("enabled", False):
+        return False, "Auto-trigger is disabled"
+    
+    # Check 2: already triggered (dedupe)
+    if _is_auto_triggered(request.request_id):
+        return False, f"Request {request.request_id} already auto-triggered"
+    
+    # Check 3: request status must be prepared
+    if request.spawn_request_status != "prepared":
+        return False, f"Request status is '{request.spawn_request_status}', not 'prepared'"
+    
+    # Check 4: scenario allowlist/denylist
+    scenario = request.metadata.get("scenario", "generic")
+    denylist = config.get("denylist", [])
+    allowlist = config.get("allowlist", [])
+    
+    if scenario in denylist:
+        return False, f"Scenario '{scenario}' is in denylist"
+    
+    if allowlist and scenario not in allowlist:
+        return False, f"Scenario '{scenario}' is not in allowlist"
+    
+    # Check 5: manual approval required
+    if config.get("require_manual_approval", True):
+        return False, "Manual approval required (config)"
+    
+    return True, "Auto-trigger approved"
+
+
+def auto_trigger_consumption(
+    request_id: str,
+    consumer_policy: Optional[Any] = None,
+) -> tuple[bool, str, Optional[str]]:
+    """
+    **V8 新增**: 自动触发 consumption。
+    
+    Args:
+        request_id: Request ID
+        consumer_policy: Bridge consumer policy（可选）
+    
+    Returns:
+        (triggered, reason, consumed_id)
+        - triggered: 是否成功触发
+        - reason: 原因/错误信息
+        - consumed_id: consumed artifact ID（如果触发成功）
+    """
+    # Import here to avoid circular dependency
+    from bridge_consumer import (
+        BridgeConsumer,
+        get_consumed_by_request,
+        consume_request,
+    )
+    
+    # 1. Get request
+    request = get_spawn_request(request_id)
+    if not request:
+        return False, f"Request {request_id} not found", None
+    
+    # 2. Check if already consumed
+    existing_consumed = get_consumed_by_request(request_id)
+    if existing_consumed:
+        return False, f"Request already consumed: {existing_consumed.consumed_id}", existing_consumed.consumed_id
+    
+    # 3. Evaluate auto-trigger guard
+    should_trigger, reason = _should_auto_trigger(request)
+    if not should_trigger:
+        return False, reason, None
+    
+    # 4. Consume request
+    try:
+        artifact = consume_request(request_id, policy=consumer_policy)
+        
+        if artifact.consumer_status in ("consumed", "executed"):
+            # 5. Record auto-trigger
+            _record_auto_trigger(request_id, artifact.consumed_id)
+            return True, f"Auto-triggered consumption: {artifact.consumed_id}", artifact.consumed_id
+        else:
+            return False, f"Consumption blocked: {artifact.consumer_reason}", None
+            
+    except Exception as e:
+        return False, f"Auto-trigger failed: {str(e)}", None
+
+
+def configure_auto_trigger(
+    enabled: Optional[bool] = None,
+    allowlist: Optional[List[str]] = None,
+    denylist: Optional[List[str]] = None,
+    require_manual_approval: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """
+    **V8 新增**: 配置 auto-trigger。
+    
+    Args:
+        enabled: 是否启用 auto-trigger
+        allowlist: scenario allowlist
+        denylist: scenario denylist
+        require_manual_approval: 是否需要手动审批
+    
+    Returns:
+        更新后的配置
+    """
+    config = _load_auto_trigger_config()
+    
+    if enabled is not None:
+        config["enabled"] = enabled
+    if allowlist is not None:
+        config["allowlist"] = allowlist
+    if denylist is not None:
+        config["denylist"] = denylist
+    if require_manual_approval is not None:
+        config["require_manual_approval"] = require_manual_approval
+    
+    _save_auto_trigger_config(config)
+    return config
+
+
+def get_auto_trigger_status() -> Dict[str, Any]:
+    """
+    **V8 新增**: 获取 auto-trigger 状态。
+    
+    Returns:
+        {
+            "config": Dict,
+            "triggered_count": int,
+            "pending_requests": List[Dict],
+        }
+    """
+    config = _load_auto_trigger_config()
+    index = _load_auto_trigger_index()
+    
+    # 获取 pending requests（prepared 但未触发）
+    pending = []
+    requests = list_spawn_requests(request_status="prepared", limit=100)
+    for req in requests:
+        if not _is_auto_triggered(req.request_id):
+            pending.append({
+                "request_id": req.request_id,
+                "scenario": req.metadata.get("scenario", "generic"),
+                "task_id": req.source_task_id,
+                "time": req.spawn_request_time,
+            })
+    
+    return {
+        "config": config,
+        "triggered_count": len(index),
+        "pending_requests": pending[:20],  # Limit to 20
+    }
 
 
 @dataclass
@@ -655,6 +909,9 @@ if __name__ == "__main__":
         print("  python sessions_spawn_request.py list [--status <status>] [--receipt <receipt_id>]")
         print("  python sessions_spawn_request.py get <request_id>")
         print("  python sessions_spawn_request.py call-params <request_id>")
+        print("  python sessions_spawn_request.py auto-trigger <request_id>  # V8 新增")
+        print("  python sessions_spawn_request.py auto-trigger-config [options]  # V8 新增")
+        print("  python sessions_spawn_request.py auto-trigger-status  # V8 新增")
         sys.exit(1)
     
     cmd = sys.argv[1]
@@ -716,6 +973,66 @@ if __name__ == "__main__":
         else:
             print(f"Spawn request {request_id} not found")
             sys.exit(1)
+    
+    elif cmd == "auto-trigger":
+        # V8 新增：auto-trigger consumption
+        if len(sys.argv) < 3:
+            print("Error: missing request_id")
+            sys.exit(1)
+        
+        request_id = sys.argv[2]
+        triggered, reason, consumed_id = auto_trigger_consumption(request_id)
+        
+        print(json.dumps({
+            "triggered": triggered,
+            "reason": reason,
+            "consumed_id": consumed_id,
+        }, indent=2))
+        
+        if triggered:
+            print(f"\n✓ Auto-triggered consumption: {consumed_id}")
+        else:
+            print(f"\n✗ Auto-trigger failed: {reason}")
+            sys.exit(1)
+    
+    elif cmd == "auto-trigger-config":
+        # V8 新增：配置 auto-trigger
+        enabled = None
+        allowlist = None
+        denylist = None
+        require_manual = None
+        
+        if "--enable" in sys.argv:
+            enabled = True
+        if "--disable" in sys.argv:
+            enabled = False
+        if "--allowlist" in sys.argv:
+            idx = sys.argv.index("--allowlist")
+            if idx + 1 < len(sys.argv):
+                allowlist = sys.argv[idx + 1].split(",")
+        if "--denylist" in sys.argv:
+            idx = sys.argv.index("--denylist")
+            if idx + 1 < len(sys.argv):
+                denylist = sys.argv[idx + 1].split(",")
+        if "--no-manual-approval" in sys.argv:
+            require_manual = False
+        if "--manual-approval" in sys.argv:
+            require_manual = True
+        
+        config = configure_auto_trigger(
+            enabled=enabled,
+            allowlist=allowlist,
+            denylist=denylist,
+            require_manual_approval=require_manual,
+        )
+        
+        print("Auto-trigger configuration updated:")
+        print(json.dumps(config, indent=2))
+    
+    elif cmd == "auto-trigger-status":
+        # V8 新增：获取 auto-trigger 状态
+        status = get_auto_trigger_status()
+        print(json.dumps(status, indent=2))
     
     else:
         print(f"Unknown command: {cmd}")

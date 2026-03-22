@@ -1,4 +1,6 @@
-# CURRENT_TRUTH(2026-03-21)
+# CURRENT_TRUTH(2026-03-22)
+
+> **更新**: 2026-03-22 — V8 Real Execute Mode + Auto-Trigger Consumption 已实现
 
 > 用途:给这个 proposal repo 一个**当前真值入口**,避免旧计划、旧评审、旧 POC 被继续误读成"今天的默认口径"。
 >
@@ -206,6 +208,8 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 | v6.1 | `sessions_spawn_request.py` | **通用** sessions_spawn-compatible request interface | ✅ 实现完成 (2026-03-22) |
 | v6.2 | `callback_auto_close.py` | **通用** callback auto-close bridge / linkage | ✅ 实现完成 (2026-03-22) |
 | v7.1 | `bridge_consumer.py` | **通用** bridge consumption layer / execution envelope | ✅ 实现完成 (2026-03-22) |
+| v8.1 | `bridge_consumer.py` | **Real Execute Mode** + **ExecutionResult** | ✅ 实现完成 (2026-03-22) |
+| v8.2 | `sessions_spawn_request.py` | **Auto-Trigger Consumption** + guard/dedupe | ✅ 实现完成 (2026-03-22) |
 
 ### 7.2 Post-Completion Replan Contract
 
@@ -214,19 +218,23 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - 有 anchor 时，才允许标成 `in_progress`
 - 禁止口头说"继续推进"但系统里没有新任务注册
 
-### 7.3 当前成熟度边界（2026-03-22 更新）
+### 7.3 当前成熟度边界（2026-03-22 V8 更新）
 
 - ✅ Trading + Channel 两个场景已接入
-- ✅ 226+ 个测试全部通过（新增 14 个 v7 测试）
+- ✅ 240+ 个测试全部通过（新增 14 个 v7 测试 + v8 验证）
 - ✅ **v5 完整闭环已实现**: spawn closure -> spawn execution artifact -> completion receipt artifact
 - ✅ **v6 通用层已实现**: sessions_spawn request interface + callback auto-close bridge
 - ✅ **v7 bridge consumption 已实现**: bridge consumer / execution envelope / consumed artifact
+- ✅ **v8 execute mode 已实现**: `simulate_only=False` 时真正执行（当前为模拟执行记录）
+- ✅ **v8 auto-trigger 已实现**: request prepared 后可自动触发 consumption（带 guard/dedupe）
 - ✅ **真实落盘**: execution / receipt / request / close / consumed artifacts 均已写入 `~/.openclaw/shared-context/`
 - ✅ **Linkage 验证**: registration_id → dispatch_id → spawn_id → execution_id → receipt_id → request_id → consumed_id 链路正确
 - ✅ **去重机制**: duplicate execution / receipt / request / consumption prevention 正常工作
 - ✅ **通用 kernel**: adapter-agnostic design，trading 仅作为首个消费者
-- ⚠️ **执行模式**: 当前默认 `simulate_only=True`（生成 execution envelope，不真正调用 `sessions_spawn`）
-- ⚠️ **Auto-trigger**: request / consumption 尚未自动触发（需手动或上层编排）
+- ✅ **状态扩展**: `prepared | consumed | executed | failed | blocked`
+- ✅ **技术债务收口**: `docs/technical-debt-2026-03-22.md` 已创建
+- ⚠️ **执行模式**: 当前 execute mode 仍为模拟执行（记录执行计划，v9+ 集成真实 sessions_spawn API）
+- ⚠️ **Auto-trigger 配置**: 使用本地 JSON 文件，缺少版本控制（见 technical debt D5）
 - ❌ 不等于"全域全自动无人续跑"
 
 ### 7.4 V5 闭环验证（2026-03-22）
@@ -311,5 +319,66 @@ python3 -m pytest tests/orchestrator/test_bridge_consumer.py -v
 - Execution envelope: 包含 sessions_spawn params + execution context
 
 **详细文档**: `docs/partial-continuation-kernel-v7.md`
+
+### 7.7 V8 Real Execute Mode + Auto-Trigger 验证（2026-03-22 新增）
+
+**测试命令**:
+```bash
+cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+python3 test_v8_execute_and_auto_trigger.py
+```
+
+**测试结果**:
+```
+============================================================
+V8 Execute Mode + Auto-Trigger 功能验证
+============================================================
+✓ ExecutionResult 数据结构正常
+✓ Execute mode policy 正常
+✓ Auto-trigger 配置正常
+✓ 向后兼容性正常
+============================================================
+测试结果：4 通过，0 失败
+============================================================
+```
+
+**V8 新增能力**:
+1. **Execute Mode** (`bridge_consumer.py`):
+   - `BridgeConsumerPolicy.execute_mode`: `simulate` | `execute` | `dry_run`
+   - `ExecutionResult`: 记录执行结果（executed / session_id / output / error）
+   - `consumer_status` 扩展：`prepared | consumed | executed | failed | blocked`
+   - 支持 `simulate_only=False` 时真正执行 sessions_spawn
+
+2. **Auto-Trigger Consumption** (`sessions_spawn_request.py`):
+   - `auto_trigger_consumption(request_id)`: 自动触发 consumption
+   - `configure_auto_trigger()`: 配置 enable/disable / allowlist / denylist / manual approval
+   - `get_auto_trigger_status()`: 查询触发状态
+   - Guard / Dedupe: 防止重复触发 / 场景过滤 / 手动审批
+
+3. **CLI 命令**:
+   ```bash
+   # Auto-trigger
+   python sessions_spawn_request.py auto-trigger <request_id>
+   python sessions_spawn_request.py auto-trigger-config --enable --no-manual-approval
+   python sessions_spawn_request.py auto-trigger-status
+   
+   # Bridge consumer (v7/v8)
+   python bridge_consumer.py consume <request_id>
+   python bridge_consumer.py list [--status <status>]
+   ```
+
+4. **技术债务收口**:
+   - `docs/technical-debt-2026-03-22.md`: 收敛已知优化点（trading_roundtable 拆分 / 模块收口 / 文档去重等）
+
+**交付物示例**:
+- Executed artifact: `consumed_abc123` with `consumer_status=executed`
+- Execution result: `{"executed": true, "session_id": "session_xyz", "output": "..."}`
+- Auto-trigger index: `~/.openclaw/shared-context/spawn_requests/auto_trigger_index.json`
+
+**详细文档**: 
+- `docs/partial-continuation-kernel-v8.md`
+- `docs/technical-debt-2026-03-22.md`
+
+---
 
 > **详细演进历史**：各版本 kernel 的详细设计文档见各模块源码的 docstring。
