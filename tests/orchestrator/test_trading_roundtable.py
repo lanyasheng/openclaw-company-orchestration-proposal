@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ORCHESTRATOR_DIR = REPO_ROOT / "orchestrator"
+ORCHESTRATOR_DIR = REPO_ROOT / "runtime" / "orchestrator"
 EXAMPLES_DIR = ORCHESTRATOR_DIR / "examples"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))

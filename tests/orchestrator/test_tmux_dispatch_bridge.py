@@ -8,9 +8,10 @@ from pathlib import Path
 
 import pytest
 
+# 使用 resolve() 以正确处理通过 symlink 访问的情况
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ORCHESTRATOR_DIR = REPO_ROOT / "orchestrator"
-SCRIPT_PATH = REPO_ROOT / "scripts" / "orchestrator_dispatch_bridge.py"
+ORCHESTRATOR_DIR = REPO_ROOT / "runtime" / "orchestrator"
+SCRIPT_PATH = REPO_ROOT / "runtime" / "scripts" / "orchestrator_dispatch_bridge.py"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 

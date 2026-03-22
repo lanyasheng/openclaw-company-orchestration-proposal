@@ -19,8 +19,22 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def isolated_spawn_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """为每个测试提供隔离的 spawn closure 目录"""
+    spawn_dir = tmp_path / "spawn_closures"
+    monkeypatch.setenv("OPENCLAW_SPAWN_CLOSURE_DIR", str(spawn_dir))
+    # 强制重新加载模块以使用新的环境变量
+    import importlib
+    import spawn_closure
+    importlib.reload(spawn_closure)
+    yield spawn_dir
+
+
 # 添加 runtime/orchestrator 到路径
-RUNTIME_PATH = Path(__file__).parent.parent.parent / "runtime" / "orchestrator"
+# 使用 resolve() 以正确处理通过 symlink 访问的情况
+RUNTIME_PATH = Path(__file__).resolve().parent.parent.parent / "runtime" / "orchestrator"
 sys.path.insert(0, str(RUNTIME_PATH))
 
 from spawn_closure import (

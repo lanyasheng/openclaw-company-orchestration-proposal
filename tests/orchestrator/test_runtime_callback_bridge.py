@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ORCHESTRATOR_DIR = REPO_ROOT / "orchestrator"
-SCRIPT_PATH = REPO_ROOT / "scripts" / "orchestrator_callback_bridge.py"
+ORCHESTRATOR_DIR = REPO_ROOT / "runtime" / "orchestrator"
+SCRIPT_PATH = REPO_ROOT / "runtime" / "scripts" / "orchestrator_callback_bridge.py"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 

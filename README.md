@@ -51,7 +51,7 @@
 
 1. **首次了解** → `docs/executive-summary.md`（5 分钟版本）
 2. **当前真值** → `docs/CURRENT_TRUTH.md`（live 状态 / 边界 / 计划入口）
-3. **完整方案** → `docs/openclaw-company-orchestration-proposal.md`
+3. **完整方案** → `docs/architecture-layering.md`
 4. **其他频道 quickstart** → `docs/quickstart-other-channels.md`（非 trading 场景）
 
 ### Runtime 入口（从哪里开始用）
@@ -265,9 +265,9 @@ python3 scripts/run_minimal_scheduler.py \
   --run-dir /tmp/chain-basic-scheduler-run
 ```
 
-详细 contract：`docs/scheduler-dispatch-contract.md`
+详细 contract：`docs/CURRENT_TRUTH.md`
 
-Continuation baseline：`docs/continuation-contract-v1.md`
+Continuation baseline：`docs/CURRENT_TRUTH.md`
 
 ---
 
@@ -325,15 +325,15 @@ Continuation baseline：`docs/continuation-contract-v1.md`
 
 1. `docs/executive-summary.md` — 给老板和评审的 5 分钟版本
 2. `docs/CURRENT_TRUTH.md` — 当前 live 真值 / whitelist / tmux backend / historical 文档入口
-3. `docs/openclaw-company-orchestration-proposal.md` — 仓库主方案文档
+3. `docs/architecture-layering.md` — 仓库主方案文档
 4. `docs/architecture-layering.md` — 五层架构拆解与接口边界
 5. `docs/validation-status.md` — 已验证 / 未验证 / 选择理由
 6. `docs/roadmap.md` — P0 / P1 / P2 路线图
 
 ### 支撑文档
 
-- `docs/supporting/shortlist-existing-options.md`
-- `docs/supporting/thin-orchestration-layer.md`
+- `docs/executive-summary.md`
+- `docs/architecture-layering.md`
 
 ### 验证与 POC 文档（已下沉）
 
@@ -382,10 +382,10 @@ Continuation baseline：`docs/continuation-contract-v1.md`
 4. `docs/roadmap.md`
 
 ### 想完整评审方案
-1. `docs/openclaw-company-orchestration-proposal.md`
+1. `docs/architecture-layering.md`
 2. `docs/architecture-layering.md`
-3. `docs/supporting/shortlist-existing-options.md`
-4. `docs/supporting/thin-orchestration-layer.md`
+3. `docs/executive-summary.md`
+4. `docs/architecture-layering.md`
 
 ### 想追验证细节
 - 进入 `docs/validation/`

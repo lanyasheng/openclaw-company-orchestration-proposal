@@ -12,7 +12,7 @@
 2. **5 分钟版本** → `executive-summary.md`
 3. **当前真值** → 本页(`CURRENT_TRUTH.md`)
 4. **其他频道 quickstart** → `quickstart-other-channels.md`(非 trading 场景)
-5. **完整方案** → `openclaw-company-orchestration-proposal.md`
+5. **完整方案** → `executive-summary.md`
 
 ### Runtime 入口
 ```bash
@@ -57,10 +57,9 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 ### 1.1 本地 workspace 副本已退役（2026-03-22）
 历史上 orchestration runtime 曾散落在 `~/.openclaw/workspace` 本地；从 2026-03-22 起：
 - **Canonical 主线**：本仓 `runtime/` 目录
-- **本地副本状态**：已加 `LEGACY_COPY_NOTICE.md` 标成 legacy / 只读 / 待退役
+- **本地副本状态**：已加 (已标记 deprecated) 标成 legacy / 只读 / 待退役
 - **规则**：禁止双写，新改动必须提交到本仓 monorepo
 
-详细退役地图见：`~/.openclaw/workspace/ORCHESTRATION_LEGACY_MAP.md`
 
 ---
 
@@ -179,10 +178,10 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 | 文档 | 当前状态 | 建议替代阅读 |
 |------|----------|--------------|
-| `../ROADMAP.md` | historical draft / superseded | `roadmap.md` + `overall-plan.md` |
-| `official-lobster-integration-plan.md` | historical batch1 plan | `../README.md` + 本页 |
-| `validation/p0-minimal-validation-plan.md` | historical pre-live design note | `validation-status.md` + 本页 |
-| `reviews/independent-architecture-review-20260319.md` | historical review snapshot | 本页 + `overall-plan.md` |
+| `docs/roadmap.md` | historical draft / superseded | `roadmap.md` + `overall-plan.md` |
+| `executive-summary.md` | historical batch1 plan | `../README.md` + 本页 |
+| `validation-status.md` | historical pre-live design note | `validation-status.md` + 本页 |
+| (已删除) | historical review snapshot | 本页 + `overall-plan.md` |
 
 ---
 
@@ -192,483 +191,32 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 ---
 
-## 7. Post-Completion Follow-Up Registration(2026-03-22 新增)
-
-### 7.1 问题:为什么"做完就停"看起来像机制坏了
-
-当前系统已支持:
-- 同一 orchestrated flow/batch 内 `callback -> decision -> dispatch` 的 continuation
-- allowlist / gate / clean PASS 等控制
-
-**但存在一个缝隙**:
-- 当前任务结束后,如果出现新的 follow-up / docs 工作流 / operator-facing 交付,系统没有统一把它显式区分为:
-  1) **已注册 continuation**(有 task/batch/dispatch anchor)
-  2) **待注册新任务**(planned but not started)
-
-结果就是:聊天里容易把"准备做下一步"说成"已经在推进"。
-
-### 7.2 修复:post-completion replan contract
-
-从 2026-03-22 起,新增 `runtime/orchestrator/post_completion_replan.py`,定义最小 contract:
-
-```python
-# 核心结构
-followup_mode = "existing_dispatch" | "pending_registration"
-truth_anchor_type = "task_id" | "batch_id" | "branch" | "commit" | "push" | "none"
-allowed_status_phrase = "in_progress" | "pending_registration"
-```
-
-**核心规则(强制)**:
-1. **没 anchor 时,followup_mode 只能是 `pending_registration`**
-2. **没 anchor 时,status_phrase 只能是 `pending_registration`**
-3. **有 anchor 时,才允许标成 `in_progress`**
-
-### 7.3 Operator-Facing 规则(必须遵守)
-
-#### 原 dispatch plan 内的 continuation
-- 可以自动续推(前提是 clean PASS + whitelist 命中)
-- 状态可以写 `in_progress`
-- 必须有明确的 anchor(task_id / batch_id / dispatch step)
-
-#### 原 dispatch plan 外的新 follow-up
-- **必须先注册为新任务/新 branch/新 commit anchor**
-- 注册前状态只能写 `待启动` / `pending_registration`
-- **禁止口头说"继续推进"但系统里没有新任务注册**
-
-#### 状态短语使用规范
-
-| 场景 | followup_mode | truth_anchor | 允许的状态短语 |
-|------|---------------|--------------|----------------|
-| 原 plan 内的下一跳 | existing_dispatch | task_id / batch_id | `in_progress` |
-| 新 follow-up(已注册) | existing_dispatch | branch / commit / push | `in_progress` |
-| 新 follow-up(未注册) | pending_registration | none | `pending_registration` |
-| 有 anchor 但需人工确认 | pending_registration | 有 | `pending_registration` |
-
-### 7.4 代码入口
-
-```python
-from runtime.orchestrator.post_completion_replan import (
-    build_replan_contract,
-    validate_followup_status,
-    PostCompletionReplanContract,
-)
-
-# 示例:无 anchor 的新 follow-up(只能 pending_registration)
-contract = build_replan_contract(
-    followup_description="编写用户文档",
-    original_task_id="task_123",
-    # 没有 anchor_type / anchor_value → 自动设为 pending_registration
-)
-assert contract.followup_mode == "pending_registration"
-assert contract.status_phrase == "pending_registration"
-
-# 示例:有 anchor 的 continuation(可以 in_progress)
-contract = build_replan_contract(
-    followup_description="Phase 2 实现",
-    original_batch_id="batch_phase1",
-    anchor_type="batch_id",
-    anchor_value="batch_phase2_scheduled",
-)
-assert contract.followup_mode == "existing_dispatch"
-assert contract.status_phrase == "in_progress"
-```
-
-### 7.5 与现有机制的关系
-
-- **不是大重构**:只是补一个最小 contract,不改变现有 callback/dispatch/ack 逻辑
-- **不是全自动**:仍然需要显式注册 anchor,不能靠聊天口头继续
-- **与 waiting-integrity 配合**:waiting guard 负责发现"等但没活",replan contract 负责区分"已注册 vs 待注册"
-
-### 7.6 验收测试
-
-```bash
-# 运行 post-completion replan 测试
-python3 -m pytest tests/orchestrator/test_post_completion_replan.py -q
-```
-
-覆盖:
-- 无 anchor 的 follow-up 不能被标成 `in_progress`
-- 有 anchor(至少一种)时可被标成已启动/已注册
-- validate_followup_status 强制修正非法状态
-
-### 7.7 Partial Continuation Kernel v1 → v2 (2026-03-22 新增)
-
-#### v1 (基础 kernel)
-
-从 2026-03-22 起，新增 `runtime/orchestrator/partial_continuation.py`，提供**通用 partial closeout / auto-replan / next-task registration 能力**。
-
-**核心能力:**
-1. **Partial Closeout Contract** — 描述任务部分完成后的状态
-2. **Auto-Replan Helper** — 基于 `remaining_scope` 自动生成 next task candidates
-3. **Next-Task Registration Payload** — 结构化注册 payload（v1: proposal only）
-
-详细文档：`docs/partial-continuation-kernel-v1.md`
-
-#### v2 (Auto-Registration Layer) — 2026-03-22 新增
-
-**v2 核心升级：把 registration payload 变成真实注册记录**
-
-新增模块：`runtime/orchestrator/task_registration.py`
-
-**核心能力:**
-1. **Task Registry Ledger** — JSONL 格式的统一任务注册表
-   - `~/.openclaw/shared-context/task-registry/registry.jsonl`
-   - 单个记录：`~/.openclaw/shared-context/task-registry/{registration_id}.json`
-
-2. **Registration Status** — `registered | skipped | blocked`
-   - 明确标识注册状态，不再是"只是 proposal"
-
-3. **Truth Anchor** — 稳定的 source linkage
-   - `anchor_type`: task_id | batch_id | branch | commit | push
-   - `anchor_value`: 稳定 ID
-   - `metadata`: source_task_id, source_batch_id, adapter, scenario
-
-4. **Ready for Auto-Dispatch** — v3 入口标志
-   - `ready_for_auto_dispatch: bool`
-   - 当前状态：`proposal -> registration -> dispatch-ready intent`
-
-**代码入口 (v2 API):**
-```python
-from runtime.orchestrator.partial_continuation import (
-    generate_registered_registrations_for_closeout,  # v2 API
-    adapt_closeout_for_trading,
-)
-from runtime.orchestrator.task_registration import (
-    get_registration,
-    list_registrations,
-    get_registrations_by_source,
-)
-
-# v2: 生成 registrations with status 并自动注册到 task registry
-registrations = generate_registered_registrations_for_closeout(
-    closeout=adapted,
-    adapter="trading_roundtable",
-    auto_register=True,  # v2: 自动写入 task registry
-    batch_id="batch_123",
-)
-
-# 检查结果
-for reg in registrations:
-    print(f"Status: {reg.registration_status}")
-    print(f"Truth Anchor: {reg.truth_anchor}")
-    print(f"Ready for Auto-Dispatch: {reg.ready_for_auto_dispatch}")
-    
-    # 如果 auto_register=True，可以获取 task registry record
-    if "task_registry_record" in reg.metadata:
-        task_id = reg.metadata["task_registry_record"]["task_id"]
-```
-
-**验收测试:**
-```bash
-# 运行 v2 task registration 测试
-python3 -m pytest tests/orchestrator/test_task_registration.py -v
-# 12 passed
-
-# 运行 partial continuation 测试 (v1 + v2)
-python3 -m pytest tests/orchestrator/test_partial_continuation.py -v
-# 33 passed
-```
-
-**覆盖:**
-- ✅ Task registry 基本操作（register, get, list, update）
-- ✅ 注册会创建真实文件（JSONL ledger + 单个记录）
-- ✅ 无 remaining scope 时不注册
-- ✅ Blocked 时不注册
-- ✅ Trading 场景能触发真实注册
-- ✅ 已注册结果包含稳定 linkage（source task / source batch / new task id）
-- ✅ `ready_for_auto_dispatch` flag 逻辑
-
-**当前成熟度:**
-- ✅ Generic kernel v1 实现完成
-- ✅ Task registry ledger v2 实现完成
-- ✅ `registration_status` / `truth_anchor` / `ready_for_auto_dispatch` v2 实现完成
-- ✅ Trading 场景接入 v2（自动注册到 task registry）
-- ⏳ Channel 场景可接入（未实施）
-- ❌ 不等于"全域全自动无人续跑"（当前状态：`proposal -> registration -> dispatch-ready intent`）
-
-详细文档：`docs/partial-continuation-kernel-v2.md`
-
-### 7.8 Partial Continuation Kernel v3 — Auto-Dispatch Execution (2026-03-22 新增)
-
-**v3 核心升级：把 registered tasks 推进到 auto-dispatch execution intent + 最小执行路径**
-
-新增模块：`runtime/orchestrator/auto_dispatch.py`
-
-**核心能力:**
-1. **Auto-dispatch selector** — 从 task registry 读取 `registered + ready_for_auto_dispatch` 的任务
-2. **Dispatch policy evaluation** — 评估是否可自动派发（scenario allowlist / missing anchor / blocked / duplicate）
-3. **Dispatch artifact generation** — 生成真实 dispatch artifact（dispatch_status / dispatch_reason / dispatch_time / dispatch_target）
-4. **最小真实执行路径** — trading 场景产生真实 dispatch artifact + execution intent（recommended_spawn）
-
-**场景约束（必须）:**
-- 只对白名单/低风险 scenario 自动 dispatch（默认：`trading_roundtable_phase1`）
-- blocked / missing anchor / manual-only 必须停住
-- 当前是 **registered -> auto-dispatch intent / limited execution**, 不是全域无人值守
-
-**代码入口 (v3 API):**
-```python
-from runtime.orchestrator.auto_dispatch import (
-    AutoDispatchSelector,
-    DispatchExecutor,
-    DispatchPolicy,
-    select_ready_tasks,
-    evaluate_dispatch_policy,
-    execute_dispatch,
-    list_dispatches,
-    get_dispatch,
-)
-from runtime.orchestrator.task_registration import list_registrations
-
-# 1. 选择 ready 的任务
-ready_tasks = select_ready_tasks(limit=10)
-
-# 2. 评估 policy
-for record in ready_tasks:
-    evaluation = evaluate_dispatch_policy(record)
-    if evaluation["eligible"]:
-        # 3. 执行 dispatch（写入 artifact + 更新任务状态）
-        artifact = execute_dispatch(record)
-        print(f"Dispatched: {artifact.dispatch_id}")
-        print(f"Status: {artifact.dispatch_status}")
-        print(f"Reason: {artifact.dispatch_reason}")
-        
-        # 4. 获取 execution intent
-        if artifact.execution_intent:
-            spawn = artifact.execution_intent["recommended_spawn"]
-            print(f"Ready to spawn: {spawn['task_preview']}")
-            print(f"Metadata: {spawn['metadata']}")
-
-# 5. 列出 dispatches
-all_dispatches = list_dispatches()
-dispatched = list_dispatches(dispatch_status="dispatched")
-by_registration = list_dispatches(registration_id="reg_123")
-```
-
-**Dispatch Artifact 结构:**
-```json
-{
-  "dispatch_version": "auto_dispatch_v1",
-  "dispatch_id": "dispatch_abc123",
-  "registration_id": "reg_xyz789",
-  "task_id": "task_def456",
-  "dispatch_status": "dispatched",
-  "dispatch_reason": "Policy evaluation passed",
-  "dispatch_time": "2026-03-22T20:00:00",
-  "dispatch_target": {
-    "scenario": "trading_roundtable_phase1",
-    "adapter": "trading_roundtable",
-    "batch_id": "batch_123",
-    "owner": "trading"
-  },
-  "execution_intent": {
-    "recommended_spawn": {
-      "runtime": "subagent",
-      "task_preview": "Trading continuation",
-      "task": "Continue trading roundtable phase 1...",
-      "cwd": "/Users/study/.openclaw/workspace",
-      "metadata": {
-        "dispatch_id": "dispatch_abc123",
-        "registration_id": "reg_xyz789",
-        "task_id": "task_def456",
-        "source": "auto_dispatch_v3",
-        "trading_context": {
-          "batch_id": "batch_123",
-          "phase": "phase1_continuation",
-          "adapter": "trading_roundtable"
-        }
-      }
-    }
-  },
-  "policy_evaluation": {
-    "eligible": true,
-    "blocked_reasons": [],
-    "checks": [...]
-  }
-}
-```
-
-**验收测试:**
-```bash
-# 运行 v3 auto_dispatch 测试
-python3 -m pytest tests/orchestrator/test_auto_dispatch.py -v
-
-# 运行所有 orchestrator 测试（dispatch / registration / partial）
-python3 -m pytest tests/orchestrator -q -k "dispatch or registration or partial"
-```
-
-**覆盖:**
-- ✅ 从 registry 选择 ready 的任务
-- ✅ 过滤 not-ready / blocked status 的任务
-- ✅ Policy evaluation: happy path (trading scenario)
-- ✅ Policy evaluation: blocked (scenario not in allowlist)
-- ✅ Policy evaluation: blocked (missing anchor)
-- ✅ Policy evaluation: blocked (duplicate dispatch)
-- ✅ Execute dispatch: 生成 artifact + 写入文件
-- ✅ Execute dispatch: blocked path
-- ✅ Trading 场景：execution_intent 包含 trading_context
-- ✅ List / get dispatches
-- ✅ Dispatch artifact 序列化 / 反序列化
-- ✅ 自定义 policy
-
-**当前成熟度:**
-- ✅ Generic kernel v1 实现完成
-- ✅ Task registry ledger v2 实现完成
-- ✅ Auto-dispatch selector v3 实现完成
-- ✅ Dispatch policy evaluation v3 实现完成
-- ✅ Dispatch artifact generation v3 实现完成
-- ✅ Execution intent v3 实现完成
-- ✅ Trading 场景接入 v3（dispatch artifact + execution intent）
-- ⏳ Channel 场景可接入（未实施）
-- ❌ 不等于"全域全自动无人续跑"（当前状态：`proposal -> registration -> auto-dispatch intent / limited execution`）
-
-**v3 新增真实能力:**
-- ✅ 从"账本里有任务"推进到"系统能自动挑选并发起下一批"
-- ✅ 真实 dispatch artifact 落盘（可被 downstream 消费）
-- ✅ 最小执行路径：execution intent 包含 recommended_spawn
-- ✅ 任务状态自动更新（pending → in_progress after dispatch）
-
-**v3 未实现（下一阶段）:**
-- ❌ 实际 subagent spawn（downstream execution）
-- ❌ Callback-driven continuation（v4+ 目标）
-- ❌ 全域无人续跑（仍是白名单/有限执行）
-
-详细文档：`docs/partial-continuation-kernel-v3.md`
-
-### 7.8 Partial Continuation Kernel v4 — Downstream Spawn Closure (2026-03-22 新增)
-
-#### v4 目标
-
-从 2026-03-22 起，新增 `runtime/orchestrator/spawn_closure.py`，把 v3 的 `dispatch intent` 推进到 **downstream spawn closure**（可执行的 spawn artifact）。
-
-**核心能力:**
-1. **Spawn closure kernel**: 从 dispatch artifact 生成 canonical spawn closure artifact
-2. **去重/防重复发起**: 同一 dispatch 不重复 emit spawn closure
-3. **Policy guard**: blocked / duplicate / missing payload 不能 emit，白名单场景控制
-4. **Downstream 可消费**: 产出 spawn command / spawn payload，operator/main 可以继续消费
-
-**当前阶段**: `dispatch -> spawn closure intent / limited emission`（不是全域自动外部执行）
-
-#### Spawn Closure Artifact
-
-```json
-{
-  "spawn_version": "spawn_closure_v1",
-  "spawn_id": "spawn_abc123",
-  "dispatch_id": "dispatch_abc123",
-  "registration_id": "reg_xyz789",
-  "task_id": "task_def456",
-  "spawn_status": "ready | skipped | blocked | emitted",
-  "spawn_reason": "Policy evaluation passed",
-  "spawn_target": {
-    "runtime": "subagent",
-    "owner": "trading",
-    "scenario": "trading_roundtable_phase1",
-    "task_preview": "Task title",
-    "cwd": "/workspace"
-  },
-  "dedupe_key": "dedupe:dispatch_abc123:reg_xyz789:task_def456",
-  "emitted_at": "2026-03-22T12:00:00",
-  "spawn_command": "sessions_spawn(...)",
-  "spawn_payload": {
-    "runtime": "subagent",
-    "task": "...",
-    "cwd": "...",
-    "metadata": {...}
-  },
-  "policy_evaluation": {...},
-  "metadata": {...}
-}
-```
-
-#### Policy Evaluation
-
-| Check | 描述 | 失败处理 |
-|-------|------|---------|
-| dispatch_status | 必须是 `dispatched` | blocked |
-| execution_intent | 必须存在 | blocked |
-| recommended_spawn | 必须在 execution_intent 中 | blocked |
-| scenario_allowlist | 必须在白名单中 | blocked |
-| prevent_duplicate | 同一 dispatch 不重复 | blocked |
-
-#### 代码入口
-
-```python
-from runtime.orchestrator.spawn_closure import (
-    emit_spawn_closure,
-    create_trading_spawn_closure,
-    SpawnPolicy,
-    list_spawn_closures,
-)
-
-# 从 dispatch artifact 生成 spawn closure
-artifact = emit_spawn_closure(
-    dispatch_id="dispatch_abc123",
-    policy=SpawnPolicy(
-        scenario_allowlist=["trading_roundtable_phase1"],
-        require_dispatch_status="dispatched",
-        require_execution_intent=True,
-        prevent_duplicate=True,
-    ),
-)
-
-# Trading 场景特定
-artifact = create_trading_spawn_closure(dispatch_id="dispatch_trading123")
-
-# 列出 spawn closures
-spawns = list_spawn_closures(dispatch_id="dispatch_abc123")
-```
-
-#### 验收测试
-
-```bash
-# 运行 v4 spawn_closure 测试
-python3 -m pytest tests/orchestrator/test_spawn_closure.py -v
-
-# 运行所有 orchestrator 测试（spawn / dispatch / partial）
-python3 -m pytest tests/orchestrator -q -k "spawn or dispatch or partial"
-```
-
-**覆盖:**
-- ✅ Happy path: dispatch artifact -> spawn closure artifact
-- ✅ Duplicate dispatch 不重复 emit
-- ✅ Missing payload / blocked path 不 emit
-- ✅ Trading 场景具体 spawn closure 输出
-- ✅ Policy guard (blocked dispatch / missing intent / non-allowlist scenario)
-- ✅ Dedupe key generation
-- ✅ List / get spawn closures
-- ✅ Spawn artifact 序列化 / 反序列化
-
-**当前成熟度:**
-- ✅ Spawn closure kernel v1 实现完成
-- ✅ Spawn policy evaluation v1 实现完成
-- ✅ Dedupe / 防重复发起 v1 实现完成
-- ✅ Trading 场景接入 v4（spawn closure artifact + spawn command）
-- ⏳ Channel 场景可接入（未实施）
-- ❌ 不等于"全域全自动无人续跑"（当前状态：`proposal -> registration -> auto-dispatch intent -> spawn closure intent / limited emission`）
-
-**v4 新增真实能力:**
-- ✅ 从"dispatch intent"推进到"spawn closure artifact"
-- ✅ 真实 spawn closure artifact 落盘（可被 downstream 消费）
-- ✅ 去重/防重复发起（同一 dispatch 不重复 emit）
-- ✅ Policy guard（blocked / duplicate / missing payload 不能 emit）
-- ✅ Downstream 可消费的 spawn command / payload
-
-**v4 未实现（下一阶段）:**
-- ❌ 实际调用 `sessions_spawn` 执行（当前只输出 artifact + command）
-- ❌ 执行回执闭环（spawn -> completion receipt）
-- ❌ 全域无人续跑（仍是白名单/有限 emission）
-
-详细文档：`docs/partial-continuation-kernel-v4.md`
-
----
-
-## 8. 历史入口与 Superseded 内容
-
-保留但**不再应被当成当前默认口径入口**:
-
-| 文档 | 当前状态 | 建议替代阅读 |
-|------|----------|--------------|
-| `../ROADMAP.md` | historical draft / superseded | `roadmap.md` + `overall-plan.md` |
-| `official-lobster-integration-plan.md` | historical batch1 plan | `../README.md` + 本页 |
-| `validation/p0-minimal-validation-plan.md` | historical pre-live design note | `validation-status.md` + 本页 |
-| `reviews/independent-architecture-review-20260319.md` | historical review snapshot | 本页 + `overall-plan.md` |
+## 7. Continuation Kernel 当前状态总结
+
+### 7.1 已实现的 5 层 Kernel
+
+| 版本 | 模块 | 核心能力 | 状态 |
+|------|------|---------|------|
+| v1 | `partial_continuation.py` | Partial closeout contract / auto-replan | ✅ 实现完成 |
+| v2 | `task_registration.py` | Task registry ledger（JSONL 注册表） | ✅ 实现完成 |
+| v3 | `auto_dispatch.py` | Auto-dispatch selector / policy evaluation | ✅ 实现完成 |
+| v4 | `spawn_closure.py` | Spawn closure artifact / 去重 / policy guard | ✅ 实现完成 |
+| v5 | `spawn_execution.py` | Spawn execution artifact / intent | ✅ 实现完成 |
+
+### 7.2 Post-Completion Replan Contract
+
+`runtime/orchestrator/post_completion_replan.py` 提供最小 contract：
+- 无 anchor 时，follow-up 只能是 `pending_registration`
+- 有 anchor 时，才允许标成 `in_progress`
+- 禁止口头说"继续推进"但系统里没有新任务注册
+
+### 7.3 当前成熟度边界
+
+- ✅ Trading + Channel 两个场景已接入
+- ✅ 212 个测试全部通过
+- ❌ 尚未实际调用 `sessions_spawn` 执行
+- ❌ 尚未实现执行回执闭环
+- ❌ 不等于"全域全自动无人续跑"
+
+> **详细演进历史**：各版本 kernel 的详细设计文档见：
+> 详细设计见各模块源码的 docstring。
