@@ -45,6 +45,42 @@
 
 ---
 
+## 快速开始（今天就怎么用）
+
+### 阅读入口（从哪里开始看）
+
+1. **首次了解** → `docs/executive-summary.md`（5 分钟版本）
+2. **当前真值** → `docs/CURRENT_TRUTH.md`（live 状态 / 边界 / 计划入口）
+3. **完整方案** → `docs/openclaw-company-orchestration-proposal.md`
+4. **其他频道 quickstart** → `docs/quickstart-other-channels.md`（非 trading 场景）
+
+### Runtime 入口（从哪里开始用）
+
+**统一入口命令**：
+
+```bash
+python3 ~/.openclaw/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
+```
+
+或从本仓直接运行：
+
+```bash
+cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
+```
+
+### Quickstart 入口（最小可执行路径）
+
+| 场景 | Quickstart |
+|------|------------|
+| **非 trading 频道**（架构/产品/运营等） | `docs/quickstart-other-channels.md` |
+| **trading 场景** | `docs/CURRENT_TRUTH.md` → `trading_roundtable` 部分 |
+| **验证测试** | `python3 -m unittest tests/ -v` |
+
+**首次接入建议**：`allow_auto_dispatch=false`，先验证 callback/ack/dispatch artifacts 稳定，再考虑自动续跑。
+
+---
+
 ## 五层架构总图
 
 ```text
