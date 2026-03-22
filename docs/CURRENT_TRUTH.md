@@ -534,6 +534,132 @@ python3 -m pytest tests/orchestrator -q -k "dispatch or registration or partial"
 
 详细文档：`docs/partial-continuation-kernel-v3.md`
 
+### 7.8 Partial Continuation Kernel v4 — Downstream Spawn Closure (2026-03-22 新增)
+
+#### v4 目标
+
+从 2026-03-22 起，新增 `runtime/orchestrator/spawn_closure.py`，把 v3 的 `dispatch intent` 推进到 **downstream spawn closure**（可执行的 spawn artifact）。
+
+**核心能力:**
+1. **Spawn closure kernel**: 从 dispatch artifact 生成 canonical spawn closure artifact
+2. **去重/防重复发起**: 同一 dispatch 不重复 emit spawn closure
+3. **Policy guard**: blocked / duplicate / missing payload 不能 emit，白名单场景控制
+4. **Downstream 可消费**: 产出 spawn command / spawn payload，operator/main 可以继续消费
+
+**当前阶段**: `dispatch -> spawn closure intent / limited emission`（不是全域自动外部执行）
+
+#### Spawn Closure Artifact
+
+```json
+{
+  "spawn_version": "spawn_closure_v1",
+  "spawn_id": "spawn_abc123",
+  "dispatch_id": "dispatch_abc123",
+  "registration_id": "reg_xyz789",
+  "task_id": "task_def456",
+  "spawn_status": "ready | skipped | blocked | emitted",
+  "spawn_reason": "Policy evaluation passed",
+  "spawn_target": {
+    "runtime": "subagent",
+    "owner": "trading",
+    "scenario": "trading_roundtable_phase1",
+    "task_preview": "Task title",
+    "cwd": "/workspace"
+  },
+  "dedupe_key": "dedupe:dispatch_abc123:reg_xyz789:task_def456",
+  "emitted_at": "2026-03-22T12:00:00",
+  "spawn_command": "sessions_spawn(...)",
+  "spawn_payload": {
+    "runtime": "subagent",
+    "task": "...",
+    "cwd": "...",
+    "metadata": {...}
+  },
+  "policy_evaluation": {...},
+  "metadata": {...}
+}
+```
+
+#### Policy Evaluation
+
+| Check | 描述 | 失败处理 |
+|-------|------|---------|
+| dispatch_status | 必须是 `dispatched` | blocked |
+| execution_intent | 必须存在 | blocked |
+| recommended_spawn | 必须在 execution_intent 中 | blocked |
+| scenario_allowlist | 必须在白名单中 | blocked |
+| prevent_duplicate | 同一 dispatch 不重复 | blocked |
+
+#### 代码入口
+
+```python
+from runtime.orchestrator.spawn_closure import (
+    emit_spawn_closure,
+    create_trading_spawn_closure,
+    SpawnPolicy,
+    list_spawn_closures,
+)
+
+# 从 dispatch artifact 生成 spawn closure
+artifact = emit_spawn_closure(
+    dispatch_id="dispatch_abc123",
+    policy=SpawnPolicy(
+        scenario_allowlist=["trading_roundtable_phase1"],
+        require_dispatch_status="dispatched",
+        require_execution_intent=True,
+        prevent_duplicate=True,
+    ),
+)
+
+# Trading 场景特定
+artifact = create_trading_spawn_closure(dispatch_id="dispatch_trading123")
+
+# 列出 spawn closures
+spawns = list_spawn_closures(dispatch_id="dispatch_abc123")
+```
+
+#### 验收测试
+
+```bash
+# 运行 v4 spawn_closure 测试
+python3 -m pytest tests/orchestrator/test_spawn_closure.py -v
+
+# 运行所有 orchestrator 测试（spawn / dispatch / partial）
+python3 -m pytest tests/orchestrator -q -k "spawn or dispatch or partial"
+```
+
+**覆盖:**
+- ✅ Happy path: dispatch artifact -> spawn closure artifact
+- ✅ Duplicate dispatch 不重复 emit
+- ✅ Missing payload / blocked path 不 emit
+- ✅ Trading 场景具体 spawn closure 输出
+- ✅ Policy guard (blocked dispatch / missing intent / non-allowlist scenario)
+- ✅ Dedupe key generation
+- ✅ List / get spawn closures
+- ✅ Spawn artifact 序列化 / 反序列化
+
+**当前成熟度:**
+- ✅ Spawn closure kernel v1 实现完成
+- ✅ Spawn policy evaluation v1 实现完成
+- ✅ Dedupe / 防重复发起 v1 实现完成
+- ✅ Trading 场景接入 v4（spawn closure artifact + spawn command）
+- ⏳ Channel 场景可接入（未实施）
+- ❌ 不等于"全域全自动无人续跑"（当前状态：`proposal -> registration -> auto-dispatch intent -> spawn closure intent / limited emission`）
+
+**v4 新增真实能力:**
+- ✅ 从"dispatch intent"推进到"spawn closure artifact"
+- ✅ 真实 spawn closure artifact 落盘（可被 downstream 消费）
+- ✅ 去重/防重复发起（同一 dispatch 不重复 emit）
+- ✅ Policy guard（blocked / duplicate / missing payload 不能 emit）
+- ✅ Downstream 可消费的 spawn command / payload
+
+**v4 未实现（下一阶段）:**
+- ❌ 实际调用 `sessions_spawn` 执行（当前只输出 artifact + command）
+- ❌ 执行回执闭环（spawn -> completion receipt）
+- ❌ 全域无人续跑（仍是白名单/有限 emission）
+
+详细文档：`docs/partial-continuation-kernel-v4.md`
+
 ---
 
 ## 8. 历史入口与 Superseded 内容
