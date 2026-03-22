@@ -388,6 +388,152 @@ python3 -m pytest tests/orchestrator/test_partial_continuation.py -v
 
 详细文档：`docs/partial-continuation-kernel-v2.md`
 
+### 7.8 Partial Continuation Kernel v3 — Auto-Dispatch Execution (2026-03-22 新增)
+
+**v3 核心升级：把 registered tasks 推进到 auto-dispatch execution intent + 最小执行路径**
+
+新增模块：`runtime/orchestrator/auto_dispatch.py`
+
+**核心能力:**
+1. **Auto-dispatch selector** — 从 task registry 读取 `registered + ready_for_auto_dispatch` 的任务
+2. **Dispatch policy evaluation** — 评估是否可自动派发（scenario allowlist / missing anchor / blocked / duplicate）
+3. **Dispatch artifact generation** — 生成真实 dispatch artifact（dispatch_status / dispatch_reason / dispatch_time / dispatch_target）
+4. **最小真实执行路径** — trading 场景产生真实 dispatch artifact + execution intent（recommended_spawn）
+
+**场景约束（必须）:**
+- 只对白名单/低风险 scenario 自动 dispatch（默认：`trading_roundtable_phase1`）
+- blocked / missing anchor / manual-only 必须停住
+- 当前是 **registered -> auto-dispatch intent / limited execution**, 不是全域无人值守
+
+**代码入口 (v3 API):**
+```python
+from runtime.orchestrator.auto_dispatch import (
+    AutoDispatchSelector,
+    DispatchExecutor,
+    DispatchPolicy,
+    select_ready_tasks,
+    evaluate_dispatch_policy,
+    execute_dispatch,
+    list_dispatches,
+    get_dispatch,
+)
+from runtime.orchestrator.task_registration import list_registrations
+
+# 1. 选择 ready 的任务
+ready_tasks = select_ready_tasks(limit=10)
+
+# 2. 评估 policy
+for record in ready_tasks:
+    evaluation = evaluate_dispatch_policy(record)
+    if evaluation["eligible"]:
+        # 3. 执行 dispatch（写入 artifact + 更新任务状态）
+        artifact = execute_dispatch(record)
+        print(f"Dispatched: {artifact.dispatch_id}")
+        print(f"Status: {artifact.dispatch_status}")
+        print(f"Reason: {artifact.dispatch_reason}")
+        
+        # 4. 获取 execution intent
+        if artifact.execution_intent:
+            spawn = artifact.execution_intent["recommended_spawn"]
+            print(f"Ready to spawn: {spawn['task_preview']}")
+            print(f"Metadata: {spawn['metadata']}")
+
+# 5. 列出 dispatches
+all_dispatches = list_dispatches()
+dispatched = list_dispatches(dispatch_status="dispatched")
+by_registration = list_dispatches(registration_id="reg_123")
+```
+
+**Dispatch Artifact 结构:**
+```json
+{
+  "dispatch_version": "auto_dispatch_v1",
+  "dispatch_id": "dispatch_abc123",
+  "registration_id": "reg_xyz789",
+  "task_id": "task_def456",
+  "dispatch_status": "dispatched",
+  "dispatch_reason": "Policy evaluation passed",
+  "dispatch_time": "2026-03-22T20:00:00",
+  "dispatch_target": {
+    "scenario": "trading_roundtable_phase1",
+    "adapter": "trading_roundtable",
+    "batch_id": "batch_123",
+    "owner": "trading"
+  },
+  "execution_intent": {
+    "recommended_spawn": {
+      "runtime": "subagent",
+      "task_preview": "Trading continuation",
+      "task": "Continue trading roundtable phase 1...",
+      "cwd": "/Users/study/.openclaw/workspace",
+      "metadata": {
+        "dispatch_id": "dispatch_abc123",
+        "registration_id": "reg_xyz789",
+        "task_id": "task_def456",
+        "source": "auto_dispatch_v3",
+        "trading_context": {
+          "batch_id": "batch_123",
+          "phase": "phase1_continuation",
+          "adapter": "trading_roundtable"
+        }
+      }
+    }
+  },
+  "policy_evaluation": {
+    "eligible": true,
+    "blocked_reasons": [],
+    "checks": [...]
+  }
+}
+```
+
+**验收测试:**
+```bash
+# 运行 v3 auto_dispatch 测试
+python3 -m pytest tests/orchestrator/test_auto_dispatch.py -v
+
+# 运行所有 orchestrator 测试（dispatch / registration / partial）
+python3 -m pytest tests/orchestrator -q -k "dispatch or registration or partial"
+```
+
+**覆盖:**
+- ✅ 从 registry 选择 ready 的任务
+- ✅ 过滤 not-ready / blocked status 的任务
+- ✅ Policy evaluation: happy path (trading scenario)
+- ✅ Policy evaluation: blocked (scenario not in allowlist)
+- ✅ Policy evaluation: blocked (missing anchor)
+- ✅ Policy evaluation: blocked (duplicate dispatch)
+- ✅ Execute dispatch: 生成 artifact + 写入文件
+- ✅ Execute dispatch: blocked path
+- ✅ Trading 场景：execution_intent 包含 trading_context
+- ✅ List / get dispatches
+- ✅ Dispatch artifact 序列化 / 反序列化
+- ✅ 自定义 policy
+
+**当前成熟度:**
+- ✅ Generic kernel v1 实现完成
+- ✅ Task registry ledger v2 实现完成
+- ✅ Auto-dispatch selector v3 实现完成
+- ✅ Dispatch policy evaluation v3 实现完成
+- ✅ Dispatch artifact generation v3 实现完成
+- ✅ Execution intent v3 实现完成
+- ✅ Trading 场景接入 v3（dispatch artifact + execution intent）
+- ⏳ Channel 场景可接入（未实施）
+- ❌ 不等于"全域全自动无人续跑"（当前状态：`proposal -> registration -> auto-dispatch intent / limited execution`）
+
+**v3 新增真实能力:**
+- ✅ 从"账本里有任务"推进到"系统能自动挑选并发起下一批"
+- ✅ 真实 dispatch artifact 落盘（可被 downstream 消费）
+- ✅ 最小执行路径：execution intent 包含 recommended_spawn
+- ✅ 任务状态自动更新（pending → in_progress after dispatch）
+
+**v3 未实现（下一阶段）:**
+- ❌ 实际 subagent spawn（downstream execution）
+- ❌ Callback-driven continuation（v4+ 目标）
+- ❌ 全域无人续跑（仍是白名单/有限执行）
+
+详细文档：`docs/partial-continuation-kernel-v3.md`
+
 ---
 
 ## 8. 历史入口与 Superseded 内容

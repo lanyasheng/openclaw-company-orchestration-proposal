@@ -28,6 +28,7 @@ from partial_continuation import (
     build_partial_closeout,
     adapt_closeout_for_trading,
     generate_next_registrations_for_closeout,
+    generate_registered_registrations_for_closeout,
     ScopeItem,
     PartialCloseoutContract,
 )
