@@ -428,25 +428,30 @@ def _generate_next_registrations_for_trading(
     batch_id: str,
 ) -> List[Dict[str, Any]]:
     """
-    为 trading roundtable 生成 next task registration payloads。
+    为 trading roundtable 生成 next task registration payloads with status（v2）。
     
-    这是通用 kernel 的输出：canonical artifact，operator/main 可以继续消费。
-    当前不直接写入 state machine，但提供完整可用的结构。
+    这是 v2 升级：使用 generate_registered_registrations_for_closeout
+    把 registration payload 变成真实注册记录（可落盘到 task registry）。
     
-    返回：registration payload 列表（dict 格式）
+    返回：NextTaskRegistrationWithStatus.to_dict() 列表
     """
     if not closeout.should_generate_next_registration():
         return []
     
-    registrations = generate_next_registrations_for_closeout(
+    # 使用 v2 API：generate_registered_registrations_for_closeout
+    # 这会自动注册到 task registry（如果 auto_register=True）
+    registrations = generate_registered_registrations_for_closeout(
         closeout=closeout,
         adapter=ADAPTER_NAME,
         scenario=SCENARIO,
         max_candidates=3,
         context={
             "batch_id": batch_id,
-            "generated_by": "trading_roundtable_partial_continuation_v1",
+            "generated_by": "trading_roundtable_partial_continuation_v2",
         },
+        auto_register=True,  # v2: 自动注册到 task registry
+        batch_id=batch_id,
+        owner=closeout.metadata.get("trading_roundtable", {}).get("owner"),
     )
     
     return [reg.to_dict() for reg in registrations]

@@ -22,12 +22,18 @@ from datetime import datetime
 __all__ = [
     "StopReason",
     "DispatchReadiness",
+    "RegistrationStatus",
     "PartialCloseoutContract",
     "NextTaskCandidate",
     "NextTaskRegistrationPayload",
+    "NextTaskRegistrationWithStatus",
     "build_partial_closeout",
     "auto_replan",
     "build_next_task_registration",
+    "generate_next_registrations_for_closeout",
+    "generate_registered_registrations_for_closeout",
+    "adapt_closeout_for_trading",
+    "adapt_closeout_for_channel",
     "PARTIAL_CLOSEOUT_VERSION",
 ]
 
@@ -50,6 +56,8 @@ DispatchReadiness = Literal[
     "blocked",
     "not_applicable",
 ]
+
+RegistrationStatus = Literal["registered", "skipped", "blocked"]
 
 
 @dataclass
@@ -271,6 +279,50 @@ class NextTaskRegistrationPayload:
             candidate=data.get("candidate", {}),
             proposed_task=data.get("proposed_task", {}),
             requires_manual_approval=data.get("requires_manual_approval", True),
+            metadata=data.get("metadata", {}),
+        )
+
+
+@dataclass
+class NextTaskRegistrationWithStatus:
+    """
+    Next task registration with status — v2 扩展，增加 registration_status / truth_anchor。
+    
+    核心字段：
+    - registration: 原始 NextTaskRegistrationPayload
+    - registration_status: registered | skipped | blocked
+    - registration_reason: 注册/跳过/阻止的原因
+    - truth_anchor: 稳定的 source linkage（source_task_id / source_batch_id / new_task_id）
+    - ready_for_auto_dispatch: 是否准备好自动 dispatch
+    
+    这是 v2 新增的 canonical artifact，operator/main 可以继续消费。
+    """
+    registration: NextTaskRegistrationPayload
+    registration_status: RegistrationStatus
+    registration_reason: str
+    truth_anchor: Dict[str, Any]  # {anchor_type, anchor_value, metadata}
+    ready_for_auto_dispatch: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "registration_version": "next_task_registration_with_status_v2",
+            "registration": self.registration.to_dict(),
+            "registration_status": self.registration_status,
+            "registration_reason": self.registration_reason,
+            "truth_anchor": self.truth_anchor,
+            "ready_for_auto_dispatch": self.ready_for_auto_dispatch,
+            "metadata": self.metadata,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "NextTaskRegistrationWithStatus":
+        return cls(
+            registration=NextTaskRegistrationPayload.from_dict(data.get("registration", {})),
+            registration_status=data.get("registration_status", "registered"),
+            registration_reason=data.get("registration_reason", ""),
+            truth_anchor=data.get("truth_anchor", {}),
+            ready_for_auto_dispatch=data.get("ready_for_auto_dispatch", False),
             metadata=data.get("metadata", {}),
         )
 
@@ -593,3 +645,134 @@ def adapt_closeout_for_channel(
             closeout.dispatch_readiness = "blocked"
     
     return closeout
+
+
+# ============ v2: Auto-Registration Layer ============
+
+def generate_registered_registrations_for_closeout(
+    closeout: PartialCloseoutContract,
+    *,
+    adapter: Optional[str] = None,
+    scenario: Optional[str] = None,
+    max_candidates: int = 3,
+    context: Optional[Dict[str, Any]] = None,
+    auto_register: bool = True,
+    batch_id: Optional[str] = None,
+    owner: Optional[str] = None,
+) -> List[NextTaskRegistrationWithStatus]:
+    """
+    为一个 partial closeout contract 生成所有 next task registrations with status（v2）。
+    
+    这是 v2 新增的 convenience function，组合了：
+    1. auto_replan: 生成 next candidates
+    2. build_next_task_registration: 构建 registration payload
+    3. 自动决定 registration_status（registered | skipped | blocked）
+    4. 生成 truth_anchor（stable source linkage）
+    5. 可选：直接注册到 task registry（auto_register=True）
+    
+    参数：
+    - closeout: partial closeout contract
+    - adapter: 场景 adapter（可选）
+    - scenario: 场景名称（可选）
+    - max_candidates: 最多生成的 candidate 数量
+    - context: 额外上下文
+    - auto_register: 是否自动注册到 task registry（默认 True）
+    - batch_id: 所属批次 ID（可选）
+    - owner: 任务所有者（可选）
+    
+    返回：NextTaskRegistrationWithStatus 列表
+    """
+    if not closeout.should_generate_next_registration():
+        # 没有剩余工作或 blocked，返回空列表
+        return []
+    
+    candidates = auto_replan(closeout, max_candidates=max_candidates, context=context)
+    
+    registrations_with_status: List[NextTaskRegistrationWithStatus] = []
+    
+    for candidate in candidates:
+        # 构建 registration payload
+        registration = build_next_task_registration(
+            closeout=closeout,
+            candidate=candidate,
+            adapter=adapter,
+            scenario=scenario,
+            requires_manual_approval=(closeout.dispatch_readiness != "ready"),
+            metadata={
+                "auto_generated": True,
+                "generation_timestamp": _iso_now(),
+            },
+        )
+        
+        # 决定 registration_status
+        registration_status: RegistrationStatus = "registered"
+        registration_reason = "Auto-generated from partial closeout"
+        
+        if closeout.dispatch_readiness == "blocked":
+            registration_status = "blocked"
+            registration_reason = f"Closeout dispatch_readiness is blocked (stop_reason={closeout.stop_reason})"
+        elif candidate.metadata.get("source_scope_status") == "blocked":
+            registration_status = "blocked"
+            registration_reason = "Candidate scope item is blocked"
+        
+        # 生成 truth_anchor
+        truth_anchor = {
+            "anchor_type": "batch_id" if batch_id else "task_id",
+            "anchor_value": batch_id or closeout.original_task_id or closeout.original_batch_id or "",
+            "metadata": {
+                "source_closeout_registration_id": registration.registration_id,
+                "source_candidate_id": candidate.candidate_id,
+                "source_task_id": closeout.original_task_id,
+                "source_batch_id": closeout.original_batch_id,
+                "adapter": adapter,
+                "scenario": scenario,
+            },
+        }
+        
+        # 决定 ready_for_auto_dispatch
+        ready_for_auto_dispatch = (
+            registration_status == "registered" and
+            closeout.dispatch_readiness == "ready" and
+            candidate.priority == 1
+        )
+        
+        # 构建 result
+        result = NextTaskRegistrationWithStatus(
+            registration=registration,
+            registration_status=registration_status,
+            registration_reason=registration_reason,
+            truth_anchor=truth_anchor,
+            ready_for_auto_dispatch=ready_for_auto_dispatch,
+            metadata={
+                "batch_id": batch_id,
+                "owner": owner,
+                "adapter": adapter,
+                "scenario": scenario,
+            },
+        )
+        
+        # 可选：自动注册到 task registry
+        if auto_register and registration_status == "registered":
+            try:
+                from task_registration import register_next_task_from_payload, TaskRegistrationRecord
+                record = register_next_task_from_payload(
+                    registration_payload=registration.to_dict(),
+                    registration_status=registration_status,
+                    registration_reason=registration_reason,
+                    batch_id=batch_id,
+                    owner=owner,
+                    ready_for_auto_dispatch=ready_for_auto_dispatch,
+                )
+                result.metadata["task_registry_record"] = {
+                    "registration_id": record.registration_id,
+                    "task_id": record.task_id,
+                }
+                result.truth_anchor["anchor_type"] = "task_id"
+                result.truth_anchor["anchor_value"] = record.task_id
+            except ImportError:
+                # task_registration 模块不可用时，跳过注册
+                pass
+        
+        registrations_with_status.append(result)
+    
+    return registrations_with_status
