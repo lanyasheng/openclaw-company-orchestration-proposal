@@ -2,24 +2,27 @@
 
 > 用途：给这个 proposal repo 一个**当前真值入口**，避免旧计划、旧评审、旧 POC 被继续误读成“今天的默认口径”。
 >
-> 注意：这个 repo 现在的职责是**统一阅读入口 / 架构方案仓**，不是 runtime 真代码仓；runtime live 接线与执行真值仍以 OpenClaw 主仓和相关运行仓为准。
-
+> 注意：这个 repo 现在已升级为**单仓分层 monorepo**：`docs/` 持阅读入口，`runtime/` 持实现真值，`tests/` 持验收。历史上 runtime 曾散落在 OpenClaw workspace 本地；从 2026-03-22 起，本仓开始承担 orchestration runtime 的统一收口。
 ---
 
 ## 1. 当前仓库应该怎样理解
 
 这个仓库现在应当被理解为：
 
-> **OpenClaw 公司级 orchestration / workflow 方案仓 + canonical 阅读入口。**
+> **OpenClaw 公司级 orchestration / workflow 的单仓分层 monorepo。**
 
-它不是：
-- 生产 runtime 真代码仓
+它同时承担：
+- `docs/`：canonical 阅读入口 / 计划 / 边界 / CURRENT_TRUTH
+- `runtime/`：orchestrator、entry command、callback bridge、skills 等实现真值
+- `tests/`：针对 runtime 的验收测试
+
+它仍然不是：
 - 任一单个 POC、单个插件、单个 pilot 的代名词
 - “已经默认全自动闭环”的完成态说明
 
 当前正确总口径是：
 - **OpenClaw 持 control plane**
-- **proposal repo 持阅读入口与计划/真值索引**
+- **本仓同时持阅读入口与 orchestration runtime 收口**
 - **外部框架只进叶子层 / benchmark / 局部方法层**
 - **总体仍是 thin bridge / allowlist / safe semi-auto**
 

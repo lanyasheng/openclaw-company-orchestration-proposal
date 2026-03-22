@@ -1,6 +1,6 @@
-# OpenClaw Workflow Engine 方案仓
+# OpenClaw Workflow Engine Monorepo
 
-> 这个仓库的主线已经重置：**它不是 human-gate 插件仓，也不是零散 POC 收纳箱，而是 OpenClaw 公司级 workflow engine 的架构方案仓。**
+> 这个仓库的主线已经重置：**它不再只是架构方案仓，而是 OpenClaw 公司级 orchestration 的单仓分层 monorepo：`docs/` 持阅读入口，`runtime/` 持实现真值，`tests/` 持验收。**
 
 ## 结论先行
 
@@ -20,23 +20,28 @@
 
 ## 仓库定位
 
-这个仓库现在只服务一个核心目标：
+这个仓库现在服务两个同时收口的目标：
 
-> **给 OpenClaw 建立公司级 workflow engine 总方案，并沉淀从 P0 到 P2 的落地路线。**
+> **给 OpenClaw 建立公司级 workflow engine / orchestration 的统一收口仓：`docs/` 给阅读入口，`runtime/` 给实现真值，`tests/` 给验收真值。**
 
 因此主线关注的是：
 - 分层架构
 - 控制平面与执行平面的边界
 - 官方能力与自定义能力的接口
 - 已验证 / 未验证 / 风险 / 路线图
+- runtime 真实现与 operator-facing examples
 - 首个业务落地（`workspace-trading`）
 
 而不是：
+- 继续把设计、实现、测试散落在不同仓库/本地工作区
 - 某一个 human-gate 插件本身
-- 某个局部 POC 的实现细节
-- 单次实验的临时验证笔记
+- 单次实验的临时验证笔记冒充主线真值
 
-这些内容仍然保留，但被明确下沉到 **`docs/validation/`** 或 **`plugins/`**，不再盖过主线。
+当前目录分层：
+- `docs/`：阅读入口 / CURRENT_TRUTH / 方案边界
+- `runtime/`：orchestrator、entry command、callback bridge、skills 等实现真值
+- `tests/`：针对 runtime 的验收测试
+- `examples/`：operator-facing 示例
 
 ---
 
