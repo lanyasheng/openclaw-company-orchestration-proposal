@@ -193,7 +193,7 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 ## 7. Continuation Kernel 当前状态总结
 
-### 7.1 已实现的 5 层 Kernel
+### 7.1 已实现的 Kernel
 
 | 版本 | 模块 | 核心能力 | 状态 |
 |------|------|---------|------|
@@ -205,6 +205,7 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 | v5.2 | `completion_receipt.py` | Completion receipt artifact / closure | ✅ 实现完成 (2026-03-22) |
 | v6.1 | `sessions_spawn_request.py` | **通用** sessions_spawn-compatible request interface | ✅ 实现完成 (2026-03-22) |
 | v6.2 | `callback_auto_close.py` | **通用** callback auto-close bridge / linkage | ✅ 实现完成 (2026-03-22) |
+| v7.1 | `bridge_consumer.py` | **通用** bridge consumption layer / execution envelope | ✅ 实现完成 (2026-03-22) |
 
 ### 7.2 Post-Completion Replan Contract
 
@@ -216,15 +217,16 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 ### 7.3 当前成熟度边界（2026-03-22 更新）
 
 - ✅ Trading + Channel 两个场景已接入
-- ✅ 212+ 个测试全部通过
+- ✅ 226+ 个测试全部通过（新增 14 个 v7 测试）
 - ✅ **v5 完整闭环已实现**: spawn closure -> spawn execution artifact -> completion receipt artifact
 - ✅ **v6 通用层已实现**: sessions_spawn request interface + callback auto-close bridge
-- ✅ **真实落盘**: execution / receipt / request / close artifacts 均已写入 `~/.openclaw/shared-context/`
-- ✅ **Linkage 验证**: dispatch_id / spawn_closure_id / execution_id / receipt_id / request_id / close_id 链路正确
-- ✅ **去重机制**: duplicate execution / receipt / request prevention 正常工作
+- ✅ **v7 bridge consumption 已实现**: bridge consumer / execution envelope / consumed artifact
+- ✅ **真实落盘**: execution / receipt / request / close / consumed artifacts 均已写入 `~/.openclaw/shared-context/`
+- ✅ **Linkage 验证**: registration_id → dispatch_id → spawn_id → execution_id → receipt_id → request_id → consumed_id 链路正确
+- ✅ **去重机制**: duplicate execution / receipt / request / consumption prevention 正常工作
 - ✅ **通用 kernel**: adapter-agnostic design，trading 仅作为首个消费者
-- ⚠️ **执行模式**: 当前默认 `simulate_execution=True` / `prepare_only=True`（模拟执行，不真正调用 `sessions_spawn`）
-- ⚠️ **Bridge 集成**: sessions_spawn request 已生成 canonical artifact，尚需上层 OpenClaw bridge 消费
+- ⚠️ **执行模式**: 当前默认 `simulate_only=True`（生成 execution envelope，不真正调用 `sessions_spawn`）
+- ⚠️ **Auto-trigger**: request / consumption 尚未自动触发（需手动或上层编排）
 - ❌ 不等于"全域全自动无人续跑"
 
 ### 7.4 V5 闭环验证（2026-03-22）
@@ -275,5 +277,39 @@ python3 -m pytest tests/orchestrator/test_callback_auto_close.py -v
 - Callback close: `close_xyz789` → `~/.openclaw/shared-context/callback_closes/close_xyz789.json`
 
 **详细文档**: `docs/partial-continuation-kernel-v6.md`
+
+### 7.6 V7 Bridge Consumption 验证（2026-03-22 新增）
+
+**测试命令**:
+```bash
+cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+python3 -m pytest tests/orchestrator/test_bridge_consumer.py -v
+```
+
+**测试结果**:
+```
+✅ PASS: Happy path (consume prepared request)
+✅ PASS: Blocked (request status 不符不消费)
+✅ PASS: Duplicate (同一 request 不重复消费)
+✅ PASS: Missing (request 不存在抛出错误)
+✅ PASS: Linkage (完整 linkage 验证)
+总计：14/14 通过
+```
+
+**V7 新增能力**:
+1. **bridge_consumer.py**: 消费 sessions_spawn request，生成 canonical consumed artifact
+   - 包含 execution envelope（sessions_spawn params + execution context）
+   - consumer_status = consumed | skipped | blocked | failed
+   - 可被 OpenClaw bridge 直接执行
+
+2. **Linkage**: 完整 10-ID 链路
+   - registration_id → dispatch_id → spawn_id → execution_id → receipt_id → request_id → consumed_id
+   - 支持通过任意 ID 反向查询
+
+**交付物示例**:
+- Consumed artifact: `consumed_abc123` → `~/.openclaw/shared-context/bridge_consumed/consumed_abc123.json`
+- Execution envelope: 包含 sessions_spawn params + execution context
+
+**详细文档**: `docs/partial-continuation-kernel-v7.md`
 
 > **详细演进历史**：各版本 kernel 的详细设计文档见各模块源码的 docstring。
