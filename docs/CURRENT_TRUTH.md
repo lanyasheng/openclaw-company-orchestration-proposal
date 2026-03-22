@@ -181,3 +181,117 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 ## 6. 一句话总口径
 
 **proposal repo 现在的真值是：它是 OpenClaw 公司级 orchestration 方案仓与统一阅读入口；gstack-style planning 已成为默认方法，TEAM_RULES 已 codify planning default 与 heartbeat boundary；OpenClaw 继续持有 control plane，外部框架只进叶子层/benchmark/局部方法层；下一阶段重点是先规划、先 contract、再自动推进，而不是盲目加循环。**
+
+---
+
+## 7. Post-Completion Follow-Up Registration（2026-03-22 新增）
+
+### 7.1 问题：为什么"做完就停"看起来像机制坏了
+
+当前系统已支持：
+- 同一 orchestrated flow/batch 内 `callback -> decision -> dispatch` 的 continuation
+- allowlist / gate / clean PASS 等控制
+
+**但存在一个缝隙**：
+- 当前任务结束后，如果出现新的 follow-up / docs 工作流 / operator-facing 交付，系统没有统一把它显式区分为：
+  1) **已注册 continuation**（有 task/batch/dispatch anchor）
+  2) **待注册新任务**（planned but not started）
+
+结果就是：聊天里容易把"准备做下一步"说成"已经在推进"。
+
+### 7.2 修复：post-completion replan contract
+
+从 2026-03-22 起，新增 `runtime/orchestrator/post_completion_replan.py`，定义最小 contract：
+
+```python
+# 核心结构
+followup_mode = "existing_dispatch" | "pending_registration"
+truth_anchor_type = "task_id" | "batch_id" | "branch" | "commit" | "push" | "none"
+allowed_status_phrase = "in_progress" | "pending_registration"
+```
+
+**核心规则（强制）**：
+1. **没 anchor 时，followup_mode 只能是 `pending_registration`**
+2. **没 anchor 时，status_phrase 只能是 `pending_registration`**
+3. **有 anchor 时，才允许标成 `in_progress`**
+
+### 7.3 Operator-Facing 规则（必须遵守）
+
+#### 原 dispatch plan 内的 continuation
+- 可以自动续推（前提是 clean PASS + whitelist 命中）
+- 状态可以写 `in_progress`
+- 必须有明确的 anchor（task_id / batch_id / dispatch step）
+
+#### 原 dispatch plan 外的新 follow-up
+- **必须先注册为新任务/新 branch/新 commit anchor**
+- 注册前状态只能写 `待启动` / `pending_registration`
+- **禁止口头说"继续推进"但系统里没有新任务注册**
+
+#### 状态短语使用规范
+
+| 场景 | followup_mode | truth_anchor | 允许的状态短语 |
+|------|---------------|--------------|----------------|
+| 原 plan 内的下一跳 | existing_dispatch | task_id / batch_id | `in_progress` |
+| 新 follow-up（已注册） | existing_dispatch | branch / commit / push | `in_progress` |
+| 新 follow-up（未注册） | pending_registration | none | `pending_registration` |
+| 有 anchor 但需人工确认 | pending_registration | 有 | `pending_registration` |
+
+### 7.4 代码入口
+
+```python
+from runtime.orchestrator.post_completion_replan import (
+    build_replan_contract,
+    validate_followup_status,
+    PostCompletionReplanContract,
+)
+
+# 示例：无 anchor 的新 follow-up（只能 pending_registration）
+contract = build_replan_contract(
+    followup_description="编写用户文档",
+    original_task_id="task_123",
+    # 没有 anchor_type / anchor_value → 自动设为 pending_registration
+)
+assert contract.followup_mode == "pending_registration"
+assert contract.status_phrase == "pending_registration"
+
+# 示例：有 anchor 的 continuation（可以 in_progress）
+contract = build_replan_contract(
+    followup_description="Phase 2 实现",
+    original_batch_id="batch_phase1",
+    anchor_type="batch_id",
+    anchor_value="batch_phase2_scheduled",
+)
+assert contract.followup_mode == "existing_dispatch"
+assert contract.status_phrase == "in_progress"
+```
+
+### 7.5 与现有机制的关系
+
+- **不是大重构**：只是补一个最小 contract，不改变现有 callback/dispatch/ack 逻辑
+- **不是全自动**：仍然需要显式注册 anchor，不能靠聊天口头继续
+- **与 waiting-integrity 配合**：waiting guard 负责发现"等但没活"，replan contract 负责区分"已注册 vs 待注册"
+
+### 7.6 验收测试
+
+```bash
+# 运行 post-completion replan 测试
+python3 -m pytest tests/orchestrator/test_post_completion_replan.py -q
+```
+
+覆盖：
+- 无 anchor 的 follow-up 不能被标成 `in_progress`
+- 有 anchor（至少一种）时可被标成已启动/已注册
+- validate_followup_status 强制修正非法状态
+
+---
+
+## 8. 历史入口与 Superseded 内容
+
+保留但**不再应被当成当前默认口径入口**：
+
+| 文档 | 当前状态 | 建议替代阅读 |
+|------|----------|--------------|
+| `../ROADMAP.md` | historical draft / superseded | `roadmap.md` + `overall-plan.md` |
+| `official-lobster-integration-plan.md` | historical batch1 plan | `../README.md` + 本页 |
+| `validation/p0-minimal-validation-plan.md` | historical pre-live design note | `validation-status.md` + 本页 |
+| `reviews/independent-architecture-review-20260319.md` | historical review snapshot | 本页 + `overall-plan.md` |
