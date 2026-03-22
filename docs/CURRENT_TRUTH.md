@@ -291,6 +291,94 @@ python3 -m pytest tests/orchestrator/test_post_completion_replan.py -q
 - 有 anchor(至少一种)时可被标成已启动/已注册
 - validate_followup_status 强制修正非法状态
 
+### 7.7 Partial Continuation Kernel v1 (2026-03-22 新增)
+
+从 2026-03-22 起，新增 `runtime/orchestrator/partial_continuation.py`，提供**通用 partial closeout / auto-replan / next-task registration 能力**。
+
+**核心能力:**
+1. **Partial Closeout Contract** — 描述任务部分完成后的状态
+   - `completed_scope`: 已完成的工作
+   - `remaining_scope`: 剩余的工作
+   - `stop_reason`: 停止原因
+   - `dispatch_readiness`: 是否准备好 dispatch 下一跳
+   - `next_candidates`: 自动生成的候选任务
+
+2. **Auto-Replan Helper** — 基于 `remaining_scope` 自动生成 next task candidates
+   - 按优先级排序 (partial > not_started > blocked)
+   - 可配置最大候选数量
+
+3. **Next-Task Registration Payload** — 结构化注册 payload
+   - 这是 canonical artifact，operator/main 可以继续消费
+   - 当前不直接写入 state machine，但提供完整可用结构
+
+**核心规则:**
+- `should_generate_next_registration()` 仅在以下条件满足时返回 True:
+  - 有 `remaining_scope` AND
+  - `dispatch_readiness != "blocked"` AND
+  - 不是 fully completed
+
+**与 post_completion_replan 的关系:**
+- `post_completion_replan.py`: 关注 follow-up mode (existing_dispatch vs pending_registration) 和 truth anchor
+- `partial_continuation.py`: 关注 partial closeout 的结构化描述和 auto-replan
+- 两者互补：replan 定义"是否有 anchor"，continuation 定义"remaining work 是什么"
+
+**场景接入:**
+- **Trading roundtable** (已接入): `process_trading_roundtable_callback()` 现在生成 `partial_closeout` 和 `next_task_registrations`
+- **Channel roundtable** (可接入): 可通过 `adapt_closeout_for_channel()` 接入
+
+**代码入口:**
+```python
+from runtime.orchestrator.partial_continuation import (
+    build_partial_closeout,
+    auto_replan,
+    generate_next_registrations_for_closeout,
+    adapt_closeout_for_trading,
+)
+
+# 构建 generic closeout
+closeout = build_partial_closeout(
+    completed_scope=[{"item_id": "c1", "description": "Done"}],
+    remaining_scope=[{"item_id": "r1", "description": "Next"}],
+    stop_reason="partial_completed",
+)
+
+# 适配 trading 场景
+adapted = adapt_closeout_for_trading(
+    closeout=closeout,
+    roundtable={"conclusion": "PASS", "blocker": "none"},
+)
+
+# 生成 registrations
+registrations = generate_next_registrations_for_closeout(
+    closeout=adapted,
+    adapter="trading_roundtable",
+)
+```
+
+**验收测试:**
+```bash
+# 运行 partial continuation 测试
+python3 -m pytest tests/orchestrator/test_partial_continuation.py -v
+# 33 passed
+```
+
+**覆盖:**
+- ✅ Generic partial closeout contract 构建
+- ✅ Auto-replan 生成 next candidate / registration payload
+- ✅ 无 remaining scope 时不生成 next registration
+- ✅ Blocked 时不生成 next registration
+- ✅ Trading 场景能调用这个通用 kernel
+- ✅ Channel 场景适配逻辑
+
+**当前成熟度:**
+- ✅ Generic kernel v1 实现完成
+- ✅ Trading 场景最小接入完成
+- ⏳ Channel 场景可接入（未实施）
+- ❌ 不直接写入 state machine（需手动消费 registration payload）
+- ❌ 不等于"全域全自动无人续跑"
+
+详细文档：`docs/partial-continuation-kernel-v1.md`
+
 ---
 
 ## 8. 历史入口与 Superseded 内容

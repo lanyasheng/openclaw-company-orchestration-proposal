@@ -24,6 +24,13 @@ from completion_ack_guard import send_roundtable_completion_ack
 from continuation_backends import build_backend_plan, build_timeout_policy, normalize_dispatch_backend
 from contracts import CANONICAL_CALLBACK_ENVELOPE_VERSION, resolve_orchestration_contract
 from orchestrator import Decision, DECISIONS_DIR, DISPATCHES_DIR, _ensure_dirs
+from partial_continuation import (
+    build_partial_closeout,
+    adapt_closeout_for_trading,
+    generate_next_registrations_for_closeout,
+    ScopeItem,
+    PartialCloseoutContract,
+)
 from state_machine import (
     STATE_DIR,
     _iso_now,
@@ -301,6 +308,148 @@ def _decision_from_payload(batch_id: str, analysis: Dict[str, Any]) -> Decision:
             "supporting_results": payloads["supporting_results"],
         },
     )
+
+
+def _build_partial_closeout_for_trading(
+    batch_id: str,
+    decision: Decision,
+    analysis: Dict[str, Any],
+) -> PartialCloseoutContract:
+    """
+    基于 trading roundtable decision 构建 generic partial closeout contract。
+    
+    这是通用 kernel 与 trading 场景的接缝：把 trading-specific decision
+    转换成通用 partial closeout contract，供后续 auto-replan / registration 使用。
+    
+    返回：PartialCloseoutContract（通用 contract，不绑定 trading）
+    """
+    packet = decision.metadata.get("packet", {})
+    roundtable = decision.metadata.get("roundtable", {})
+    validation = decision.metadata.get("packet_validation", {})
+    supporting_results = decision.metadata.get("supporting_results", [])
+    
+    # 构建 completed_scope: 已完成的任务
+    completed_scope = []
+    for item in supporting_results:
+        if item.get("state") in ("callback_received", "final_closed", "next_task_dispatched"):
+            completed_scope.append(
+                ScopeItem(
+                    item_id=item.get("task_id", ""),
+                    description=f"Task {item.get('task_id', '')}: {item.get('summary') or item.get('verdict') or 'completed'}",
+                    status="completed",
+                    metadata={
+                        "state": item.get("state"),
+                        "verdict": item.get("verdict"),
+                    },
+                )
+            )
+    
+    # 构建 remaining_scope: 基于 decision 推导
+    remaining_scope = []
+    stop_reason = "completed_all"
+    
+    if decision.action == "proceed":
+        # PASS 且有 next_step -> partial_completed
+        next_step = roundtable.get("next_step", "")
+        if next_step:
+            remaining_scope.append(
+                ScopeItem(
+                    item_id="next_step_1",
+                    description=next_step,
+                    status="not_started",
+                    metadata={
+                        "completion_criteria": roundtable.get("completion_criteria", ""),
+                        "blocker": "none",
+                    },
+                )
+            )
+            stop_reason = "partial_completed"
+    elif decision.action == "fix_blocker":
+        # 有 blocker 需要修复
+        blocker = roundtable.get("blocker") or packet.get("primary_blocker", "unknown")
+        remaining_scope.append(
+            ScopeItem(
+                item_id="fix_blocker_1",
+                description=f"Resolve blocker: {blocker}",
+                status="blocked",
+                metadata={
+                    "blocker_type": blocker,
+                    "completion_criteria": roundtable.get("completion_criteria", ""),
+                },
+            )
+        )
+        stop_reason = "blocked"
+    elif decision.action == "abort":
+        # 中止，但有 remaining work（只是不执行）
+        stop_reason = "failed"
+    elif decision.action == "retry":
+        # 需要重试
+        stop_reason = "partial_completed"
+    
+    # 如果 packet incomplete，添加 remaining scope
+    if not validation.get("complete"):
+        missing_fields = validation.get("missing_fields", [])
+        for field in missing_fields[:3]:  # 限制数量
+            remaining_scope.append(
+                ScopeItem(
+                    item_id=f"missing_{field.replace('.', '_')}",
+                    description=f"Fill missing field: {field}",
+                    status="not_started",
+                    metadata={"field_type": "packet_completeness"},
+                )
+            )
+        if stop_reason == "completed_all":
+            stop_reason = "partial_completed"
+    
+    # 构建 generic closeout contract
+    closeout = build_partial_closeout(
+        completed_scope=[item.to_dict() for item in completed_scope],
+        remaining_scope=[item.to_dict() for item in remaining_scope],
+        stop_reason=stop_reason,
+        original_batch_id=batch_id,
+        metadata={
+            "decision_action": decision.action,
+            "decision_reason": decision.reason,
+        },
+    )
+    
+    # 适配 trading 场景
+    adapted_closeout = adapt_closeout_for_trading(
+        closeout=closeout,
+        packet=packet,
+        roundtable=roundtable,
+    )
+    
+    return adapted_closeout
+
+
+def _generate_next_registrations_for_trading(
+    closeout: PartialCloseoutContract,
+    batch_id: str,
+) -> List[Dict[str, Any]]:
+    """
+    为 trading roundtable 生成 next task registration payloads。
+    
+    这是通用 kernel 的输出：canonical artifact，operator/main 可以继续消费。
+    当前不直接写入 state machine，但提供完整可用的结构。
+    
+    返回：registration payload 列表（dict 格式）
+    """
+    if not closeout.should_generate_next_registration():
+        return []
+    
+    registrations = generate_next_registrations_for_closeout(
+        closeout=closeout,
+        adapter=ADAPTER_NAME,
+        scenario=SCENARIO,
+        max_candidates=3,
+        context={
+            "batch_id": batch_id,
+            "generated_by": "trading_roundtable_partial_continuation_v1",
+        },
+    )
+    
+    return [reg.to_dict() for reg in registrations]
 
 
 def _continuation_mode_from_next_step(next_step: str) -> str:
@@ -1100,6 +1249,16 @@ def process_trading_roundtable_callback(
     decision.metadata["default_auto_dispatch_readiness"] = readiness
     decision.metadata["dispatch_backend"] = normalized_backend
 
+    # ========== Universal Partial-Continuation Kernel Integration ==========
+    # 构建 generic partial closeout contract（不绑定 trading）
+    partial_closeout = _build_partial_closeout_for_trading(batch_id, decision, analysis)
+    decision.metadata["partial_closeout"] = partial_closeout.to_dict()
+    
+    # 生成 next task registration payloads（canonical artifact）
+    next_registrations = _generate_next_registrations_for_trading(partial_closeout, batch_id)
+    decision.metadata["next_task_registrations"] = next_registrations
+    # =======================================================================
+
     resolved_allow_auto_dispatch, auto_dispatch_source = _resolve_allow_auto_dispatch(
         readiness,
         allow_auto_dispatch,
@@ -1151,5 +1310,9 @@ def process_trading_roundtable_callback(
         "decision_path": str(decision_path),
         "reconciled_waiting_anomalies": reconciled_waiting_anomalies,
         "ack_result": ack_result,
+        # Universal Partial-Continuation Kernel outputs
+        "partial_closeout": partial_closeout.to_dict(),
+        "next_task_registrations": next_registrations,
+        "has_remaining_work": partial_closeout.has_remaining_work(),
         **dispatch_info,
     }
