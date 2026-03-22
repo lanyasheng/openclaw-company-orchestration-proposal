@@ -201,7 +201,8 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 | v2 | `task_registration.py` | Task registry ledger（JSONL 注册表） | ✅ 实现完成 |
 | v3 | `auto_dispatch.py` | Auto-dispatch selector / policy evaluation | ✅ 实现完成 |
 | v4 | `spawn_closure.py` | Spawn closure artifact / 去重 / policy guard | ✅ 实现完成 |
-| v5 | `spawn_execution.py` | Spawn execution artifact / intent | ✅ 实现完成 |
+| v5.1 | `spawn_execution.py` | Spawn execution artifact / real execution | ✅ 实现完成 (2026-03-22) |
+| v5.2 | `completion_receipt.py` | Completion receipt artifact / closure | ✅ 实现完成 (2026-03-22) |
 
 ### 7.2 Post-Completion Replan Contract
 
@@ -210,13 +211,40 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - 有 anchor 时，才允许标成 `in_progress`
 - 禁止口头说"继续推进"但系统里没有新任务注册
 
-### 7.3 当前成熟度边界
+### 7.3 当前成熟度边界（2026-03-22 更新）
 
 - ✅ Trading + Channel 两个场景已接入
 - ✅ 212 个测试全部通过
-- ❌ 尚未实际调用 `sessions_spawn` 执行
-- ❌ 尚未实现执行回执闭环
+- ✅ **v5 完整闭环已实现**: spawn closure -> spawn execution artifact -> completion receipt artifact
+- ✅ **真实落盘**: execution 和 receipt artifacts 均已写入 `~/.openclaw/shared-context/`
+- ✅ **Linkage 验证**: dispatch_id / spawn_closure_id / task_id / batch_id 链路正确
+- ✅ **去重机制**: duplicate execution / receipt prevention 正常工作
+- ⚠️ **执行模式**: 当前默认 `simulate_execution=True`（模拟执行，不真正调用 `sessions_spawn`）
+- ⚠️ **Callback 闭环**: receipt 生成后尚未自动触发 state_machine 更新（下一阶段）
 - ❌ 不等于"全域全自动无人续跑"
+
+### 7.4 V5 闭环验证（2026-03-22）
+
+**测试命令**:
+```bash
+cd /Users/study/.openclaw/workspace/orchestrator
+python3 test_v5 闭环.py
+```
+
+**测试结果**:
+```
+✅ PASS: Happy path (spawn closure -> execution -> receipt)
+✅ PASS: Blocked spawn (blocked/duplicate/missing payload 不执行)
+✅ PASS: Duplicate prevention (去重机制正常工作)
+总计：3/3 通过
+```
+
+**交付物示例**:
+- Spawn closure: `spawn_18a59d08fbcd`
+- Execution: `exec_607e018c9785` → `~/.openclaw/shared-context/spawn_executions/exec_607e018c9785.json`
+- Receipt: `receipt_6d6f97ce0e10` → `~/.openclaw/shared-context/completion_receipts/receipt_6d6f97ce0e10.json`
+
+**详细文档**: `docs/partial-continuation-kernel-v5.md`
 
 > **详细演进历史**：各版本 kernel 的详细设计文档见：
 > 详细设计见各模块源码的 docstring。
