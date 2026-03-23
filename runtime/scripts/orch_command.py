@@ -55,12 +55,32 @@ def _parse_auto_execute(raw: Optional[str]) -> Optional[bool]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate the canonical orchestration contract from explicit or ambient context.",
+        description="🚀 OpenClaw Orchestration 单入口命令 — 给频道/主题即可生成可用 contract",
         epilog=(
-            "Examples:\n"
-            "  python3 ~/.openclaw/scripts/orch_command.py\n"
-            "  python3 ~/.openclaw/scripts/orch_command.py --context trading_roundtable --backend tmux\n"
-            "  python3 ~/.openclaw/scripts/orch_command.py contract --output tmp/orch-contract.json"
+            "╔═══════════════════════════════════════════════════════════╗\n"
+            "║  单入口无缝接入 — 只用这个命令即可完成默认接入            ║\n"
+            "╠═══════════════════════════════════════════════════════════╣\n"
+            "║  快速开始：                                               ║\n"
+            "║  # 1. 无参数 = 使用当前频道默认配置                        ║\n"
+            "║  python3 ~/.openclaw/scripts/orch_command.py              ║\n"
+            "║                                                           ║\n"
+            "║  # 2. 指定频道/主题 = 生成该频道 contract                  ║\n"
+            "║  python3 ~/.openclaw/scripts/orch_command.py \\            ║\n"
+            "║    --channel-id \"discord:channel:YOUR_ID\" \\              ║\n"
+            "║    --channel-name \"your-channel\" \\                       ║\n"
+            "║    --topic \"讨论主题\"                                     ║\n"
+            "║                                                           ║\n"
+            "║  # 3. Trading 场景 = 自动使用 trading_roundtable           ║\n"
+            "║  python3 ~/.openclaw/scripts/orch_command.py \\            ║\n"
+            "║    --context trading_roundtable                           ║\n"
+            "║                                                           ║\n"
+            "║  默认行为：                                               ║\n"
+            "║  • coding lane → Claude Code (via subagent)               ║\n"
+            "║  • non-coding lane → subagent                             ║\n"
+            "║  • auto_execute=true (自动注册/派发/回调/续推)             ║\n"
+            "║  • gate_policy=stop_on_gate (命中 gate 正常停住)           ║\n"
+            "║  • 首次接入建议 --auto-execute false 先验证稳定            ║\n"
+            "╚═══════════════════════════════════════════════════════════╝"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -71,17 +91,17 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["contract", "start"],
         help="contract = generate the canonical contract; start is a backward-compatible alias.",
     )
-    parser.add_argument("--context", default=None, help="auto | channel_roundtable | trading_roundtable")
-    parser.add_argument("--scenario", default=None)
-    parser.add_argument("--channel-id", default=None)
-    parser.add_argument("--channel-name", default=None)
-    parser.add_argument("--topic", default=None)
-    parser.add_argument("--owner", default=None)
-    parser.add_argument("--backend", default=None)
-    parser.add_argument("--requester-session-key", default=None)
-    parser.add_argument("--batch-key", default=None)
-    parser.add_argument("--auto-execute", default=None, help="true|false; default=true")
-    parser.add_argument("--output", default=None, help="optional JSON output path")
+    parser.add_argument("--context", default=None, help="auto | channel_roundtable | trading_roundtable (默认根据场景/频道自动推导)")
+    parser.add_argument("--scenario", default=None, help="场景标识，例如 product_launch_roundtable (默认根据频道推导)")
+    parser.add_argument("--channel-id", default=None, help="频道 ID，例如 discord:channel:123456")
+    parser.add_argument("--channel-name", default=None, help="频道名称，例如 general")
+    parser.add_argument("--topic", default=None, help="讨论主题，例如 架构评审")
+    parser.add_argument("--owner", default=None, help="任务负责人，例如 main")
+    parser.add_argument("--backend", default=None, help="执行后端：subagent (默认) | tmux (兼容模式)")
+    parser.add_argument("--requester-session-key", default=None, help="请求者 session key (可选)")
+    parser.add_argument("--batch-key", default=None, help="批次 key (可选，默认自动生成)")
+    parser.add_argument("--auto-execute", default=None, help="true|false; 默认=true; 首次接入建议 false 先验证稳定")
+    parser.add_argument("--output", default=None, help="可选的 JSON 输出路径，例如 tmp/orch-contract.json")
     return parser
 
 

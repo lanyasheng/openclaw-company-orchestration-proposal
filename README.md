@@ -4,6 +4,46 @@
 > Default execution path: **subagent**. Optional compatibility path: **tmux**.
 > First real validation scenario: **trading continuation**.
 
+---
+
+## 🚀 单入口快速接入（30 秒）
+
+**统一入口命令**: `python3 ~/.openclaw/scripts/orch_command.py`
+
+```bash
+# 方式 1: 无参数 = 使用当前频道默认
+python3 ~/.openclaw/scripts/orch_command.py
+
+# 方式 2: 指定频道/主题
+python3 ~/.openclaw/scripts/orch_command.py \
+  --channel-id "discord:channel:YOUR_ID" \
+  --channel-name "your-channel" \
+  --topic "讨论主题"
+
+# 方式 3: Trading 场景
+python3 ~/.openclaw/scripts/orch_command.py --context trading_roundtable
+
+# 方式 4: 保存到文件
+python3 ~/.openclaw/scripts/orch_command.py \
+  --channel-id "discord:channel:YOUR_ID" \
+  --topic "架构评审" \
+  --output tmp/orch-contract.json
+```
+
+**默认行为**:
+- ✅ coding lane → Claude Code (via subagent)
+- ✅ non-coding lane → subagent
+- ✅ auto_execute=true (自动注册/派发/回调/续推)
+- ✅ gate_policy=stop_on_gate (命中 gate 正常停住)
+- ✅ 首次接入建议 `--auto-execute false` 先验证稳定
+
+**详细文档**:
+- **Skill 入口**: `runtime/skills/orchestration-entry/SKILL.md`
+- **其他频道 Quickstart**: `docs/quickstart/quickstart-other-channels.md`
+- **当前真值**: `docs/CURRENT_TRUTH.md`
+
+---
+
 ## What this repository is
 
 This repository is an attempt to answer a practical question:

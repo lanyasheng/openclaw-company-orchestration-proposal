@@ -147,7 +147,8 @@ def test_orchestration_entry_skill_points_to_runnable_command():
     assert _frontmatter_keys(ORCHESTRATION_ENTRY_SKILL) == {"name", "description"}
     assert "python3 ~/.openclaw/scripts/orch_command.py" in text
     assert "python3 runtime/scripts/install_orchestration_entry_global.py" in text
-    assert "docs/architecture/2026-03-21-orchestration-skill-and-command-defaults.md" in text
+    # Updated: reference to architecture docs is now generic (directory level, not specific file)
+    assert "docs/architecture/" in text
 
     result = _run_orch_command()
     assert result["orchestration"]["entrypoint"]["command"] == "contract"
