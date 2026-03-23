@@ -289,8 +289,8 @@ def _build_onboarding_seam(
                 "callback_bridge": "scripts/orchestrator_callback_bridge.py complete",
                 "ack_guard": "orchestrator/completion_ack_guard.py",
                 "dispatch_plan": "summary -> decision -> dispatch plan",
-                # P0-3 Batch 3 (2026-03-23): tmux_bridge is legacy; prefer subagent backend with runner-based observation
-                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (legacy; tmux backend only)",
+                # P0-3 Batch 4 (2026-03-23): subagent is PRIMARY recommended backend; tmux_bridge is COMPAT-ONLY for legacy tmux dispatches
+                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (COMPAT-ONLY; legacy tmux backend; NEW DEVELOPMENT MUST USE subagent BACKEND)",
             },
             "current_boundary": (
                 "trading 仍是 richer specialization：默认 auto-dispatch 只对 clean PASS + truth 完整 + continuation whitelist 命中的 continuation 放开。"
@@ -325,8 +325,8 @@ def _build_onboarding_seam(
                 "callback_bridge": "scripts/orchestrator_callback_bridge.py complete",
                 "ack_guard": "orchestrator/completion_ack_guard.py",
                 "dispatch_plan": "summary -> decision -> dispatch plan",
-                # P0-3 Batch 3 (2026-03-23): tmux_bridge is legacy; prefer subagent backend with runner-based observation
-                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (legacy; tmux backend only)",
+                # P0-3 Batch 4 (2026-03-23): subagent is PRIMARY recommended backend; tmux_bridge is COMPAT-ONLY for legacy tmux dispatches
+                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (COMPAT-ONLY; legacy tmux backend; NEW DEVELOPMENT MUST USE subagent BACKEND)",
             },
             "operator_kit": _build_channel_operator_kit(
                 scenario=scenario,

@@ -43,6 +43,24 @@ python3 cli.py stuck [--timeout 60]
 
 ---
 
+## Backend Policy (P0-3 Batch 4, 2026-03-23)
+
+**Default Backend**: `subagent` (PRIMARY AND RECOMMENDED)
+
+```python
+# Recommended: subagent backend with runner-based observation
+from continuation_backends import normalize_dispatch_backend
+backend = normalize_dispatch_backend("subagent")  # DEFAULT
+
+# Legacy compat-only: tmux backend for existing production dispatches
+# DO NOT USE for new development
+backend = normalize_dispatch_backend("tmux")  # COMPAT-ONLY
+```
+
+**Migration Path**: All existing tmux dispatches should migrate to subagent backend.
+
+---
+
 ## 核心模块
 
 ### state_machine.py — 任务状态机

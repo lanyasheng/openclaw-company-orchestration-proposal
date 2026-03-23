@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
-P0-3 Batch 2 + Batch 3: Legacy compatibility bridge script
+P0-3 Batch 4 (2026-03-23): LEGACY COMPATIBILITY BRIDGE SCRIPT
 
-This script provides tmux-specific dispatch bridge commands for backward compatibility.
+BACKEND POLICY:
+- subagent backend: PRIMARY AND DEFAULT recommended backend for ALL new development
+- tmux backend: COMPATIBILITY-ONLY legacy path for EXISTING production dispatches
+
+This script provides tmux-specific dispatch bridge commands for backward compatibility ONLY.
+DO NOT USE for new development. Migrate existing tmux dispatches to subagent backend.
+
 Primary live path (2026-03-23): subagent backend with runner-based execution.
 
 Retained for:
-- Existing tmux-based dispatches in production
-- Observable session use cases requiring intermediate state monitoring
+- Existing tmux-based dispatches in production (migration pending)
+- Legacy observable session use cases (prefer subagent + runner artifacts)
 
 Commands:
 - prepare: Prepare dispatch plan reference document
@@ -26,6 +32,8 @@ use sessions_spawn directly with runner-based observation.
 P0-3 Batch 3 (2026-03-23): Commands `describe`, `capture`, `attach` are marked
 as deprecated due to low usage. They are retained for backward compatibility
 but new development should prefer runner-based observation via subagent backend.
+
+P0-3 Batch 4 (2026-03-23): Strengthened deprecation; tmux is COMPAT-ONLY.
 """
 from __future__ import annotations
 

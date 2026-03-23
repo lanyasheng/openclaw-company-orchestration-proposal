@@ -129,6 +129,68 @@ tests/orchestrator/: 404/405 passed (1 flaky test isolation issue, unrelated)
 
 ---
 
+## 0.7. P0-3 Batch 4: Subagent as Default Recommended Backend (2026-03-23)
+
+**状态**: ✅ 进行中 (本批次)
+
+**清理范围**: 收口 tmux/dispatch 兼容层，明确 subagent 为唯一默认推荐路径
+
+**设计约束**:
+1. 不能破坏 trading live path
+2. 先做低风险收口，不大拆主逻辑
+3. 对仍必须保留的 tmux 路径，明确其"compat only"定位
+4. 小批次、及时提交
+
+### 已删除 / 已收口
+
+| 文件 | 改动 | 理由 |
+|------|------|------|
+| `runtime/orchestrator/entry_defaults.py` | `runtime_reuse.tmux_bridge` 标记升级为 `(COMPAT-ONLY; ... NEW DEVELOPMENT MUST USE subagent BACKEND)` | entry_defaults 是 operator-facing discoverability 入口，必须明确口径 |
+| `runtime/orchestrator/continuation_backends.py` | 模块头部添加 P0-3 Batch 4 BACKEND POLICY UPDATE 注释 | 明确 subagent 为 PRIMARY AND DEFAULT，tmux 为 COMPATIBILITY-ONLY |
+| `runtime/orchestrator/continuation_backends.py` | `build_backend_plan()` subagent 分支 notes 强化为 "PRIMARY RECOMMENDED BACKEND" | 代码级明确推荐路径 |
+| `runtime/orchestrator/continuation_backends.py` | `build_backend_plan()` tmux 分支 notes 添加 "COMPATIBILITY-ONLY LEGACY BACKEND" / "DO NOT USE for new development" | 明确 tmux 为兼容路径 |
+| `runtime/scripts/orchestrator_dispatch_bridge.py` | 模块 docstring 升级为 "P0-3 Batch 4: LEGACY COMPATIBILITY BRIDGE SCRIPT" | 明确脚本定位 |
+| `runtime/orchestrator/README.md` | 新增 "Backend Policy (P0-3 Batch 4, 2026-03-23)" 章节 | 文档级明确默认 backend |
+
+### 已标废 (保留但标记)
+
+| 路径 | 标记内容 | 保留原因 |
+|------|----------|----------|
+| tmux backend (`continuation_backends.py`) | "COMPATIBILITY-ONLY legacy path for EXISTING production dispatches" | 现有 production dispatches 仍在使用，需等待迁移 |
+| `orchestrator_dispatch_bridge.py` | "DO NOT USE for new development. Migrate existing tmux dispatches to subagent backend." | tmux dispatch 的完整生命周期管理仍需向后兼容 |
+
+### 暂保留 (原因明确)
+
+| 路径 | 保留原因 | 未来清理条件 |
+|------|----------|--------------|
+| tmux backend (`continuation_backends.py`) | - 现有 production dispatches 仍在使用<br>- observable session 场景仍需支持 (但应迁移到 subagent + runner) | 当所有 production dispatches 迁移到 subagent backend + runner 观察模式 |
+| `orchestrator_dispatch_bridge.py` | - tmux dispatch 的完整生命周期管理<br>- receipt/callback bridge 功能 | 当 tmux backend 完全退役 |
+| `tmux_terminal_receipts.py` | - tmux receipt 构建逻辑<br>- trading/channel roundtable 标准化 | 当 tmux backend 完全退役 |
+
+### 测试结果
+
+```bash
+cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+python3 -m pytest tests/orchestrator/test_tmux_dispatch_bridge.py -v
+python3 -m pytest tests/orchestrator/ -v --tb=short
+```
+
+**预期**: 所有现有测试通过 (改动仅为文案/注释强化，不影响功能)
+
+### Commit
+
+- **Hash**: (待 commit)
+- **Message**: `P0-3 Batch 4: Subagent as default recommended backend — tighten tmux compat layer`
+
+### Batch 5 建议
+
+1. **监控 tmux backend 使用率**: 建立指标追踪 production tmux dispatches 数量
+2. **迁移指南**: 创建 `docs/migration/tmux-to-subagent-migration.md` 帮助现有用户迁移
+3. **清理 tmux_receipts 目录**: 当使用率降至 0 后，可移除 `runtime/orchestrator/tmux_receipts/`
+4. **收口 watchdog 逻辑**: 将 `decide_watchdog_action` 集成到 continuation kernel
+
+---
+
 ---
 
 ## 1. 高优先级债务 (P0)

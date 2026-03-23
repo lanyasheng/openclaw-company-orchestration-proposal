@@ -4,6 +4,11 @@ import shlex
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+# P0-3 Batch 4 (2026-03-23): BACKEND POLICY UPDATE
+# - 'subagent' backend: PRIMARY AND DEFAULT recommended backend for ALL new development
+# - 'tmux' backend: COMPATIBILITY-ONLY legacy path retained for EXISTING production dispatches
+#   DO NOT USE tmux backend for new development; migrate existing dispatches to subagent
+#
 # P0-3 Batch 2 + Batch 3: Legacy compatibility note
 # - 'subagent' backend: Primary live path for trading continuation (2026-03-23)
 # - 'tmux' backend: Legacy compatibility layer for observable sessions; retained for backward compatibility
@@ -187,13 +192,15 @@ def build_backend_plan(
     task_preview_q = shlex.quote(task_preview)
 
     if normalized_backend == "subagent":
+        # P0-3 Batch 4 (2026-03-23): subagent is PRIMARY recommended backend
         return {
             "backend": "subagent",
             "mode": "tool_managed_non_interactive",
             "observable_intermediate_state": False,
             "notes": [
-                "Use sessions_spawn(runtime=\"subagent\") with recommended_spawn.task.",
-                "Progress is primarily observed via runner artifacts instead of an attached interactive shell.",
+                "PRIMARY RECOMMENDED BACKEND: Use sessions_spawn(runtime=\"subagent\") with recommended_spawn.task.",
+                "Progress is primarily observed via runner artifacts (status.json, final-summary.json, final-report.md).",
+                "For new development, ALWAYS prefer subagent backend over tmux backend.",
             ],
         }
 
@@ -246,6 +253,8 @@ def build_backend_plan(
             ]
         ),
         "notes": [
+            "COMPATIBILITY-ONLY LEGACY BACKEND: Retained for existing production tmux dispatches.",
+            "DO NOT USE for new development; migrate to subagent backend.",
             "tmux backend keeps an attachable interactive session separate from the OpenClaw runtime process.",
             "Use prepare/start/status/capture/attach via the bridge script so dispatch plan remains the single source of truth.",
             "tmux STATUS/completion report are diagnostic only; roundtable business closeout still requires the canonical callback bridge.",
