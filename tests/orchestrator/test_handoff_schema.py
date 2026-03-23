@@ -497,5 +497,139 @@ class TestIntegration:
         assert "continuation_context" in spawn_params["metadata"]
 
 
+class TestRoundtableRegistrationIntegration:
+    """
+    P0-2 Batch 3: 测试 handoff schema 接入 registration 流程。
+    
+    验证从 planning handoff → registration handoff → task registry 的完整链路。
+    由于完整 roundtable 测试需要复杂 mocking，这里测试核心集成路径。
+    """
+    
+    def test_handoff_to_registration_pipeline(self, tmp_path, monkeypatch):
+        """
+        测试：完整的 handoff → registration 管道。
+        
+        模拟 trading/channel roundtable 的核心逻辑：
+        1. 从 dispatch plan 生成 planning handoff
+        2. 从 planning handoff 生成 registration handoff
+        3. 通过 register_from_handoff 注册到 task registry
+        4. 验证 registration record 可查询
+        """
+        # 临时重定向 registry 目录
+        monkeypatch.setenv("OPENCLAW_REGISTRY_DIR", str(tmp_path))
+        
+        from dispatch_planner import DispatchPlanner, DispatchBackend, DispatchStatus
+        from core.handoff_schema import build_registration_handoff, build_execution_handoff
+        from task_registration import register_from_handoff, get_registration
+        
+        # 1. 创建 DispatchPlan（模拟 roundtable 输出）
+        planner = DispatchPlanner()
+        plan = planner.create_plan(
+            dispatch_id="dispatch_roundtable_test",
+            batch_id="batch_roundtable_test",
+            scenario="trading_roundtable_phase1",
+            adapter="trading_roundtable",
+            decision_id="decision_test",
+            decision={"action": "proceed"},
+            continuation={
+                "stopped_because": "roundtable_gate_pass",
+                "next_step": "Continue to phase 2",
+                "next_owner": "trading",
+            },
+            backend=DispatchBackend.SUBAGENT,
+            allow_auto_dispatch=False,
+        )
+        
+        # 2. 转换为 PlanningHandoff（roundtable 做的事）
+        planning_handoff = plan.to_planning_handoff()
+        assert planning_handoff.source_type == "dispatch_plan"
+        assert planning_handoff.scenario == "trading_roundtable_phase1"
+        
+        # 3. 构建 RegistrationHandoff（roundtable 做的事）
+        registration_handoff = build_registration_handoff(
+            planning_handoff,
+            batch_id="batch_roundtable_test",
+        )
+        assert registration_handoff.handoff_id == planning_handoff.handoff_id
+        
+        # 4. 注册到 task registry（P0-2 Batch 3 新增）
+        registration_record = register_from_handoff(registration_handoff)
+        
+        # 5. 验证 registration record
+        assert registration_record.registration_id == registration_handoff.registration_id
+        assert registration_record.task_id == registration_handoff.task_id
+        assert registration_record.batch_id == "batch_roundtable_test"
+        assert registration_record.metadata.get("handoff_id") == planning_handoff.handoff_id
+        
+        # 6. 验证可以从 registry 查询
+        retrieved = get_registration(registration_record.registration_id)
+        assert retrieved is not None
+        assert retrieved.task_id == registration_record.task_id
+        assert retrieved.metadata.get("handoff_id") == planning_handoff.handoff_id
+    
+    def test_registration_status_derived_from_safety_gates(self, tmp_path, monkeypatch):
+        """
+        测试：registration_status 从 safety_gates 正确推导。
+        
+        验证 allow_auto_dispatch=False → registration_status=skipped
+        验证 allow_auto_dispatch=True → registration_status=registered
+        """
+        monkeypatch.setenv("OPENCLAW_REGISTRY_DIR", str(tmp_path))
+        
+        from dispatch_planner import DispatchPlanner, DispatchBackend
+        from core.handoff_schema import build_registration_handoff
+        from task_registration import register_from_handoff
+        
+        planner = DispatchPlanner()
+        
+        # Case 1: allow_auto_dispatch=False → skipped
+        plan1 = planner.create_plan(
+            dispatch_id="disp_test_1",
+            batch_id="batch_test_1",
+            scenario="test",
+            adapter="test",
+            decision_id="dec_1",
+            decision={"action": "proceed"},
+            continuation={
+                "stopped_because": "test",
+                "next_step": "test",
+                "next_owner": "test",
+            },
+            backend=DispatchBackend.SUBAGENT,
+            allow_auto_dispatch=False,
+        )
+        
+        planning1 = plan1.to_planning_handoff()
+        reg_handoff1 = build_registration_handoff(planning1)
+        reg_record1 = register_from_handoff(reg_handoff1)
+        
+        assert reg_record1.registration_status == "skipped"
+        assert reg_record1.ready_for_auto_dispatch is False
+        
+        # Case 2: allow_auto_dispatch=True → registered
+        plan2 = planner.create_plan(
+            dispatch_id="disp_test_2",
+            batch_id="batch_test_2",
+            scenario="test",
+            adapter="test",
+            decision_id="dec_2",
+            decision={"action": "proceed"},
+            continuation={
+                "stopped_because": "test",
+                "next_step": "test",
+                "next_owner": "test",
+            },
+            backend=DispatchBackend.SUBAGENT,
+            allow_auto_dispatch=True,
+        )
+        
+        planning2 = plan2.to_planning_handoff()
+        reg_handoff2 = build_registration_handoff(planning2)
+        reg_record2 = register_from_handoff(reg_handoff2)
+        
+        assert reg_record2.registration_status == "registered"
+        assert reg_record2.ready_for_auto_dispatch is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

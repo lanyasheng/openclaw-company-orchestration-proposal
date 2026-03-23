@@ -50,6 +50,7 @@ from core.handoff_schema import (
     handoff_to_task_registration,
     handoff_to_dispatch_spawn,
 )
+from task_registration import register_from_handoff
 from orchestrator import Decision, DECISIONS_DIR, DISPATCHES_DIR, _ensure_dirs
 from state_machine import (
     STATE_DIR,
@@ -683,6 +684,9 @@ def process_channel_roundtable_callback(
         ready_for_auto_dispatch=None,
     )
     
+    # P0-2 Batch 3: 实际注册任务到 task registry
+    registration_record = register_from_handoff(registration_handoff)
+    
     execution_handoff = None
     if dispatch_plan_data["status"] == "triggered":
         execution_handoff = build_execution_handoff(
@@ -721,6 +725,14 @@ def process_channel_roundtable_callback(
     if execution_handoff:
         handoff_artifacts["execution_handoff"] = execution_handoff.to_dict()
     
+    # P0-2 Batch 3: 包含 registration record 信息
+    registration_info = {
+        "registration_id": registration_record.registration_id,
+        "task_id": registration_record.task_id,
+        "registration_status": registration_record.registration_status,
+        "ready_for_auto_dispatch": registration_record.ready_for_auto_dispatch,
+    }
+    
     return {
         "status": "processed",
         "batch_id": batch_id,
@@ -729,5 +741,6 @@ def process_channel_roundtable_callback(
         "decision_path": str(decision_path),
         "ack_result": ack_result,
         "handoff_schema": handoff_artifacts,
+        "registration": registration_info,
         **dispatch_info,
     }

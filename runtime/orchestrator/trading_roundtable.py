@@ -32,6 +32,7 @@ from core.handoff_schema import (
     handoff_to_task_registration,
     handoff_to_dispatch_spawn,
 )
+from task_registration import register_from_handoff
 from core.quality_gate import (
     check_packet_completeness,
     check_artifact_truth,
@@ -527,6 +528,9 @@ def process_trading_roundtable_callback(
         ready_for_auto_dispatch=None,  # 从 safety_gates 推导
     )
     
+    # P0-2 Batch 3: 实际注册任务到 task registry
+    registration_record = register_from_handoff(registration_handoff)
+    
     # 仅在 triggered 时构建 execution handoff
     execution_handoff = None
     if dispatch_plan.status == DispatchStatus.TRIGGERED:
@@ -573,6 +577,14 @@ def process_trading_roundtable_callback(
     if execution_handoff:
         handoff_artifacts["execution_handoff"] = execution_handoff.to_dict()
     
+    # P0-2 Batch 3: 包含 registration record 信息
+    registration_info = {
+        "registration_id": registration_record.registration_id,
+        "task_id": registration_record.task_id,
+        "registration_status": registration_record.registration_status,
+        "ready_for_auto_dispatch": registration_record.ready_for_auto_dispatch,
+    }
+    
     return {
         "status": "processed",
         "batch_id": batch_id,
@@ -587,4 +599,5 @@ def process_trading_roundtable_callback(
         "has_remaining_work": partial_closeout.has_remaining_work(),
         "dispatch_plan": dispatch_plan.to_dict(),
         "handoff_schema": handoff_artifacts,
+        "registration": registration_info,
     }
