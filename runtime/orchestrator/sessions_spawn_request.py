@@ -302,19 +302,28 @@ def _should_auto_trigger(request: SessionsSpawnRequest) -> tuple[bool, str]:
 def auto_trigger_consumption(
     request_id: str,
     consumer_policy: Optional[Any] = None,
-) -> tuple[bool, str, Optional[str]]:
+    chain_to_execution: bool = False,
+    execution_policy: Optional[Any] = None,
+) -> tuple[bool, str, Optional[str], Optional[str]]:
     """
     **V8 新增**: 自动触发 consumption。
+    
+    **P0-3 Batch 3 增强**: 支持 chain_to_execution，消费后自动触发真实 API execution。
     
     Args:
         request_id: Request ID
         consumer_policy: Bridge consumer policy（可选）
+        chain_to_execution: 是否链式触发真实 API execution（默认 False）
+        execution_policy: Sessions spawn bridge policy（可选，用于 execution）
     
     Returns:
-        (triggered, reason, consumed_id)
+        (triggered, reason, consumed_id, execution_id)
         - triggered: 是否成功触发
         - reason: 原因/错误信息
         - consumed_id: consumed artifact ID（如果触发成功）
+        - execution_id: API execution artifact ID（如果 chain_to_execution=True 且成功）
+    
+    P0-3 Batch 3: 支持从 consumption 链式触发 execution，打通主链。
     """
     # Import here to avoid circular dependency
     from bridge_consumer import (
@@ -326,17 +335,17 @@ def auto_trigger_consumption(
     # 1. Get request
     request = get_spawn_request(request_id)
     if not request:
-        return False, f"Request {request_id} not found", None
+        return False, f"Request {request_id} not found", None, None
     
     # 2. Check if already consumed
     existing_consumed = get_consumed_by_request(request_id)
     if existing_consumed:
-        return False, f"Request already consumed: {existing_consumed.consumed_id}", existing_consumed.consumed_id
+        return False, f"Request already consumed: {existing_consumed.consumed_id}", existing_consumed.consumed_id, None
     
     # 3. Evaluate auto-trigger guard
     should_trigger, reason = _should_auto_trigger(request)
     if not should_trigger:
-        return False, reason, None
+        return False, reason, None, None
     
     # 4. Consume request
     try:
@@ -345,12 +354,44 @@ def auto_trigger_consumption(
         if artifact.consumer_status in ("consumed", "executed"):
             # 5. Record auto-trigger
             _record_auto_trigger(request_id, artifact.consumed_id)
-            return True, f"Auto-triggered consumption: {artifact.consumed_id}", artifact.consumed_id
+            
+            # P0-3 Batch 3: Chain to execution if requested
+            execution_id: Optional[str] = None
+            # Always update reason for successful consumption
+            reason = f"Auto-triggered consumption: {artifact.consumed_id}"
+            
+            if chain_to_execution:
+                # Import sessions_spawn_bridge for execution
+                from sessions_spawn_bridge import (
+                    auto_trigger_real_execution,
+                    get_api_execution_by_request,
+                )
+                
+                # Check if already executed
+                existing_exec = get_api_execution_by_request(request_id)
+                if existing_exec:
+                    execution_id = existing_exec.execution_id
+                    reason = f"Auto-triggered consumption: {artifact.consumed_id}; Execution already exists: {execution_id}"
+                else:
+                    # Trigger real execution
+                    exec_triggered, exec_reason, exec_id = auto_trigger_real_execution(
+                        request_id,
+                        policy=execution_policy,
+                    )
+                    
+                    if exec_triggered and exec_id:
+                        execution_id = exec_id
+                        reason = f"Auto-triggered consumption: {artifact.consumed_id}; Auto-triggered execution: {execution_id}"
+                    else:
+                        # Execution not triggered (may be safe mode or blocked)
+                        reason = f"Auto-triggered consumption: {artifact.consumed_id}; Execution not triggered: {exec_reason}"
+            
+            return True, reason, artifact.consumed_id, execution_id
         else:
-            return False, f"Consumption blocked: {artifact.consumer_reason}", None
+            return False, f"Consumption blocked: {artifact.consumer_reason}", None, None
             
     except Exception as e:
-        return False, f"Auto-trigger failed: {str(e)}", None
+        return False, f"Auto-trigger failed: {str(e)}", None, None
 
 
 def configure_auto_trigger(
@@ -1011,21 +1052,35 @@ if __name__ == "__main__":
     
     elif cmd == "auto-trigger":
         # V8 新增：auto-trigger consumption
+        # P0-3 Batch 3: 支持 --chain-to-execution 链式触发真实 API execution
         if len(sys.argv) < 3:
             print("Error: missing request_id")
             sys.exit(1)
         
         request_id = sys.argv[2]
-        triggered, reason, consumed_id = auto_trigger_consumption(request_id)
+        chain_to_execution = "--chain-to-execution" in sys.argv
         
-        print(json.dumps({
+        triggered, reason, consumed_id, execution_id = auto_trigger_consumption(
+            request_id,
+            chain_to_execution=chain_to_execution,
+        )
+        
+        result = {
             "triggered": triggered,
             "reason": reason,
             "consumed_id": consumed_id,
-        }, indent=2))
+            "execution_id": execution_id,
+        }
+        
+        if chain_to_execution:
+            result["chain_to_execution"] = True
+        
+        print(json.dumps(result, indent=2))
         
         if triggered:
             print(f"\n✓ Auto-triggered consumption: {consumed_id}")
+            if execution_id:
+                print(f"✓ Auto-triggered execution: {execution_id}")
         else:
             print(f"\n✗ Auto-trigger failed: {reason}")
             sys.exit(1)

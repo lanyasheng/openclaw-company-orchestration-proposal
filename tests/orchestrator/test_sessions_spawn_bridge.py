@@ -440,6 +440,309 @@ class TestV9Integration(unittest.TestCase):
         print(f"✓ Full pipeline: receipt -> request -> API execution ({artifact.execution_id})")
 
 
+class TestP03Batch3ConsumptionToExecutionChain(unittest.TestCase):
+    """
+    P0-3 Batch 3: Integration test for artifact -> bridge_consumer -> execution request chain.
+    
+    验证通用 bridge_consumer auto-trigger 决策接到 sessions_spawn execution request 主链。
+    Trading 仅作为首个验证场景，实现保持 adapter-agnostic。
+    """
+    
+    def setUp(self):
+        self.suffix = uuid.uuid4().hex[:6]
+        
+        # 创建测试 receipt（带 readiness/safety_gates/truth_anchor）
+        self.test_receipt = create_test_receipt(
+            receipt_id=f"batch3_receipt_{self.suffix}",
+            task_id=f"batch3_task_{self.suffix}",
+            spawn_id=f"batch3_spawn_{self.suffix}",
+            dispatch_id=f"batch3_dispatch_{self.suffix}",
+            registration_id=f"batch3_reg_{self.suffix}",
+            execution_id=f"batch3_exec_{self.suffix}",
+            receipt_status="completed",
+            scenario="trading",
+            owner="trading",
+        )
+        
+        # 创建 request（带 readiness/safety_gates/truth_anchor metadata）
+        kernel = SpawnRequestKernel()
+        policy_eval = kernel.evaluate_policy(self.test_receipt)
+        request = kernel.create_request(self.test_receipt, policy_eval)
+        
+        # P0-3 Batch 2/3: 添加 readiness/safety_gates/truth_anchor metadata
+        request.metadata["readiness"] = {
+            "eligible": True,
+            "status": "ready",
+            "blockers": [],
+            "criteria": ["registration_status == 'registered'"],
+        }
+        request.metadata["safety_gates"] = {
+            "allow_auto_dispatch": True,
+            "batch_has_timeout_tasks": False,
+            "batch_has_failed_tasks": False,
+            "packet_complete": True,
+        }
+        request.metadata["truth_anchor"] = {
+            "anchor_type": "handoff_id",
+            "anchor_value": f"handoff_{self.suffix}",
+        }
+        
+        # 写入 request
+        request.write()
+        from sessions_spawn_request import _record_request_dedupe
+        _record_request_dedupe(request.dedupe_key, request.request_id)
+        
+        self.test_request = request
+    
+    def test_batch3_consumption_to_execution_chain(self):
+        """
+        P0-3 Batch 3: 验证 artifact -> bridge_consumer -> execution request 主链打通。
+        
+        流程：
+        1. sessions_spawn_request (prepared)
+        2. auto_trigger_consumption(chain_to_execution=True)
+        3. bridge_consumer.consume() -> consumed artifact
+        4. sessions_spawn_bridge.execute() -> API execution artifact
+        
+        验证：
+        - consumed artifact 生成
+        - API execution artifact 生成
+        - linkage 完整
+        """
+        from sessions_spawn_request import (
+            configure_auto_trigger,
+            auto_trigger_consumption,
+            _is_auto_triggered,
+        )
+        from bridge_consumer import get_consumed_by_request
+        from sessions_spawn_bridge import (
+            configure_auto_trigger_real_exec,
+            get_api_execution_by_request,
+        )
+        
+        # 使用唯一场景名避免测试干扰
+        unique_scenario = f"trading_batch3_{self.suffix}"
+        
+        # 1. 配置 auto-trigger（启用，唯一场景名在 allowlist）
+        config = configure_auto_trigger(
+            enabled=True,
+            allowlist=[unique_scenario],
+            denylist=[],
+            require_manual_approval=False,
+        )
+        self.assertTrue(config["enabled"])
+        
+        # 2. 配置 auto-trigger real execution（启用，safe_mode=True 用于测试）
+        exec_config = configure_auto_trigger_real_exec(
+            enabled=True,
+            allowlist=[unique_scenario],
+            require_manual_approval=False,
+            safe_mode=True,  # 测试模式：仅模拟执行
+        )
+        self.assertTrue(exec_config["enabled"])
+        
+        # 更新 request 的场景为唯一场景名
+        self.test_request.metadata["scenario"] = unique_scenario
+        self.test_request.sessions_spawn_params["metadata"]["scenario"] = unique_scenario
+        self.test_request.write()
+        
+        # 3. 执行 auto-trigger with chain_to_execution=True
+        triggered, reason, consumed_id, execution_id = auto_trigger_consumption(
+            self.test_request.request_id,
+            chain_to_execution=True,
+        )
+        
+        # 4. 验证结果
+        self.assertTrue(triggered, f"Auto-trigger should succeed, reason: {reason}")
+        self.assertIsNotNone(consumed_id, "consumed_id should be present")
+        self.assertIsNotNone(execution_id, "execution_id should be present (chain_to_execution=True)")
+        
+        # 5. 验证 consumed artifact
+        consumed = get_consumed_by_request(self.test_request.request_id)
+        self.assertIsNotNone(consumed)
+        self.assertEqual(consumed.consumed_id, consumed_id)
+        self.assertIn(consumed.consumer_status, ["consumed", "executed", "pending"])
+        
+        # 6. 验证 API execution artifact
+        execution = get_api_execution_by_request(self.test_request.request_id)
+        self.assertIsNotNone(execution)
+        self.assertEqual(execution.execution_id, execution_id)
+        self.assertIn(execution.api_execution_status, ["started", "pending", "blocked"])
+        
+        # 7. 验证 linkage 完整性
+        self.assertEqual(consumed.source_request_id, self.test_request.request_id)
+        self.assertEqual(execution.source_request_id, self.test_request.request_id)
+        self.assertEqual(consumed.source_task_id, self.test_receipt.source_task_id)
+        self.assertEqual(execution.source_task_id, self.test_receipt.source_task_id)
+        
+        # 8. 验证 metadata 传递
+        self.assertEqual(consumed.metadata.get("scenario"), unique_scenario)
+        self.assertEqual(execution.metadata.get("scenario"), unique_scenario)
+        self.assertIsNotNone(consumed.metadata.get("truth_anchor"))
+        
+        print(f"✓ P0-3 Batch 3 chain ({unique_scenario}): {self.test_request.request_id} -> {consumed_id} -> {execution_id}")
+    
+    def test_batch3_chain_blocked_by_readiness(self):
+        """
+        P0-3 Batch 3: 验证 readiness not met 时 chain 被阻塞。
+        """
+        from sessions_spawn_request import (
+            configure_auto_trigger,
+            auto_trigger_consumption,
+        )
+        from bridge_consumer import get_consumed_by_request
+        from sessions_spawn_bridge import get_api_execution_by_request
+        
+        # 创建 readiness not ready 的 request
+        suffix2 = uuid.uuid4().hex[:6]
+        receipt2 = create_test_receipt(
+            receipt_id=f"batch3_not_ready_receipt_{suffix2}",
+            task_id=f"batch3_not_ready_task_{suffix2}",
+            spawn_id=f"batch3_not_ready_spawn_{suffix2}",
+            dispatch_id=f"batch3_not_ready_dispatch_{suffix2}",
+            registration_id=f"batch3_not_ready_reg_{suffix2}",
+            execution_id=f"batch3_not_ready_exec_{suffix2}",
+            receipt_status="completed",
+            scenario="trading",
+            owner="trading",
+        )
+        
+        kernel = SpawnRequestKernel()
+        policy_eval = kernel.evaluate_policy(receipt2)
+        request2 = kernel.create_request(receipt2, policy_eval)
+        
+        # 设置 readiness not ready
+        request2.metadata["readiness"] = {
+            "eligible": False,
+            "status": "blocked",
+            "blockers": ["safety_gates.allow_auto_dispatch=False"],
+        }
+        request2.metadata["safety_gates"] = {
+            "allow_auto_dispatch": False,
+        }
+        request2.metadata["truth_anchor"] = {"anchor_type": "handoff_id", "anchor_value": f"handoff_{suffix2}"}
+        
+        request2.write()
+        from sessions_spawn_request import _record_request_dedupe
+        _record_request_dedupe(request2.dedupe_key, request2.request_id)
+        
+        # 配置 auto-trigger
+        configure_auto_trigger(
+            enabled=True,
+            allowlist=["trading"],
+            require_manual_approval=False,
+        )
+        
+        # 执行 auto-trigger with chain_to_execution
+        triggered, reason, consumed_id, execution_id = auto_trigger_consumption(
+            request2.request_id,
+            chain_to_execution=True,
+        )
+        
+        # 验证被阻塞
+        self.assertFalse(triggered)
+        self.assertIn("Readiness not met", reason)
+        self.assertIsNone(consumed_id)
+        self.assertIsNone(execution_id)
+        
+        # 验证没有生成 consumed artifact
+        consumed = get_consumed_by_request(request2.request_id)
+        self.assertIsNone(consumed)
+        
+        # 验证没有生成 API execution artifact
+        execution = get_api_execution_by_request(request2.request_id)
+        self.assertIsNone(execution)
+        
+        print(f"✓ P0-3 Batch 3 chain blocked by readiness: {reason}")
+    
+    def test_batch3_chain_generic_not_trading_specific(self):
+        """
+        P0-3 Batch 3: 验证 chain 实现是通用的，不是 trading-specific。
+        """
+        from sessions_spawn_request import (
+            configure_auto_trigger,
+            auto_trigger_consumption,
+        )
+        from bridge_consumer import get_consumed_by_request
+        from sessions_spawn_bridge import (
+            configure_auto_trigger_real_exec,
+            get_api_execution_by_request,
+        )
+        
+        # 创建 channel 场景的 request（使用唯一场景名避免测试干扰）
+        suffix3 = uuid.uuid4().hex[:6]
+        unique_scenario = f"channel_batch3_{suffix3}"
+        
+        receipt3 = create_test_receipt(
+            receipt_id=f"batch3_channel_receipt_{suffix3}",
+            task_id=f"batch3_channel_task_{suffix3}",
+            spawn_id=f"batch3_channel_spawn_{suffix3}",
+            dispatch_id=f"batch3_channel_dispatch_{suffix3}",
+            registration_id=f"batch3_channel_reg_{suffix3}",
+            execution_id=f"batch3_channel_exec_{suffix3}",
+            receipt_status="completed",
+            scenario=unique_scenario,
+            owner="channel",
+        )
+        
+        kernel = SpawnRequestKernel()
+        policy_eval = kernel.evaluate_policy(receipt3)
+        request3 = kernel.create_request(receipt3, policy_eval)
+        
+        # 设置 readiness/safety_gates（通用字段）
+        request3.metadata["readiness"] = {
+            "eligible": True,
+            "status": "ready",
+            "blockers": [],
+        }
+        request3.metadata["safety_gates"] = {
+            "allow_auto_dispatch": True,
+        }
+        request3.metadata["truth_anchor"] = {"anchor_type": "handoff_id", "anchor_value": f"handoff_{suffix3}"}
+        
+        request3.write()
+        from sessions_spawn_request import _record_request_dedupe
+        _record_request_dedupe(request3.dedupe_key, request3.request_id)
+        
+        # 配置 auto-trigger（allowlist 包含唯一场景名）
+        configure_auto_trigger(
+            enabled=True,
+            allowlist=[unique_scenario],
+            require_manual_approval=False,
+        )
+        
+        # 配置 auto-trigger real execution
+        configure_auto_trigger_real_exec(
+            enabled=True,
+            allowlist=[unique_scenario],
+            require_manual_approval=False,
+            safe_mode=True,
+        )
+        
+        # 执行 auto-trigger with chain_to_execution
+        triggered, reason, consumed_id, execution_id = auto_trigger_consumption(
+            request3.request_id,
+            chain_to_execution=True,
+        )
+        
+        # 验证通用场景也能成功
+        self.assertTrue(triggered, f"Auto-trigger should succeed for {unique_scenario}, reason: {reason}")
+        self.assertIsNotNone(consumed_id, f"consumed_id should be present for {unique_scenario}")
+        self.assertIsNotNone(execution_id, f"execution_id should be present for {unique_scenario}")
+        
+        # 验证 consumed artifact
+        consumed = get_consumed_by_request(request3.request_id)
+        self.assertIsNotNone(consumed)
+        self.assertEqual(consumed.metadata.get("scenario"), unique_scenario)
+        
+        # 验证 API execution artifact
+        execution = get_api_execution_by_request(request3.request_id)
+        self.assertIsNotNone(execution)
+        self.assertEqual(execution.metadata.get("scenario"), unique_scenario)
+        
+        print(f"✓ P0-3 Batch 3 chain ({unique_scenario}): {request3.request_id} -> {consumed_id} -> {execution_id}")
+
+
 def run_tests():
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()

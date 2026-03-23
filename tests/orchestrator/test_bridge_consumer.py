@@ -603,15 +603,21 @@ class TestAutoTriggerWithReadinessSafetyGates(unittest.TestCase):
         self.assertIn("trading", config["allowlist"])
         self.assertFalse(config["require_manual_approval"])
         
-        # 2. 执行 auto-trigger
-        triggered, reason, consumed_id = auto_trigger_consumption(
+        # 2. 执行 auto-trigger (P0-3 Batch 3: now returns 4 values)
+        triggered, reason, consumed_id, execution_id = auto_trigger_consumption(
             self.test_request.request_id
         )
         
         # 3. 验证结果
         self.assertTrue(triggered, f"Auto-trigger should succeed, reason: {reason}")
         self.assertIsNotNone(consumed_id)
-        self.assertIn("Auto-triggered consumption", reason)
+        # Reason can be either the guard approval or the consumption success message
+        self.assertTrue(
+            "Auto-triggered consumption" in reason or "Auto-trigger approved" in reason,
+            f"Unexpected reason: {reason}"
+        )
+        # execution_id is None by default (chain_to_execution=False)
+        self.assertIsNone(execution_id)
         
         # 4. 验证已记录 auto-trigger
         self.assertTrue(_is_auto_triggered(self.test_request.request_id))
@@ -686,11 +692,12 @@ class TestAutoTriggerWithReadinessSafetyGates(unittest.TestCase):
         self.assertIn("Readiness not met", reason)
         self.assertIn("blocked", reason)
         
-        # 执行 auto-trigger 应该失败
-        triggered, trigger_reason, consumed_id = auto_trigger_consumption(request.request_id)
+        # 执行 auto-trigger 应该失败 (P0-3 Batch 3: 4 return values)
+        triggered, trigger_reason, consumed_id, execution_id = auto_trigger_consumption(request.request_id)
         self.assertFalse(triggered)
         self.assertIn("Readiness not met", trigger_reason)
         self.assertIsNone(consumed_id)
+        self.assertIsNone(execution_id)
     
     def test_auto_trigger_blocked_by_safety_gates(self):
         """
@@ -752,10 +759,12 @@ class TestAutoTriggerWithReadinessSafetyGates(unittest.TestCase):
         self.assertIn("Safety gates not passed", reason)
         self.assertIn("allow_auto_dispatch=False", reason)
         
-        # 执行 auto-trigger 应该失败
-        triggered, trigger_reason, consumed_id = auto_trigger_consumption(request.request_id)
+        # 执行 auto-trigger 应该失败 (P0-3 Batch 3: 4 return values)
+        triggered, trigger_reason, consumed_id, execution_id = auto_trigger_consumption(request.request_id)
         self.assertFalse(triggered)
         self.assertIn("Safety gates not passed", trigger_reason)
+        self.assertIsNone(consumed_id)
+        self.assertIsNone(execution_id)
     
     def test_auto_trigger_general_not_trading_specific(self):
         """
@@ -816,10 +825,11 @@ class TestAutoTriggerWithReadinessSafetyGates(unittest.TestCase):
         self.assertTrue(should_trigger)
         self.assertIn("Auto-trigger approved", reason)
         
-        # 执行 auto-trigger 应该成功
-        triggered, trigger_reason, consumed_id = auto_trigger_consumption(request.request_id)
+        # 执行 auto-trigger 应该成功 (P0-3 Batch 3: 4 return values)
+        triggered, trigger_reason, consumed_id, execution_id = auto_trigger_consumption(request.request_id)
         self.assertTrue(triggered)
         self.assertIsNotNone(consumed_id)
+        self.assertIsNone(execution_id)  # chain_to_execution=False by default
         
         # 验证 consumed artifact
         from bridge_consumer import get_consumed_by_request

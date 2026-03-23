@@ -792,8 +792,9 @@ class SessionsSpawnBridge:
         # 5. Write artifact
         artifact.write()
         
-        # 6. Record dedupe
-        if status in ("started", "failed"):
+        # 6. Record dedupe (include 'pending' for safe_mode scenarios)
+        # P0-3 Batch 3: Also record 'pending' status for chain_to_execution support
+        if status in ("started", "failed", "pending"):
             _record_api_execution_dedupe(request.request_id, execution_id)
         
         return artifact
@@ -890,6 +891,8 @@ def auto_trigger_real_execution(
     """
     V9: 自动触发真实 API execution。
     
+    **P0-3 Batch 3 增强**: 支持 safe_mode 下的 pending 状态也视为成功触发。
+    
     Args:
         request_id: Request ID
         policy: Bridge policy（可选）
@@ -926,9 +929,11 @@ def auto_trigger_real_execution(
     try:
         exec_artifact = execute_sessions_spawn_api(request_id, policy)
         
-        if exec_artifact.api_execution_status == "started":
+        # P0-3 Batch 3: Consider both 'started' and 'pending' as successful triggers
+        # 'pending' means safe_mode is enabled (recorded but not actually executed)
+        if exec_artifact.api_execution_status in ("started", "pending"):
             _record_auto_trigger(request_id, exec_artifact.execution_id)
-            return True, f"Auto-triggered: {exec_artifact.execution_id}", exec_artifact.execution_id
+            return True, f"Auto-triggered: {exec_artifact.execution_id} (status={exec_artifact.api_execution_status})", exec_artifact.execution_id
         else:
             return False, f"Execution status: {exec_artifact.api_execution_status}", None
             
