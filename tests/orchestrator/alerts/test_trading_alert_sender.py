@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -39,13 +40,39 @@ from alerts.trading_alert_sender import (
 )
 
 
+def _unique_id(prefix: str = "test") -> str:
+    """生成唯一的测试 ID，避免共享状态污染"""
+    return f"{prefix}_{uuid.uuid4().hex[:8]}"
+
+
+def _cleanup_dedup_key(candidate_id: str, signal_type: str) -> None:
+    """清理指定的去重 key，确保测试隔离"""
+    index_file = ALERT_STATE_DIR / "sent_alerts_index.json"
+    if not index_file.exists():
+        return
+    
+    try:
+        index = json.loads(index_file.read_text())
+        key = _dedup_key(candidate_id, signal_type)
+        if key in index:
+            del index[key]
+            tmp_file = index_file.with_suffix(".tmp")
+            with open(tmp_file, "w") as f:
+                json.dump(index, f, indent=2)
+            tmp_file.replace(index_file)
+    except (json.JSONDecodeError, IOError):
+        pass
+
+
 def test_dedup():
     """测试去重功能"""
     print("\n=== Test: Dedup ===")
     
-    sender = TradingAlertSender(enable_throttle=False)
-    candidate_id = "test_dedup_001"
+    # 使用唯一 ID 避免历史状态污染
+    candidate_id = _unique_id("test_dedup")
     signal_type = "buy_watch"
+    
+    sender = TradingAlertSender(enable_throttle=False)
     
     # 第一次发送：应该成功
     result1 = sender.send_candidate_alert(
@@ -87,7 +114,7 @@ def test_throttle():
     
     # 第一次发送：应该成功
     result1 = sender.send_candidate_alert(
-        candidate_id="test_throttle_001",
+        candidate_id=_unique_id("test_throttle"),
         signal_type=signal_type,
         symbol="000002.SZ",
         reason="第一次发送",
@@ -96,7 +123,7 @@ def test_throttle():
     
     # 第二次发送（不同类型，应该不受节流影响）
     result2 = sender.send_candidate_alert(
-        candidate_id="test_throttle_002",
+        candidate_id=_unique_id("test_throttle"),
         signal_type="buy_watch",  # 不同类型
         symbol="000003.SZ",
         reason="不同类型，应该不受节流影响",
@@ -105,7 +132,7 @@ def test_throttle():
     
     # 第三次发送（相同类型，应该被节流）
     result3 = sender.send_candidate_alert(
-        candidate_id="test_throttle_003",
+        candidate_id=_unique_id("test_throttle"),
         signal_type=signal_type,  # 相同类型
         symbol="000004.SZ",
         reason="相同类型，应该被节流",
@@ -122,9 +149,11 @@ def test_state_file():
     """测试状态文件写入"""
     print("\n=== Test: State File ===")
     
-    sender = TradingAlertSender(enable_throttle=False)
-    candidate_id = "test_state_001"
+    # 使用唯一 ID 避免历史状态污染
+    candidate_id = _unique_id("test_state")
     signal_type = "hold_watch"
+    
+    sender = TradingAlertSender(enable_throttle=False)
     
     result = sender.send_candidate_alert(
         candidate_id=candidate_id,
@@ -156,9 +185,11 @@ def test_log_file():
     """测试日志文件写入"""
     print("\n=== Test: Log File ===")
     
-    sender = TradingAlertSender(enable_throttle=False)
-    candidate_id = "test_log_001"
+    # 使用唯一 ID 避免历史状态污染
+    candidate_id = _unique_id("test_log")
     signal_type = "candidate_new"
+    
+    sender = TradingAlertSender(enable_throttle=False)
     
     result = sender.send_candidate_alert(
         candidate_id=candidate_id,
