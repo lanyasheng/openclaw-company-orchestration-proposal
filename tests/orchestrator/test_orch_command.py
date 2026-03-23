@@ -262,7 +262,9 @@ def test_orch_command_generic_channel_scenario_includes_operator_kit():
     assert kit["recommended_first_run"]["allow_auto_dispatch"] is False
     assert "generate_contract" in kit["example_commands"]
     assert "complete_subagent" in kit["example_commands"]
-    assert "complete_tmux" in kit["example_commands"]
+    # P0-3 Batch 5 (2026-03-23): complete_tmux removed from default example commands
+    # tmux backend is COMPAT-ONLY for legacy dispatches; new development MUST use subagent
+    assert "complete_tmux" not in kit["example_commands"], "P0-3 Batch 5: tmux commands should not be in default example_commands"
 
     commands = kit["example_commands"]
     assert "marketing_sync_roundtable" in commands["generate_contract"]

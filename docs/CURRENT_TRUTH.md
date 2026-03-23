@@ -240,6 +240,7 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - ✅ **P0-3 Batch 2**: Legacy runtime cleanup — deprecation markers + fix non-existent stop command (2026-03-23)
 - ✅ **P0-3 Batch 3**: Legacy command deprecation — mark describe/capture/attach as deprecated (2026-03-23)
 - ✅ **P0-3 Batch 4**: Subagent as default recommended backend — tighten tmux compat layer (2026-03-23)
+- ✅ **P0-3 Batch 5**: Direct tmux -> subagent migration — remove tmux from default paths, minimize compat surface (2026-03-23)
 - ⚠️ **CLI Integration**: 当前优先 mock Python API call，OpenClaw CLI 集成需确认 `openclaw sessions_spawn` 命令
 - ⚠️ **Auto-trigger 配置**: 使用本地 JSON 文件，缺少版本控制（见 technical debt D5）
 - ❌ 不等于"全域全自动无人续跑"

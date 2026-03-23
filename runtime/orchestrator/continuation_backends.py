@@ -193,6 +193,7 @@ def build_backend_plan(
 
     if normalized_backend == "subagent":
         # P0-3 Batch 4 (2026-03-23): subagent is PRIMARY recommended backend
+        # P0-3 Batch 5 (2026-03-23): Reinforced - subagent is the ONLY default path for new development
         return {
             "backend": "subagent",
             "mode": "tool_managed_non_interactive",
@@ -201,13 +202,20 @@ def build_backend_plan(
                 "PRIMARY RECOMMENDED BACKEND: Use sessions_spawn(runtime=\"subagent\") with recommended_spawn.task.",
                 "Progress is primarily observed via runner artifacts (status.json, final-summary.json, final-report.md).",
                 "For new development, ALWAYS prefer subagent backend over tmux backend.",
+                "P0-3 Batch 5: This is the ONLY default path for new dispatches.",
             ],
         }
 
+    # P0-3 Batch 5 (2026-03-23): COMPATIBILITY-ONLY LEGACY PATH
+    # This tmux backend plan is retained ONLY for existing production dispatches that have not yet migrated.
+    # DO NOT USE for new development. All new dispatches MUST use subagent backend.
+    # Migration path: existing tmux dispatches should be migrated to subagent backend at next opportunity.
     label = _slugify([adapter, scenario, batch_id, dispatch_id.split("_")[-1]])[:48].strip("-") or "dispatch"
     session = f"cc-{label}"
     prompt_file = Path("/tmp") / f"{session}-dispatch-ref.md"
 
+    # P0-3 Batch 5: Minimize tmux command surface - only essential commands for legacy migration
+    # Deprecated commands (describe/capture/attach/watchdog) removed from backend_plan
     return {
         "backend": "tmux",
         "mode": "interactive_observable",
@@ -221,42 +229,27 @@ def build_backend_plan(
             "bridge": str(TMUX_BRIDGE_SCRIPT),
             "start_tmux_task": str(TMUX_START_SCRIPT),
             "status_tmux_task": str(TMUX_STATUS_SCRIPT),
+            # P0-3 Batch 5: monitor script retained only for legacy attach use cases (not recommended)
             "monitor_tmux_task": str(TMUX_MONITOR_SCRIPT),
         },
         "commands": {
+            # P0-3 Batch 5: Only core lifecycle commands retained for migration path
             "prepare": f"python3 scripts/orchestrator_dispatch_bridge.py prepare --dispatch {dispatch_q}",
             "start": f"python3 scripts/orchestrator_dispatch_bridge.py start --dispatch {dispatch_q}",
-            "start_dry_run": f"python3 scripts/orchestrator_dispatch_bridge.py start --dispatch {dispatch_q} --dry-run",
             "status": f"python3 scripts/orchestrator_dispatch_bridge.py status --dispatch {dispatch_q}",
-            "capture": f"python3 scripts/orchestrator_dispatch_bridge.py capture --dispatch {dispatch_q}",
-            "attach": f"python3 scripts/orchestrator_dispatch_bridge.py attach --dispatch {dispatch_q}",
             "receipt": f"python3 scripts/orchestrator_dispatch_bridge.py receipt --dispatch {dispatch_q}",
-            "complete_template": f"python3 scripts/orchestrator_dispatch_bridge.py complete --dispatch {dispatch_q} --task-id <tmux-task-id>",
-            "watchdog": f"python3 scripts/orchestrator_dispatch_bridge.py watchdog --dispatch {dispatch_q} --tmux-status running",
+            "complete": f"python3 scripts/orchestrator_dispatch_bridge.py complete --dispatch {dispatch_q} --task-id <tmux-task-id>",
+            # P0-3 Batch 5: Deprecated commands removed - use subagent backend instead
+            # "start_dry_run": ...,
+            # "capture": ...,  # Deprecated - low usage
+            # "attach": ...,   # Deprecated - low usage
+            # "watchdog": ..., # Internal use only
         },
-        "manual_start_equivalent": " ".join(
-            [
-                "bash",
-                shlex.quote(str(TMUX_START_SCRIPT)),
-                "--label",
-                shlex.quote(label),
-                "--workdir",
-                workdir_q,
-                "--prompt-file",
-                shlex.quote(str(prompt_file)),
-                "--task",
-                task_preview_q,
-                "--lint-cmd",
-                "''",
-                "--build-cmd",
-                "''",
-            ]
-        ),
         "notes": [
-            "COMPATIBILITY-ONLY LEGACY BACKEND: Retained for existing production tmux dispatches.",
-            "DO NOT USE for new development; migrate to subagent backend.",
-            "tmux backend keeps an attachable interactive session separate from the OpenClaw runtime process.",
-            "Use prepare/start/status/capture/attach via the bridge script so dispatch plan remains the single source of truth.",
-            "tmux STATUS/completion report are diagnostic only; roundtable business closeout still requires the canonical callback bridge.",
+            "COMPATIBILITY-ONLY LEGACY BACKEND: Retained ONLY for existing production tmux dispatches awaiting migration.",
+            "DO NOT USE for new development - ALL new dispatches MUST use subagent backend.",
+            "Migration required: existing tmux dispatches should migrate to subagent at next opportunity.",
+            "tmux backend provides interactive session separate from OpenClaw runtime process.",
+            "tmux STATUS/completion report are diagnostic only; business closeout requires canonical callback bridge.",
         ],
     }

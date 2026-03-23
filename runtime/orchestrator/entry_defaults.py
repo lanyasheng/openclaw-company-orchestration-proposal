@@ -219,12 +219,14 @@ def _build_channel_operator_kit(*, scenario: str, owner: str, channel: Dict[str,
                 "--runtime subagent --allow-auto-dispatch false "
                 "--requester-session-key <agent:...>"
             ),
-            "complete_tmux": (
-                "python3 scripts/orchestrator_dispatch_bridge.py complete "
-                "--dispatch <dispatch.json> --task-id <task_id> --tmux-status likely_done "
-                "--report-json <completion-report.json> --report-md <completion-report.md> "
-                "--allow-auto-dispatch false --requester-session-key <agent:...>"
-            ),
+            # P0-3 Batch 5 (2026-03-23): DEPRECATED - tmux backend is COMPAT-ONLY for legacy dispatches
+            # DO NOT USE for new development. Migrate to subagent backend.
+            # "complete_tmux": (
+            #     "python3 scripts/orchestrator_dispatch_bridge.py complete "
+            #     "--dispatch <dispatch.json> --task-id <task_id> --tmux-status likely_done "
+            #     "--report-json <completion-report.json> --report-md <completion-report.md> "
+            #     "--allow-auto-dispatch false --requester-session-key <agent:...>"
+            # ),
         },
         "recommended_first_run": {
             "allow_auto_dispatch": False,

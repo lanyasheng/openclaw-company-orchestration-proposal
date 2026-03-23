@@ -131,7 +131,7 @@ tests/orchestrator/: 404/405 passed (1 flaky test isolation issue, unrelated)
 
 ## 0.7. P0-3 Batch 4: Subagent as Default Recommended Backend (2026-03-23)
 
-**状态**: ✅ 进行中 (本批次)
+**状态**: ✅ 已完成
 
 **清理范围**: 收口 tmux/dispatch 兼容层，明确 subagent 为唯一默认推荐路径
 
@@ -175,19 +175,76 @@ python3 -m pytest tests/orchestrator/test_tmux_dispatch_bridge.py -v
 python3 -m pytest tests/orchestrator/ -v --tb=short
 ```
 
-**预期**: 所有现有测试通过 (改动仅为文案/注释强化，不影响功能)
+**结果**: 所有现有测试通过 (改动仅为文案/注释强化，不影响功能)
+
+### Commit
+
+- **Hash**: `7ef74cc`
+- **Message**: `P0-3 Batch 4: Subagent as default recommended backend — tighten tmux compat layer`
+
+---
+
+## 0.8. P0-3 Batch 5: Direct tmux -> subagent Migration (2026-03-23)
+
+**状态**: ✅ 进行中 (本批次)
+
+**清理范围**: 直接推进 tmux -> subagent 迁移，不再先做使用率监控；收口默认路径、入口配置、推荐命令、文档
+
+**设计约束**:
+1. 不能破坏 trading live path
+2. 默认路径必须进一步向 subagent 收拢
+3. 若某些 tmux 逻辑还不能删，必须明确为何仍保留
+4. 先 targeted tests，再 broader regression
+5. 小批次、及时提交
+
+### 已删除 / 已收口
+
+| 文件 | 改动 | 理由 |
+|------|------|------|
+| `runtime/orchestrator/entry_defaults.py` | 注释掉 `complete_tmux` 示例命令，添加 Batch 5 deprecation 注释 | 入口文档不应展示 tmux 为推荐路径 |
+| `runtime/orchestrator/continuation_backends.py` | `build_backend_plan()` tmux 分支移除 deprecated commands (capture/attach/watchdog/start_dry_run) | 最小化 tmux 命令触达面，仅保留核心生命周期命令 |
+| `runtime/orchestrator/continuation_backends.py` | `build_backend_plan()` subagent 分支 notes 添加 "ONLY default path for new development" | 强化 subagent 为唯一默认路径 |
+| `runtime/orchestrator/continuation_backends.py` | `build_backend_plan()` tmux 分支 notes 升级为 "MIGRATION REQUIRED" | 明确 tmux 为需迁移的兼容路径 |
+| `runtime/orchestrator/README.md` | Backend Policy 升级为 Batch 5，明确 subagent 为"ONLY DEFAULT FOR NEW DEVELOPMENT" | 文档级明确默认路径 |
+| `docs/CURRENT_TRUTH.md` | 添加 Batch 5 完成状态 | 真值入口同步更新 |
+
+### 已降级为 compat-only
+
+| 路径 | 降级内容 | 保留原因 |
+|------|----------|----------|
+| tmux backend commands (`continuation_backends.py`) | 仅保留 `prepare/start/status/receipt/complete` 核心命令 | 现有 production dispatches 仍需完整生命周期管理 |
+| `orchestrator_dispatch_bridge.py` | deprecated commands (describe/capture/attach/watchdog) 已在 Batch 3 标废，Batch 5 从 backend_plan 移除 | 低使用率命令不应在默认路径展示 |
+
+### 暂保留 (原因明确)
+
+| 路径 | 保留原因 | 未来清理条件 |
+|------|----------|--------------|
+| tmux backend (`continuation_backends.py`) | 现有 production dispatches 仍在使用，需等待迁移 | 当所有 production dispatches 迁移到 subagent |
+| `orchestrator_dispatch_bridge.py` | tmux dispatch 的完整生命周期管理仍需向后兼容 | 当 tmux backend 完全退役 |
+| `tmux_terminal_receipts.py` | tmux receipt 构建逻辑仍需向后兼容 | 当 tmux backend 完全退役 |
+
+### 测试结果
+
+```bash
+cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+python3 -m pytest tests/orchestrator/test_tmux_dispatch_bridge.py -v
+python3 -m pytest tests/orchestrator/ -v --tb=short
+```
+
+**预期**: 所有现有测试通过 (改动仅为文案/注释/命令表面清理，不影响功能)
 
 ### Commit
 
 - **Hash**: (待 commit)
-- **Message**: `P0-3 Batch 4: Subagent as default recommended backend — tighten tmux compat layer`
+- **Message**: `P0-3 Batch 5: Direct tmux -> subagent migration — remove tmux from default paths, minimize compat surface`
 
-### Batch 5 建议
+### Batch 6 建议
 
-1. **监控 tmux backend 使用率**: 建立指标追踪 production tmux dispatches 数量
-2. **迁移指南**: 创建 `docs/migration/tmux-to-subagent-migration.md` 帮助现有用户迁移
+1. **tmux backend 使用率追踪**: 建立指标/日志追踪 production tmux dispatches 数量，为完全移除做准备
+2. **迁移指南文档**: 创建 `docs/migration/tmux-to-subagent-migration.md` 帮助现有用户迁移
 3. **清理 tmux_receipts 目录**: 当使用率降至 0 后，可移除 `runtime/orchestrator/tmux_receipts/`
-4. **收口 watchdog 逻辑**: 将 `decide_watchdog_action` 集成到 continuation kernel
+4. **收口 watchdog 逻辑**: 将 `decide_watchdog_action` 集成到 continuation kernel，移除独立命令
+5. **评估移除 tmux backend**: 当 production dispatches 降至 0 后，可考虑完全移除 tmux backend 支持
 
 ---
 
