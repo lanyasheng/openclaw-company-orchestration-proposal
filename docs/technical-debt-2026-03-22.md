@@ -248,6 +248,85 @@ python3 -m pytest tests/orchestrator/ -v --tb=short
 
 ---
 
+## 0.9. P0-3 Batch 6: Generic Lifecycle Kernel (2026-03-23)
+
+**状态**: ✅ 已完成 (本批次)
+
+**清理范围**: 把 tmux 兼容层剩余的 watchdog / lifecycle 判定逻辑进一步并回 continuation kernel
+
+**设计约束**:
+1. 不能破坏 trading live path
+2. 不搞大拆主逻辑，只做低风险 kernelization / boundary 收口
+3. 对不能删的兼容逻辑写明保留原因
+4. 先 targeted tests，再 broader regression
+5. 输出分三类：已迁入通用层 / 已标废保留 / 暂保留
+
+### 已迁入通用层
+
+| 文件 | 改动 | 理由 |
+|------|------|------|
+| `runtime/orchestrator/continuation_backends.py` | 新增 `GenericBackendStatus` enum | 后端无关的生命周期状态枚举 |
+| `runtime/orchestrator/continuation_backends.py` | 新增 `BackendStatusAdapter` Protocol | 后端特定状态映射接口 |
+| `runtime/orchestrator/continuation_backends.py` | 新增 `BackendLifecycleConfig` dataclass | 后端特定生命周期配置封装 |
+| `runtime/orchestrator/continuation_backends.py` | `build_timeout_policy()` 使用 `BackendLifecycleConfig` | 移除硬编码 tmux 常量 |
+| `runtime/orchestrator/continuation_backends.py` | `decide_watchdog_action()` 使用 generic status | 后端无关的 watchdog 决策逻辑 |
+| `runtime/orchestrator/continuation_backends.py` | `build_backend_plan()` 更新注释 | 明确 watchdog 已集成到 kernel |
+
+### 已标废保留
+
+| 路径 | 标记内容 | 保留原因 |
+|------|----------|----------|
+| `runtime/orchestrator/tmux_terminal_receipts.py` 的 `TERMINAL_*_STATUSES` | 添加 Batch 6 注释，说明用于 `BackendLifecycleConfig.for_tmux()` | tmux 特定状态常量仍需保留供 lifecycle config 使用 |
+| `runtime/orchestrator/continuation_backends.py` 的 tmux 分支 | 标记为 compat-only，但保留完整功能 | 现有 production dispatches 仍在使用 |
+
+### 暂保留 (原因明确)
+
+| 路径 | 保留原因 | 未来清理条件 |
+|------|----------|--------------|
+| `orchestrator_dispatch_bridge.py` 的 `cmd_watchdog()` | 仍作为 CLI 入口，但内部委托给 kernel | 当 CLI 使用率降至 0 后可移除 |
+| tmux backend 完整支持 | 现有 production dispatches 仍需完整生命周期管理 | 当所有 dispatches 迁移到 subagent |
+
+### 新增能力
+
+1. **GenericBackendStatus enum**: 后端无关的生命周期状态
+   - DONE, STUCK, RUNNING, IDLE, UNKNOWN
+   - 支持多后端统一决策逻辑
+
+2. **BackendLifecycleConfig**: 后端特定配置封装
+   - `for_tmux()`: tmux 后端配置
+   - `for_subagent()`: subagent 后端配置
+   - `map_status()`: 原生状态到通用状态映射
+
+3. **BackendStatusAdapter Protocol**: 可扩展的状态映射接口
+   - 支持未来新增后端 (如 kubernetes, docker, etc.)
+
+### 测试结果
+
+```bash
+cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+python3 -m pytest tests/orchestrator/test_continuation_backends_lifecycle.py -v
+python3 -m pytest tests/orchestrator/ -v --tb=short
+```
+
+**结果**: 
+- 新增 29 个 lifecycle kernel 测试全部通过
+- 原有 405 个测试全部通过
+- 总计 434 个测试通过
+
+### Commit
+
+- **Hash**: (待 commit)
+- **Message**: `P0-3 Batch 6: Generic lifecycle kernel — extract backend-agnostic watchdog/lifecycle logic`
+
+### Batch 7+ 建议
+
+1. **新增后端支持**: 使用 `BackendLifecycleConfig` 和 `BackendStatusAdapter` 快速接入新后端 (kubernetes/docker/etc.)
+2. **移除 tmux backend**: 当 production dispatches 降至 0 后，可完全移除 tmux backend
+3. **清理 tmux_receipts 目录**: 当 tmux backend 移除后，可移除 `runtime/orchestrator/tmux_receipts/`
+4. **文档更新**: 在 runtime integration 文档中说明 generic lifecycle kernel 设计
+
+---
+
 ---
 
 ## 1. 高优先级债务 (P0)

@@ -15,6 +15,10 @@ from partial_continuation import ContinuationContract, build_continuation_contra
 # - Existing tmux-based dispatches in production
 # - Observable session use cases requiring intermediate state monitoring
 # New development should prefer subagent backend unless intermediate observation is explicitly required.
+#
+# P0-3 Batch 6 (2026-03-23): Lifecycle kernel integration
+# - TERMINAL_*_STATUSES and NON_TERMINAL_STATUSES are now used by BackendLifecycleConfig.for_tmux()
+# - These constants define tmux-specific status mapping for the generic lifecycle kernel
 
 TERMINAL_DONE_STATUSES = {"likely_done", "done_session_ended"}
 TERMINAL_FAILED_STATUSES = {"dead", "stuck"}
