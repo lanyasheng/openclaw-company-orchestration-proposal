@@ -123,6 +123,70 @@ def _handle_complete(args: argparse.Namespace) -> Dict[str, Any]:
         backend=invocation["backend"],
         requester_session_key=requester_session_key,
     )
+    
+    # ========== P0-3 Batch 9: Auto-Execute Integration ==========
+    # 从 dispatch_plan 触发真实执行，打通 execution → receipt → request → consumed 主链
+    dispatch_plan = result.get("dispatch_plan") if isinstance(result.get("dispatch_plan"), dict) else {}
+    
+    if dispatch_plan.get("status") == "triggered":
+        # 提取 execution_handoff（如果存在）
+        handoff_schema = result.get("handoff_schema") if isinstance(result.get("handoff_schema"), dict) else {}
+        execution_handoff = handoff_schema.get("execution_handoff") if isinstance(handoff_schema.get("execution_handoff"), dict) else None
+        
+        if execution_handoff:
+            try:
+                # 从 execution_handoff 直接创建 completion_receipt
+                # 使用 dispatch_id 作为 execution_id（简化方案）
+                from completion_receipt import CompletionReceiptKernel, CompletionReceiptArtifact  # type: ignore
+                from spawn_execution import SpawnExecutionArtifact  # type: ignore
+                
+                execution_id = f"exec_{execution_handoff.get('dispatch_id', 'unknown')[-12:]}"
+                
+                # 创建 completion receipt（会自动触发 emit_request → auto_trigger_consumption）
+                receipt_kernel = CompletionReceiptKernel()
+                
+                # 构建简化的 execution artifact（用于创建 receipt）
+                exec_artifact = SpawnExecutionArtifact(
+                    execution_id=execution_id,
+                    source_spawn_closure_id=None,  # 没有 spawn_closure
+                    source_dispatch_id=execution_handoff.get('dispatch_id', ''),
+                    source_spawn_id=None,
+                    source_registration_id=None,
+                    source_task_id=None,
+                    spawn_execution_status="started",
+                    spawn_execution_reason="Auto-triggered from execution_handoff",
+                    spawn_execution_time=execution_handoff.get('metadata', {}).get('created_at'),
+                    spawn_execution_target={
+                        "runtime": execution_handoff.get('runtime', 'subagent'),
+                        "task": execution_handoff.get('task', ''),
+                        "workdir": execution_handoff.get('workdir'),
+                    },
+                    metadata={
+                        "created_from": "execution_handoff",
+                        "handoff_id": execution_handoff.get('handoff_id', ''),
+                        "auto_execute_integration": True,
+                    },
+                )
+                
+                # 创建 receipt（会自动触发 emit_request → auto_trigger_consumption）
+                receipt = receipt_kernel.emit_receipt(exec_artifact)
+                
+                result["auto_execute_intent"] = {
+                    "status": "completed",
+                    "execution_id": execution_id,
+                    "completion_receipt_id": receipt.receipt_id,
+                    "message": "completion_receipt created; auto-trigger chain activated",
+                }
+                    
+            except Exception as e:
+                # 执行失败不阻塞主流程，仅记录
+                result["auto_execute_intent"] = {
+                    "status": "failed",
+                    "error": str(e),
+                    "message": "Auto-execute failed; falling back to ack-only mode",
+                }
+    # ========== End P0-3 Batch 9 ==========
+    
     result = ensure_callback_ack_result(
         result,
         adapter_name=invocation["adapter"],
