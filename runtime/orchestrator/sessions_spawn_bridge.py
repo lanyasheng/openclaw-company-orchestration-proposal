@@ -552,7 +552,10 @@ class SessionsSpawnBridge:
         """
         **核心**: 调用真实 OpenClaw sessions_spawn API。
         
-        使用 OpenClaw CLI 或直接调用 Python API。
+        使用 OpenClaw 现有 subagent runner 基础设施（run_subagent_claude_v1.sh）。
+        
+        注意：不使用 `openclaw sessions_spawn` CLI 命令，因为该子命令不存在。
+        直接使用 Python API 调用 runner 脚本。
         
         Args:
             request: Sessions spawn request
@@ -567,91 +570,16 @@ class SessionsSpawnBridge:
         call_params = {
             "task": spawn_params.get("task", ""),
             "runtime": spawn_params.get("runtime", "subagent"),
-            "cwd": spawn_params.get("cwd", str(Path.home() / ".openclaw" / "workspace")),
+            "cwd": spawn_params.get("cwd") or str(Path.home() / ".openclaw" / "workspace"),
             "label": spawn_params.get("label", f"orch-{request.source_task_id[:8]}"),
             "metadata": spawn_params.get("metadata", {}),
         }
         
         try:
-            # 方法 1: 使用 OpenClaw CLI (如果可用)
-            # openclaw sessions_spawn --runtime subagent --task "..." --label "..."
-            cli_path = self._find_openclaw_cli()
-            if cli_path:
-                success, error, api_response = self._call_via_cli(cli_path, call_params)
-                # CLI 调用成功则返回，失败则回退到 Python API
-                if success:
-                    return success, error, api_response
-                # CLI 失败，记录警告并回退
-                print(f"[WARN] CLI call failed ({error}), falling back to Python API")
-            
-            # 方法 2: 直接调用 Python sessions_spawn API
+            # 直接调用 Python sessions_spawn API（使用 subagent runner）
+            # 注意：不使用 CLI 路径，因为 `openclaw sessions_spawn` 子命令不存在
             return self._call_via_python_api(call_params)
             
-        except Exception as e:
-            return False, str(e), None
-    
-    def _find_openclaw_cli(self) -> Optional[str]:
-        """查找 OpenClaw CLI 路径"""
-        # 常见路径
-        possible_paths = [
-            "/opt/homebrew/bin/openclaw",
-            "/usr/local/bin/openclaw",
-            str(Path.home() / ".npm-global" / "bin" / "openclaw"),
-            str(Path.home() / ".local" / "bin" / "openclaw"),
-        ]
-        
-        for path in possible_paths:
-            if os.path.exists(path) and os.access(path, os.X_OK):
-                return path
-        
-        # 尝试在 PATH 中查找
-        import shutil
-        cli_path = shutil.which("openclaw")
-        if cli_path:
-            return cli_path
-        
-        return None
-    
-    def _call_via_cli(
-        self,
-        cli_path: str,
-        call_params: Dict[str, Any],
-    ) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
-        """通过 CLI 调用 sessions_spawn"""
-        try:
-            # 构建命令
-            cmd = [
-                cli_path,
-                "sessions_spawn",
-                "--runtime", call_params["runtime"],
-                "--task", call_params["task"],
-                "--label", call_params["label"],
-                "--cwd", call_params["cwd"],
-            ]
-            
-            # 添加 metadata（JSON 格式）
-            cmd.extend(["--metadata", json.dumps(call_params["metadata"])])
-            
-            # 执行
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            
-            if result.returncode == 0:
-                # 解析输出
-                try:
-                    api_response = json.loads(result.stdout)
-                    return True, None, api_response
-                except json.JSONDecodeError:
-                    return True, None, {"output": result.stdout}
-            else:
-                return False, result.stderr, None
-                
-        except subprocess.TimeoutExpired:
-            return False, "CLI call timeout", None
         except Exception as e:
             return False, str(e), None
     
@@ -681,7 +609,7 @@ class SessionsSpawnBridge:
             # 生成唯一 run label（如果未提供）
             label = call_params.get("label", f"orch-{uuid.uuid4().hex[:8]}")
             task = call_params.get("task", "")
-            cwd = call_params.get("cwd", str(Path.home() / ".openclaw" / "workspace"))
+            cwd = call_params.get("cwd") or str(Path.home() / ".openclaw" / "workspace")
             runtime = call_params.get("runtime", "subagent")
             metadata = call_params.get("metadata", {})
             
@@ -696,7 +624,10 @@ class SessionsSpawnBridge:
                 runner_script = Path(__file__).parent.parent.parent / "scripts" / "run_subagent_claude_v1.sh"
             
             if not runner_script.exists():
-                return False, "Runner script not found: run_subagent_claude_v1.sh", None
+                return False, f"Runner script not found: run_subagent_claude_v1.sh (checked: {Path.home() / '.openclaw' / 'workspace' / 'scripts' / 'run_subagent_claude_v1.sh'} and {Path(__file__).parent.parent.parent / 'scripts' / 'run_subagent_claude_v1.sh'})", None
+            
+            # 确保路径是绝对路径
+            runner_script = runner_script.resolve()
             
             # 生成 runId / childSessionKey
             run_id = f"run_{uuid.uuid4().hex[:8]}"
