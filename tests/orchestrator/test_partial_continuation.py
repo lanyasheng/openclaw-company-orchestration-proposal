@@ -23,6 +23,9 @@ from partial_continuation import (
     PartialCloseoutContract,
     NextTaskCandidate,
     NextTaskRegistrationPayload,
+    ContinuationContract,
+    build_continuation_contract,
+    extract_continuation_contract,
     build_partial_closeout,
     auto_replan,
     build_next_task_registration,
@@ -30,6 +33,7 @@ from partial_continuation import (
     adapt_closeout_for_trading,
     adapt_closeout_for_channel,
     PARTIAL_CLOSEOUT_VERSION,
+    CONTINUATION_CONTRACT_VERSION,
 )
 
 
@@ -560,6 +564,215 @@ class TestAdaptCloseoutForChannel:
         )
         
         assert adapted.dispatch_readiness == "needs_review"
+
+
+class TestContinuationContract:
+    """测试 ContinuationContract（P0-1 Batch 1）"""
+    
+    def test_continuation_contract_creation(self):
+        """测试基本创建"""
+        contract = ContinuationContract(
+            stopped_because="tmux_completion_report_ready",
+            next_step="review tmux completion artifacts",
+            next_owner="main",
+        )
+        
+        assert contract.stopped_because == "tmux_completion_report_ready"
+        assert contract.next_step == "review tmux completion artifacts"
+        assert contract.next_owner == "main"
+    
+    def test_continuation_contract_validation(self):
+        """测试验证"""
+        # 有效 contract
+        contract = ContinuationContract(
+            stopped_because="test",
+            next_step="test",
+            next_owner="test",
+        )
+        is_valid, errors = contract.validate()
+        assert is_valid is True
+        assert len(errors) == 0
+        
+        # 无效 contract - 空 stopped_because
+        contract = ContinuationContract(
+            stopped_because="",
+            next_step="test",
+            next_owner="test",
+        )
+        is_valid, errors = contract.validate()
+        assert is_valid is False
+        assert any("stopped_because" in err for err in errors)
+        
+        # 无效 contract - 空 next_step
+        contract = ContinuationContract(
+            stopped_because="test",
+            next_step="",
+            next_owner="test",
+        )
+        is_valid, errors = contract.validate()
+        assert is_valid is False
+        assert any("next_step" in err for err in errors)
+        
+        # 无效 contract - 空 next_owner
+        contract = ContinuationContract(
+            stopped_because="test",
+            next_step="test",
+            next_owner="",
+        )
+        is_valid, errors = contract.validate()
+        assert is_valid is False
+        assert any("next_owner" in err for err in errors)
+    
+    def test_continuation_contract_to_dict(self):
+        """测试序列化"""
+        contract = ContinuationContract(
+            stopped_because="test_stop",
+            next_step="test_next",
+            next_owner="test_owner",
+            metadata={"key": "value"},
+        )
+        
+        data = contract.to_dict()
+        assert data["contract_version"] == CONTINUATION_CONTRACT_VERSION
+        assert data["stopped_because"] == "test_stop"
+        assert data["next_step"] == "test_next"
+        assert data["next_owner"] == "test_owner"
+        assert data["metadata"] == {"key": "value"}
+    
+    def test_continuation_contract_from_dict(self):
+        """测试反序列化"""
+        data = {
+            "contract_version": CONTINUATION_CONTRACT_VERSION,
+            "stopped_because": "from_dict_stop",
+            "next_step": "from_dict_next",
+            "next_owner": "from_dict_owner",
+            "metadata": {"test": True},
+        }
+        
+        contract = ContinuationContract.from_dict(data)
+        assert contract.stopped_because == "from_dict_stop"
+        assert contract.next_step == "from_dict_next"
+        assert contract.next_owner == "from_dict_owner"
+        assert contract.metadata == {"test": True}
+    
+    def test_merge_into_closeout(self):
+        """测试合并到 closeout"""
+        contract = ContinuationContract(
+            stopped_because="blocked_by_tradability",
+            next_step="fix tradability issues",
+            next_owner="trading",
+        )
+        
+        closeout = build_partial_closeout(
+            remaining_scope=[{"item_id": "r1", "description": "Fix issues"}],
+            stop_reason="partial_completed",
+        )
+        
+        merged = contract.merge_into_closeout(closeout)
+        
+        assert merged.metadata["continuation_contract"]["stopped_because"] == "blocked_by_tradability"
+        assert merged.metadata["stopped_because"] == "blocked_by_tradability"
+        assert merged.metadata["next_step"] == "fix tradability issues"
+        assert merged.metadata["next_owner"] == "trading"
+    
+    def test_from_closeout(self):
+        """测试从 closeout 提取"""
+        closeout = build_partial_closeout(
+            completed_scope=[{"item_id": "c1", "description": "Done"}],
+            remaining_scope=[{"item_id": "r1", "description": "Next step from remaining"}],
+            stop_reason="partial_completed",
+            metadata={
+                "stopped_because": "extracted_stop",
+                "next_step": "extracted_next",
+                "next_owner": "extracted_owner",
+            },
+        )
+        
+        contract = ContinuationContract.from_closeout(closeout)
+        
+        assert contract.stopped_because == "extracted_stop"
+        assert contract.next_step == "extracted_next"
+        assert contract.next_owner == "extracted_owner"
+        assert contract.metadata["source"] == "partial_closeout"
+    
+    def test_from_closeout_derives_next_step(self):
+        """测试从 closeout 剩余范围推导 next_step"""
+        closeout = build_partial_closeout(
+            remaining_scope=[{"item_id": "r1", "description": "Derived from remaining scope"}],
+            stop_reason="partial_completed",
+        )
+        
+        contract = ContinuationContract.from_closeout(closeout)
+        
+        assert "Derived from remaining scope" in contract.next_step
+    
+    def test_build_continuation_contract(self):
+        """测试 build_continuation_contract helper"""
+        contract = build_continuation_contract(
+            stopped_because="test_stop",
+            next_step="test_next",
+            next_owner="test_owner",
+            metadata={"custom": "value"},
+        )
+        
+        assert contract.stopped_because == "test_stop"
+        assert isinstance(contract, ContinuationContract)
+        assert contract.metadata["custom"] == "value"
+    
+    def test_extract_continuation_contract_from_closeout(self):
+        """测试从 closeout payload 提取"""
+        payload = {
+            "closeout": {
+                "stopped_because": "from_closeout",
+                "next_step": "next from closeout",
+                "next_owner": "owner from closeout",
+            }
+        }
+        
+        contract = extract_continuation_contract(payload, source="test")
+        
+        assert contract is not None
+        assert contract.stopped_because == "from_closeout"
+        assert "closeout:test" in contract.metadata["source"]
+    
+    def test_extract_continuation_contract_from_tmux_receipt(self):
+        """测试从 tmux receipt 提取"""
+        payload = {
+            "tmux_terminal_receipt": {
+                "stopped_because": "from_tmux",
+                "next_step": "next from tmux",
+                "next_owner": "owner from tmux",
+            }
+        }
+        
+        contract = extract_continuation_contract(payload, source="tmux")
+        
+        assert contract is not None
+        assert contract.stopped_because == "from_tmux"
+        assert "tmux_receipt:tmux" in contract.metadata["source"]
+    
+    def test_extract_continuation_contract_from_metadata(self):
+        """测试从 metadata 提取"""
+        payload = {
+            "metadata": {
+                "stopped_because": "from_metadata",
+                "next_step": "next from metadata",
+                "next_owner": "owner from metadata",
+            }
+        }
+        
+        contract = extract_continuation_contract(payload, source="meta")
+        
+        assert contract is not None
+        assert contract.stopped_because == "from_metadata"
+    
+    def test_extract_continuation_contract_returns_none(self):
+        """测试无 continuation 信息时返回 None"""
+        payload = {"other": "data"}
+        
+        contract = extract_continuation_contract(payload)
+        
+        assert contract is None
 
 
 class TestIntegrationScenario:

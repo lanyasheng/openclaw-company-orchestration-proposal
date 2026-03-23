@@ -27,6 +27,7 @@ __all__ = [
     "NextTaskCandidate",
     "NextTaskRegistrationPayload",
     "NextTaskRegistrationWithStatus",
+    "ContinuationContract",
     "build_partial_closeout",
     "auto_replan",
     "build_next_task_registration",
@@ -34,10 +35,231 @@ __all__ = [
     "generate_registered_registrations_for_closeout",
     "adapt_closeout_for_trading",
     "adapt_closeout_for_channel",
+    "build_continuation_contract",
+    "extract_continuation_contract",
     "PARTIAL_CLOSEOUT_VERSION",
+    "CONTINUATION_CONTRACT_VERSION",
 ]
 
 PARTIAL_CLOSEOUT_VERSION = "partial_closeout_v1"
+CONTINUATION_CONTRACT_VERSION = "continuation_contract_v1"
+
+# ============ Unified Continuation Contract (P0-1 Batch 1) ============
+# 统一 continuation contract 的最小核心字段与流转语义
+# 让 closeout / callback / task registration / dispatch plan 使用同一套 continuation 语义
+
+
+@dataclass
+class ContinuationContract:
+    """
+    Unified Continuation Contract — 统一 continuation 语义的最小核心字段。
+    
+    核心字段：
+    - stopped_because: 任务停止原因（机器可读 + 人类可读）
+    - next_step: 下一步行动描述（人类可读的行动指南）
+    - next_owner: 下一步负责人/角色（如 "main", "trading", "channel"）
+    
+    这是通用 contract，不绑定任何特定场景。
+    用于 closeout / callback / task registration / dispatch plan 的统一 continuation 语义。
+    
+    设计原则：
+    - 最小核心：只包含三个必需字段
+    - 向后兼容：不破坏现有 callback payload / receipt
+    - 场景可扩展：通过 metadata 支持场景特定字段
+    """
+    stopped_because: str
+    next_step: str
+    next_owner: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def validate(self) -> tuple[bool, List[str]]:
+        """
+        验证 contract 是否符合规则。
+        
+        返回：(is_valid, errors)
+        """
+        errors: List[str] = []
+        
+        # 规则 1: stopped_because 不能为空
+        if not self.stopped_because or not self.stopped_because.strip():
+            errors.append("stopped_because is required and cannot be empty")
+        
+        # 规则 2: next_step 不能为空
+        if not self.next_step or not self.next_step.strip():
+            errors.append("next_step is required and cannot be empty")
+        
+        # 规则 3: next_owner 不能为空
+        if not self.next_owner or not self.next_owner.strip():
+            errors.append("next_owner is required and cannot be empty")
+        
+        return len(errors) == 0, errors
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "contract_version": CONTINUATION_CONTRACT_VERSION,
+            "stopped_because": self.stopped_because,
+            "next_step": self.next_step,
+            "next_owner": self.next_owner,
+            "metadata": self.metadata,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ContinuationContract":
+        return cls(
+            stopped_because=data.get("stopped_because", ""),
+            next_step=data.get("next_step", ""),
+            next_owner=data.get("next_owner", ""),
+            metadata=data.get("metadata", {}),
+        )
+    
+    def merge_into_closeout(self, closeout: "PartialCloseoutContract") -> "PartialCloseoutContract":
+        """
+        将 continuation contract 合并到 partial closeout contract。
+        
+        这是 convenience method，用于把统一的 continuation 语义注入到 closeout。
+        """
+        # 合并到 closeout metadata
+        closeout.metadata["continuation_contract"] = self.to_dict()
+        closeout.metadata["stopped_because"] = self.stopped_because
+        closeout.metadata["next_step"] = self.next_step
+        closeout.metadata["next_owner"] = self.next_owner
+        
+        # 如果 closeout 没有 stop_reason，从 stopped_because 推导
+        if closeout.stop_reason == "completed_all" and self.stopped_because:
+            # 尝试从 stopped_because 映射到 stop_reason
+            if "blocked" in self.stopped_because.lower():
+                closeout.stop_reason = "blocked"
+            elif "failed" in self.stopped_because.lower():
+                closeout.stop_reason = "failed"
+            elif "partial" in self.stopped_because.lower():
+                closeout.stop_reason = "partial_completed"
+        
+        return closeout
+    
+    @classmethod
+    def from_closeout(cls, closeout: "PartialCloseoutContract") -> "ContinuationContract":
+        """
+        从 partial closeout contract 提取 continuation contract。
+        
+        这是 convenience method，用于从 closeout 中提取统一的 continuation 语义。
+        """
+        # 优先从 metadata 中提取
+        stopped_because = (
+            closeout.metadata.get("stopped_because") or
+            closeout.metadata.get("stop_reason") or
+            closeout.stop_reason
+        )
+        
+        next_step = closeout.metadata.get("next_step", "")
+        if not next_step and closeout.remaining_scope:
+            # 从 remaining_scope 推导 next_step
+            next_step = closeout.remaining_scope[0].description
+        
+        next_owner = closeout.metadata.get("next_owner", "main")
+        
+        return cls(
+            stopped_because=str(stopped_because),
+            next_step=str(next_step),
+            next_owner=str(next_owner),
+            metadata={
+                "source": "partial_closeout",
+                "original_stop_reason": closeout.stop_reason,
+                "has_remaining_work": closeout.has_remaining_work(),
+                "dispatch_readiness": closeout.dispatch_readiness,
+            },
+        )
+
+
+def build_continuation_contract(
+    *,
+    stopped_because: str,
+    next_step: str,
+    next_owner: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> ContinuationContract:
+    """
+    构建一个 continuation contract。
+    
+    参数：
+    - stopped_because: 任务停止原因
+    - next_step: 下一步行动描述
+    - next_owner: 下一步负责人/角色
+    - metadata: 额外元数据
+    
+    返回：ContinuationContract
+    """
+    contract = ContinuationContract(
+        stopped_because=stopped_because,
+        next_step=next_step,
+        next_owner=next_owner,
+        metadata=metadata or {},
+    )
+    
+    is_valid, errors = contract.validate()
+    if not is_valid:
+        contract.metadata["validation_warnings"] = errors
+    
+    return contract
+
+
+def extract_continuation_contract(
+    payload: Dict[str, Any],
+    source: str = "unknown",
+) -> Optional[ContinuationContract]:
+    """
+    从 payload 中提取 continuation contract。
+    
+    支持从多种来源提取：
+    - closeout metadata
+    - tmux_terminal_receipt
+    - callback envelope
+    - dispatch plan continuation
+    
+    参数：
+    - payload: 包含 continuation 信息的 payload
+    - source: 来源标识（用于调试）
+    
+    返回：ContinuationContract 或 None
+    """
+    # 尝试从 closeout metadata 提取
+    if isinstance(payload.get("closeout"), dict):
+        closeout = payload["closeout"]
+        if closeout.get("stopped_because") or closeout.get("next_step") or closeout.get("next_owner"):
+            return ContinuationContract(
+                stopped_because=closeout.get("stopped_because", ""),
+                next_step=closeout.get("next_step", ""),
+                next_owner=closeout.get("next_owner", ""),
+                metadata={"source": f"closeout:{source}"},
+            )
+    
+    # 尝试从 tmux_terminal_receipt 提取
+    if isinstance(payload.get("tmux_terminal_receipt"), dict):
+        receipt = payload["tmux_terminal_receipt"]
+        if receipt.get("stopped_because") or receipt.get("next_step") or receipt.get("next_owner"):
+            return ContinuationContract(
+                stopped_because=receipt.get("stopped_because", ""),
+                next_step=receipt.get("next_step", ""),
+                next_owner=receipt.get("next_owner", ""),
+                metadata={"source": f"tmux_receipt:{source}"},
+            )
+    
+    # 尝试从 continuation_contract 直接提取
+    if isinstance(payload.get("continuation_contract"), dict):
+        return ContinuationContract.from_dict(payload["continuation_contract"])
+    
+    # 尝试从 metadata 提取
+    if isinstance(payload.get("metadata"), dict):
+        metadata = payload["metadata"]
+        if metadata.get("stopped_because") or metadata.get("next_step") or metadata.get("next_owner"):
+            return ContinuationContract(
+                stopped_because=metadata.get("stopped_because", ""),
+                next_step=metadata.get("next_step", ""),
+                next_owner=metadata.get("next_owner", ""),
+                metadata={"source": f"metadata:{source}"},
+            )
+    
+    return None
+
 
 StopReason = Literal[
     "completed_all",
