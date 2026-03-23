@@ -1,10 +1,13 @@
 # Technical Debt & Backlog (2026-03-22)
 
-> **版本**: v9 (2026-03-23) — Updated with P0-3 Batch 2 cleanup
+> **版本**: v10 (2026-03-23) — P0-3 Final Pass (Batches 1-6 Complete)
 >
 > **定位**: 收敛已知优化点/技术债务，避免在快速迭代中丢失
 >
 > **状态**: 活文档，随迭代更新
+>
+> **P0-3 Final Pass Status**: Batches 1-6 completed (2026-03-23). Legacy cleanup reached final boundary.
+> Migration is now user-driven. See `docs/migration-retirement-plan.md` for details.
 
 ---
 
@@ -327,6 +330,79 @@ python3 -m pytest tests/orchestrator/ -v --tb=short
 
 ---
 
+### 0.10. P0-3 Final Pass: Legacy Cleanup Reached Final Boundary (2026-03-23)
+
+**状态**: ✅ 已完成 (Final Pass)
+
+**清理范围**: 盘点全部 legacy/tmux/dispatch compatibility 表面面积，给出最终保留清单与移除条件
+
+**设计约束**:
+1. 不能破坏 trading live path
+2. 不接受只改文案不改真值，除非已没有安全可删项
+3. 必须给出 repo 真值：commit/push 或明确失败原因
+4. 先 targeted tests，再 broader regression
+5. 输出必须一次性回答：已清理 / 已降级兼容 / 暂保留 blocker
+
+#### Final Pass 总结
+
+**已清理** (Batches 1-6 累计):
+- `docs/archive/old-docs/` - 历史 POC 和过时设计文档归档
+- `dispatch_planner.py` 中的不存在 `stop` 命令引用
+- `entry_defaults.py` 中的 `complete_tmux` 示例命令（已注释）
+- `continuation_backends.py` backend_plan 中的 deprecated commands
+- 低使用率命令从默认路径移除（describe/capture/attach/watchdog）
+
+**已降级为 compat-only**:
+- tmux backend - 仅用于现有 production dispatches
+- `orchestrator_dispatch_bridge.py` - 仅用于 tmux 生命周期管理
+- `tmux_terminal_receipts.py` - 仅用于 tmux receipt 处理
+- Deprecated commands - 向后兼容，90+ 天后可移除
+
+**暂保留** (原因明确):
+
+| 路径 | 保留原因 | 移除条件 |
+|------|----------|----------|
+| tmux backend | 现有 production dispatches 仍在使用 | 零 tmux dispatches 持续 30 天 |
+| dispatch bridge script | tmux 完整生命周期管理 | tmux backend 完全退役 |
+| tmux receipts | tmux receipt 构建逻辑 | tmux backend 完全退役 |
+| deprecated commands | 向后兼容 | 90+ 天无使用记录 |
+
+#### 最终边界声明
+
+**这是清理的最终边界。**
+
+**含义**:
+- 不再计划进一步的增量清理批次
+- 迁移现在是**用户驱动**的，而非代码驱动
+- 遗留代码**仅在迁移条件满足时**移除
+- 所有未来开发**必须**使用 subagent backend
+
+**原因**:
+- trading live path 不能被破坏
+- production dispatches 需要迁移时间
+- 没有用户迁移的进一步代码变更没有价值
+- 清晰的政策 + 文档比部分代码删除更有价值
+
+#### 交付文档
+
+- `docs/migration-retirement-plan.md` - 完整迁移与退役计划
+- `docs/CURRENT_TRUTH.md` - 更新 Batch 1-6 完成状态
+- `runtime/orchestrator/README.md` - Backend Policy 已更新
+
+#### 测试结果
+
+```bash
+cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+python3 -m pytest tests/orchestrator/ -v --tb=short
+```
+
+**结果**: 434 个测试全部通过
+
+#### Commit
+
+- **Hash**: (Final Pass commit - this commit)
+- **Message**: `P0-3 Final Pass: Legacy cleanup reached final boundary — migration now user-driven`
+
 ---
 
 ## 1. 高优先级债务 (P0)
@@ -557,8 +633,9 @@ trading_roundtable/
 | v7 | Bridge Consumption | 完成 |
 | v8 | Execute Mode + Auto-Trigger | 完成 |
 | v9 | Real API Integration + Legacy Cleanup Batch 2 | 完成 |
+| v10 | P0-3 Final Pass: Legacy Cleanup Final Boundary | 完成 |
 
 ---
 
-**最后更新**: 2026-03-22
+**最后更新**: 2026-03-23 (v10 - P0-3 Final Pass Complete)
 **维护者**: Zoe (CTO & Chief Orchestrator)
