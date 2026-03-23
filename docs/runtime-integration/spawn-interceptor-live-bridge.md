@@ -9,7 +9,7 @@
 这轮 callback-driven orchestrator v1 的**生产接线落点不在 proposal repo**，而在 runtime 侧的 **`spawn-interceptor`**。
 
 proposal 仓保留的是：
-- 原型快照：`prototype/callback_driven_orchestrator_v1/`
+- 原型快照：`archive/prototype/callback_driven_orchestrator_v1/`（已归档，历史参考）
 - 状态流转、batch fan-in、summary、decision 的最小可读实现
 - 对 live integration 边界的明确文档化
 
@@ -188,7 +188,7 @@ runtime 仓负责：
 
 建议按下面顺序理解：
 
-1. 先读原型：`prototype/callback_driven_orchestrator_v1/README.md`
+1. 先读原型：`archive/prototype/callback_driven_orchestrator_v1/README.md`（已归档，历史参考）
    - 看最小闭环：state → summary → decision
 2. 再读本说明：`docs/runtime-integration/spawn-interceptor-live-bridge.md`
    - 看 live bridge 落在哪里、已接到哪一段、为何故意没继续自动 spawn

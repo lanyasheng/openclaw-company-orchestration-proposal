@@ -262,7 +262,7 @@ python3 test_v5 闭环.py
 - Execution: `exec_607e018c9785` → `~/.openclaw/shared-context/spawn_executions/exec_607e018c9785.json`
 - Receipt: `receipt_6d6f97ce0e10` → `~/.openclaw/shared-context/completion_receipts/receipt_6d6f97ce0e10.json`
 
-**详细文档**: `docs/partial-continuation-kernel-v5.md`
+**详细文档**: `archive/old-docs/partial-continuation-kernel-v5.md`（已归档，历史参考）
 
 ### 7.5 V6 通用层验证（2026-03-22 新增）
 
@@ -322,7 +322,7 @@ python3 -m pytest tests/orchestrator/test_bridge_consumer.py -v
 - Consumed artifact: `consumed_abc123` → `~/.openclaw/shared-context/bridge_consumed/consumed_abc123.json`
 - Execution envelope: 包含 sessions_spawn params + execution context
 
-**详细文档**: `docs/partial-continuation-kernel-v7.md`
+**详细文档**: `archive/old-docs/partial-continuation-kernel-v7.md`（已归档，历史参考）
 
 ### 7.7 V8 Real Execute Mode + Auto-Trigger 验证（2026-03-22 新增）
 
@@ -380,7 +380,7 @@ V8 Execute Mode + Auto-Trigger 功能验证
 - Auto-trigger index: `~/.openclaw/shared-context/spawn_requests/auto_trigger_index.json`
 
 **详细文档**: 
-- `docs/partial-continuation-kernel-v8.md`
+- `archive/old-docs/partial-continuation-kernel-v8.md`（已归档，历史参考）
 - `docs/technical-debt-2026-03-22.md`
 
 ---
