@@ -814,7 +814,7 @@ class SpawnRequestKernel:
         receipt: CompletionReceiptArtifact,
     ) -> SessionsSpawnRequest:
         """
-        Emit request：评估 policy -> 创建 artifact -> 写入文件 -> 记录 dedupe。
+        Emit request：评估 policy -> 创建 artifact -> 写入文件 -> 记录 dedupe -> 自动触发消费链。
         
         Args:
             receipt: Completion receipt artifact
@@ -834,6 +834,27 @@ class SpawnRequestKernel:
         # 4. Record dedupe（如果 prepared）
         if artifact.spawn_request_status == "prepared":
             _record_request_dedupe(artifact.dedupe_key, artifact.request_id)
+        
+        # 5. Auto-trigger consumption chain (V8 新增：打通 receipt → request → consumed → execution)
+        # 仅在 request prepared 时触发，避免重复触发 blocked/failed 请求
+        if artifact.spawn_request_status == "prepared":
+            try:
+                triggered, reason, consumed_id, execution_id = auto_trigger_consumption(
+                    artifact.request_id,
+                    chain_to_execution=True,
+                )
+                # 记录触发结果到 artifact metadata（不阻塞主流程）
+                artifact.metadata["auto_trigger_result"] = {
+                    "triggered": triggered,
+                    "reason": reason,
+                    "consumed_id": consumed_id,
+                    "execution_id": execution_id,
+                }
+                # 重新写入 artifact（包含触发结果）
+                artifact.write()
+            except Exception as e:
+                # 自动触发失败不阻塞主流程，仅记录日志
+                print(f"[WARN] auto_trigger_consumption failed for {artifact.request_id}: {e}")
         
         return artifact
 

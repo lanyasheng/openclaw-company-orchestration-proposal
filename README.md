@@ -139,23 +139,10 @@ That is why this repo should be read as:
 
 ---
 
-## 中文速览
+## Language
 
-如果只用中文讲一句，这个仓库在做的是：
-
-> **在 OpenClaw 之上补一层 workflow control plane，让多 agent / 多执行器 / 多轮回调的任务不会“做完一跳就停”，而是能按 contract 继续注册、判断、派发、执行、回流。**
-
-它不是在解决“模型会不会回答”，而是在解决：
-- 任务做完后谁接下一步
-- 多个子任务回来后怎么统一收口
-- 什么时候应该自动继续，什么时候应该停在 gate
-- 怎么把 owner、executor、callback、receipt、dispatch 分开，不让系统变成一堆脚本
-
-今天这套仓库的实际定位是：
-- **默认执行路径**：subagent
-- **兼容执行路径**：tmux
-- **默认 coding lane**：Claude Code
-- **首个真实验证场景**：trading continuation
+- English: `README.md`
+- 中文：[`README.zh.md`](README.zh.md)
 
 ---
 
@@ -551,6 +538,10 @@ Historical material kept for reference, not for the active path.
 Read:
 - [`docs/executive-summary.md`](docs/executive-summary.md)
 - [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md)
+
+### If you want to configure auto-trigger (续线自动化)
+Read:
+- [`docs/configuration/auto-trigger-config-guide.md`](docs/configuration/auto-trigger-config-guide.md) — **配置清单 + 场景示例 + 故障排查**
 
 ### If you want the architecture
 Read:
