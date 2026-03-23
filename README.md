@@ -1,466 +1,190 @@
-# OpenClaw Workflow Engine Monorepo
+# OpenClaw Company Orchestration Monorepo
 
-> 这个仓库的主线已经重置：**它不再只是架构方案仓，而是 OpenClaw 公司级 orchestration 的单仓分层 monorepo：`docs/` 持阅读入口，`runtime/` 持实现真值，`tests/` 持验收。**
+> **OpenClaw 公司级编排统一入口** — 5 分钟快速开始 + 当前架构真值 + 导航
 
-## 结论先行
-
-**当前推荐方向不是自研通用 DAG 平台，也不是直接让 Temporal / LangGraph 接管全局。**
-
-我们选择一条更工程化、风险更低、与现有 OpenClaw 资产更连续的路线：
-
-1. **官方底座层**优先复用 `OpenClaw 原生能力 + Lobster 官方工作流壳`
-2. 在其上补一层**公司自己的编排控制层**，统一 task registry / state machine / callback / timeline
-3. **执行层**继续以 `subagent` 为默认内部主链，`browser / message / cron` 为标准 activity，外部异步再按需接 ACP / watcher / Temporal
-4. **业务场景层**先只打穿 `workspace-trading`，不一上来追求“平台通吃”
-5. **可选安全层**作为横切能力，逐步补强审批、审计、隔离、幂等与回退
-
-一句话：**先做“薄控制、强边界、可回退”的 workflow engine 方案仓，再决定哪里需要重型 durable execution。**
+**最后更新**: 2026-03-23 | **状态**: Trading live path 已通 | Control-plane 主链已收口
 
 ---
 
-## 仓库定位
+## 🚀 5 分钟快速开始
 
-这个仓库现在服务两个同时收口的目标：
+### 1. 阅读入口（从这里开始）
 
-> **给 OpenClaw 建立公司级 workflow engine / orchestration 的统一收口仓：`docs/` 给阅读入口，`runtime/` 给实现真值，`tests/` 给验收真值。**
+| 你是 | 读这个 | 时间 |
+|------|--------|------|
+| **第一次了解** | [`docs/executive-summary.md`](docs/executive-summary.md) | 5 分钟 |
+| **要看当前真值** | [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md) | 10 分钟 |
+| **要接入非 trading 频道** | [`docs/quickstart-other-channels.md`](docs/quickstart-other-channels.md) | 5 分钟 |
+| **完整架构评审** | [`docs/architecture-layering.md`](docs/architecture-layering.md) | 30 分钟 |
 
-因此主线关注的是：
-- 分层架构
-- 控制平面与执行平面的边界
-- 官方能力与自定义能力的接口
-- 已验证 / 未验证 / 风险 / 路线图
-- runtime 真实现与 operator-facing examples
-- 首个业务落地（`workspace-trading`）
+### 2. 运行入口（从这里用）
 
-而不是：
-- 继续把设计、实现、测试散落在不同仓库/本地工作区
-- 某一个 human-gate 插件本身
-- 单次实验的临时验证笔记冒充主线真值
-
-当前目录分层：
-- `docs/`：阅读入口 / CURRENT_TRUTH / 方案边界
-- `runtime/`：orchestrator、entry command、callback bridge、skills 等实现真值
-- `tests/`：针对 runtime 的验收测试
-- `examples/`：operator-facing 示例
-
----
-
-## 快速开始（今天就怎么用）
-
-### 阅读入口（从哪里开始看）
-
-1. **首次了解** → `docs/executive-summary.md`（5 分钟版本）
-2. **当前真值** → `docs/CURRENT_TRUTH.md`（live 状态 / 边界 / 计划入口）
-3. **完整方案** → `docs/architecture-layering.md`
-4. **其他频道 quickstart** → `docs/quickstart-other-channels.md`（非 trading 场景）
-
-### Runtime 入口（从哪里开始用）
-
-**统一入口命令**：
-
+**统一命令**（推荐）：
 ```bash
 python3 ~/.openclaw/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
 ```
 
-或从本仓直接运行：
-
+**或从本仓运行**：
 ```bash
 cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
 python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
 ```
 
-### Quickstart 入口（最小可执行路径）
-
-| 场景 | Quickstart |
-|------|------------|
-| **非 trading 频道**（架构/产品/运营等） | `docs/quickstart-other-channels.md` |
-| **trading 场景** | `docs/CURRENT_TRUTH.md` → `trading_roundtable` 部分 |
-| **验证测试** | `python3 -m unittest tests/ -v` |
-
-**首次接入建议**：`allow_auto_dispatch=false`，先验证 callback/ack/dispatch artifacts 稳定，再考虑自动续跑。
-
----
-
-## 五层架构总图
-
-```text
-┌────────────────────────────────────────────────────────────┐
-│  业务场景层                                                │
-│  - workspace-trading（首个落地）                           │
-│  - 未来可扩到研究、运营、内容、客服等                      │
-└────────────────────────────────────────────────────────────┘
-                            ▲
-┌────────────────────────────────────────────────────────────┐
-│  编排控制层                                                │
-│  - workflow templates                                      │
-│  - task registry / state machine                           │
-│  - callback / delivery / timeline                          │
-│  - router / retry / escalation / observability             │
-└────────────────────────────────────────────────────────────┘
-                            ▲
-┌────────────────────────────────────────────────────────────┐
-│  执行层                                                    │
-│  - subagent（默认内部主链）                                │
-│  - browser / message / cron                                │
-│  - external async / ACP / future Temporal workers          │
-└────────────────────────────────────────────────────────────┘
-                            ▲
-┌────────────────────────────────────────────────────────────┐
-│  官方底座层                                                │
-│  - OpenClaw 原生 session / tool / channel / plugin 能力    │
-│  - Lobster 官方 workflow shell / approval / invoke bridge  │
-└────────────────────────────────────────────────────────────┘
-
-╔════════════════════════════════════════════════════════════╗
-║  可选安全层（横切）                                        ║
-║  - human-gate / policy / allowlist / env isolation        ║
-║  - audit / outbox / idempotency / rollback                ║
-╚════════════════════════════════════════════════════════════╝
-```
-
----
-
-## 为什么现在选这个方向
-
-### 1. 已验证事实已经足够把主线收敛
-
-我们已经验证到：
-- **`subagent` 才是默认内部长任务主链**，不是旧 ACP 主链
-- **taskwatcher 更像 external watcher / reconciler**，不是 backbone
-- **Lobster 适合做薄工作流壳**，尤其是顺序链、approval、OpenClaw tool bridge
-- **真实缺口在控制层统一**：task registry、状态机、幂等 callback、timeline、回退协议
-
-### 2. 现阶段最缺的不是“再来一个引擎”，而是“统一边界”
-
-如果没有控制层统一：
-- `subagent / browser / message / cron` 各自讲自己的状态语言
-- terminal、callback、delivery、ack 容易混淆
-- human-gate、失败分支、重试策略无法沉淀为公司协议
-- 业务方无法复用 workflow，只能复制脚本
-
-### 3. 直接上重型方案的 ROI 还不成立
-
-- **Temporal-first**：基础设施、worker、determinism、版本化成本太高
-- **LangGraph-first**：更适合 agent 内部 reasoning，不适合公司级 durable backbone
-- **自研 DAG-first**：需求还没稳定，过早抽象风险最高
-
-所以现在最优解是：
-
-> **先把 OpenClaw 原生能力与 Lobster 官方能力吃干榨净，再在上层建立我们自己的控制协议。**
-
----
-
-## 当前成熟度（2026-03-20）
-
-当前仓库口径已经不再只是“方案 + POC”。最新 live integration 真值是：
-
-- `trading_roundtable` continuation 已有**最小落地**，但定位仍是 **safe semi-auto**，不是无人值守自动闭环
-- `channel_roundtable` **通用适配器**已落地，其他频道后续可按最小契约接入
-- 当前 `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 频道已成为**第二个真实场景**
-- runtime bridge 仍是**薄桥**：当前白名单架构频道默认 auto-dispatch，dispatch plan 默认 `triggered`；其他频道默认 `skipped`
-- trading continuation 的当前策略更收紧：**仅 clean PASS 默认 `triggered`，其余结果默认 `skipped`**
-- `tmux` 已进入**正式可选 continuation backend**，但 trading real run 当前仍只到 **dry-run**；真实 artifact-backed clean PASS 仍缺
-- 回退仍然简单：关闭白名单 auto-dispatch、收紧 clean PASS 条件，或退回手动 continuation，不需要大规模 refactor
-
-一句话：**P0 已从纯文档验证推进到双场景最小接线，但还没有升级成通用全自动 workflow engine；总体定位仍是 thin bridge / allowlist / safe semi-auto。**
-
----
-
-## 已验证 / 未验证
-
-### 已验证
-
-| 主题 | 当前结论 |
-|------|----------|
-| Lobster 顺序链 | 可作为 P0/P1 的薄工作流壳 |
-| Lobster approval / resume | 可直接服务 human-gate 类流程 |
-| OpenClaw tool bridge | `message / browser` 接线难度低 |
-| `subagent` 默认主链 | 是当前内部长任务执行事实 |
-| callback status 语义 | `terminal ≠ callback sent ≠ acked` 已明确 |
-| human-gate / failure-branch 最小 POC | 已有 repo-local harness 与测试 |
-| trading / current-channel 最小 live continuation | 已出现两条真实场景，但仍受 allowlist / 条件触发约束 |
-| `tmux` continuation backend | 已是正式可选 backend，但当前边界仍收紧 |
-
-### 未验证
-
-| 主题 | 当前状态 |
-|------|----------|
-| Lobster → 真实 `subagent` 闭环 | 仍需真实接线，不可口头替代 |
-| 真并发 / 真 join / 原生 failure-branch | 还未证明，不应提前承诺 |
-| Trading 通用 workflow engine 化 | `trading_roundtable` continuation 已最小落地，但仍是 safe semi-auto；更通用的 trading / workspace-trading workflow 仍待继续打穿 |
-| 跨频道默认 auto-dispatch | 目前只对白名单中的当前架构频道默认 `triggered`；其他频道仍默认 `skipped` |
-| trading clean PASS 自动续跑 | 当前只到“clean PASS 默认 `triggered`”；并不等于 trading 任意 PASS 都自动 continuation |
-| `tmux` backend 的 production 边界 | 已纳入正式可选 backend，但 trading real run 当前仍只到 dry-run，真实 artifact-backed clean PASS 仍缺 |
-| 跨天 / 强恢复 / 强审计流程 | 暂未证明需要 Temporal |
-| 安全层的完整策略化 | 仍停留在原则与局部验证 |
-
-详细见：`docs/validation-status.md`
-
----
-
-## `chain-basic` 当前 canonical 运行路径
-
-`chain-basic` 这一条现在已经正式收敛为：
-
-### 1. canonical 官方路径（默认）
-
+### 3. 验证测试
 ```bash
-python3 poc/official_lobster_bridge/run_official.py chain-basic \
-  --input poc/official_lobster_bridge/inputs/chain-basic.args.json
+python3 -m unittest tests/ -v
 ```
-
-- 官方 workflow / runner 位置：`poc/official_lobster_bridge/`
-- 输出目录默认：`poc/official_lobster_bridge/runs/chain-basic/`
-- 这是当前仓库对 `chain-basic` 的**默认、推荐、canonical** 路径
-- 本轮只切 `chain-basic`；`human-gate / subagent / failure-branch` 不在这次切换范围
-
-### 2. legacy fallback 路径（保留，不再默认）
-
-```bash
-python3 -m poc.lobster_minimal_validation.run_poc chain \
-  --input poc/lobster_minimal_validation/inputs/chain-basic.json
-```
-
-- 位置：`poc/lobster_minimal_validation/`
-- 用途：官方 runtime 不可用时的回退基线
-- 口径：**fallback only**，不再作为 `chain-basic` 主入口
-
-### 3. 最小自动化验证
-
-```bash
-python3 -m unittest tests.test_official_lobster_bridge_runner -v
-```
-
-这组测试同时覆盖：
-- 官方 runner 的 artifact 收敛
-- 请求 fallback 时退回 legacy POC harness
-- 本地已安装官方 Lobster CLI 时的真实 smoke
 
 ---
 
-## 新增：最小 scheduler / dispatcher core（Batch1）
+## 📐 当前架构（双轨策略）
 
-这批已经把 **registry library + 顺序 dispatcher** 抽成可复用模块：
+### 执行后端：Subagent 为主，Tmux 为辅
 
-- `orchestration_runtime/task_registry.py`
-- `orchestration_runtime/scheduler.py`
-- `orchestration_runtime/builtin_handlers.py`
-- `scripts/run_minimal_scheduler.py`
-- `examples/workflows/chain-basic.scheduler.json`
-
-关键口径：
-
-- 只支持 **顺序链**，不做 DAG / parallel / join
-- 顶层 registry 仍保留 6 个必填控制字段，但现在允许一个可校验的 `continuation` closeout object
-- `waiting_subagent` 不新增顶层 state，而是写进 `evidence.scheduler.waiting_for`
-- `callback_status` 与业务终态继续分离
-- `callback.send_once` 会把 `continuation` 一并带进 final callback payload
-
-快速 sample：
-
-```bash
-python3 scripts/run_minimal_scheduler.py \
-  --workflow examples/workflows/chain-basic.scheduler.json \
-  --input poc/lobster_minimal_validation/inputs/chain-basic.json \
-  --run-dir /tmp/chain-basic-scheduler-run
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Control Plane (OpenClaw 原生)                              │
+│  - sessions_spawn / callback / dispatch                     │
+│  - task registry / state machine / timeline                 │
+└─────────────────────────────────────────────────────────────┘
+                            │
+            ┌───────────────┴───────────────┐
+            │                               │
+            ▼                               ▼
+┌───────────────────────┐     ┌───────────────────────────────┐
+│  Subagent Backend     │     │  Tmux Backend                 │
+│  (默认主路径)          │     │  (兼容路径)                   │
+│  - 编码/文档/长任务     │     │  - 需要中间状态观测            │
+│  - runner 管理          │     │  - 可 SSH attach               │
+│  - 自动超时/milestone  │     │  - 无自动超时                 │
+│  - 完成自动通知        │     │  - 需手动轮询 status           │
+└───────────────────────┘     └───────────────────────────────┘
 ```
 
-详细 contract：`docs/CURRENT_TRUTH.md`
+**选择指南**：
+- **默认选 Subagent**：编码实现、文档撰写、测试执行、长任务（>30 秒）
+- **选 Tmux**：需要监控中间进度、容易卡住的任务、需要 SSH 介入调试
 
-Continuation baseline：`docs/CURRENT_TRUTH.md`
+### 当前适用范围
 
----
-
-## 新增：callback-driven orchestrator v1 原型快照
-
-为了让 proposal 仓直接反映这轮主线推进，仓库新增了：
-
-- `prototype/callback_driven_orchestrator_v1/`：callback-driven orchestrator v1 的最小原型快照
-- `docs/runtime-integration/spawn-interceptor-live-bridge.md`：live bridge 的真实落点与当前已接/未接边界说明
-
-当前口径：
-- proposal 仓已能直接展示 **task state → batch summary → decision** 这条最小闭环
-- live bridge 的真实接线落在 runtime 侧的 **`spawn-interceptor`**
-- 当前 live 已接上 task state / batch summary / decision，但**故意未默认自动 spawn 下一轮**
-
-这保证 proposal 仓同步保留“原型真值”，同时不把 runtime 仓里的 live patch 与生产细节直接混进方案主线。
+| 场景 | 状态 | 说明 |
+|------|------|------|
+| **Trading Live Path** | ✅ 已通 | `trading_roundtable` continuation 最小落地，safe semi-auto |
+| **Control-Plane 主链** | ✅ 已收口 | `channel_roundtable` 通用适配器就绪，白名单 + 条件触发 |
+| **其他频道** | 🟡 可按需接入 | 默认 `allow_auto_dispatch=false`，先验证 callback/ack 稳定 |
 
 ---
 
-## 全局路线图
+## 🗺️ 文档导航
 
-### P0：重置主线，打通最小闭环
-
-目标：**先把仓库和方案口径统一，再做一条真实业务闭环。**
-
-- 明确五层架构与仓库主线
-- 固化 task registry / state machine / callback 语义
-- 用官方底座层 + 编排控制层打穿一条最小 workflow
-- 让 `workspace-trading` 成为首个落地对象（先 dry-run / shadow-run）
-
-### P1：补齐控制层与执行适配器
-
-目标：**让 workflow engine 从“可讲清楚”走到“可复用”。**
-
-- 完成 `subagent / browser / message / cron` adapter contract
-- 补齐 templates：chain / human-gate / failure-branch 为先；parallel / join 仅在真实验证后纳入
-- 建立 timeline / observability / retry / escalation 基线
-- 让 `workspace-trading` 成为稳定 pilot
-
-### P2：只把真正值得重型化的部分升级
-
-目标：**Selective durability，而不是全量重做。**
-
-- 只有跨天、强恢复、强审计、强 SLA 流程才考虑 Temporal
-- 安全层从“可选”进入“策略化”
-- 再评估是否需要更重的 workflow runtime，而不是反过来迁就工具
-
-详细见：`docs/roadmap.md`
-
----
-
-## 文档结构（重构后）
-
-### 主线文档
-
-1. `docs/executive-summary.md` — 给老板和评审的 5 分钟版本
-2. `docs/CURRENT_TRUTH.md` — 当前 live 真值 / whitelist / tmux backend / historical 文档入口
-3. `docs/architecture-layering.md` — 仓库主方案文档
-4. `docs/architecture-layering.md` — 五层架构拆解与接口边界
-5. `docs/validation-status.md` — 已验证 / 未验证 / 选择理由
-6. `docs/roadmap.md` — P0 / P1 / P2 路线图
+### 核心文档
+- [`docs/executive-summary.md`](docs/executive-summary.md) — 5 分钟版本，给老板和评审
+- [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md) — 当前 live 真值、边界、计划入口
+- [`docs/architecture-layering.md`](docs/architecture-layering.md) — 五层架构详解
+- [`docs/quickstart-other-channels.md`](docs/quickstart-other-channels.md) — 非 trading 场景接入
 
 ### 支撑文档
+- [`docs/validation-status.md`](docs/validation-status.md) — 已验证 / 未验证清单
+- [`docs/technical-debt-2026-03-22.md`](docs/technical-debt-2026-03-22.md) — 技术债务与待办
+- [`docs/migration-retirement-plan.md`](docs/migration-retirement-plan.md) — 迁移与退役计划
 
-- `docs/executive-summary.md`
-- `docs/architecture-layering.md`
-
-### 验证与 POC 文档（已下沉）
-
-- `docs/validation/` 下保留历史评审、契约、桥接模拟、P0 readiness 文档
-- `plugins/human-gate-message/` 保留插件代码与局部说明
-- `poc/` 保留最小验证 harness 与样例
-
-**原则：主线文档只回答“总方案是什么”；验证文档只回答“某一段证据是什么”。**
+### 历史文档
+- `docs/batch-summaries/` — 迭代批次总结（历史参考）
+- `docs/validation/` — 验证细节与 POC 证据（下沉资产）
 
 ---
 
-## 首个落地：workspace-trading
+## 🏗️ 仓库结构
 
-这个仓库不再做抽象架构空转，首个落地对象明确为：
-
-> **`workspace-trading` 的 workflow engine 化。**
-
-第一批建议聚焦三类流程：
-1. 盘前 preflight / 环境检查
-2. 盘中风险守门 / 人工确认点
-3. 盘后汇总 / 回执 / 审计沉淀
-
-原因很直接：
-- 场景真实、约束强、风险高，能逼出正确边界
-- 既有自动化，也天然需要 human-gate
-- 对 timeline、delivery、rollback 的要求高，适合验证控制层价值
-
----
-
-## 这仓库现在不做什么
-
-- 不把 `taskwatcher` 包装成公司级 backbone
-- 不把 `human-gate` 插件误写成仓库主线
-- 不把 POC 成果直接升格为平台能力
-- 不默认承诺并发、join、跨天 durability 已解决
-- 不在 P0 就自研通用 DAG engine
-
----
-
-## 推荐阅读顺序
-
-### 想 5 分钟抓住主线
-1. `docs/executive-summary.md`
-2. `docs/CURRENT_TRUTH.md`
-3. `docs/validation-status.md`
-4. `docs/roadmap.md`
-
-### 想完整评审方案
-1. `docs/architecture-layering.md`
-2. `docs/architecture-layering.md`
-3. `docs/executive-summary.md`
-4. `docs/architecture-layering.md`
-
-### 想追验证细节
-- 进入 `docs/validation/`
-- 再看 `plugins/` 与 `poc/`
-
----
-
-## 当前仓库状态
-
-- **主线口径**：已重置为 workflow engine 总方案仓
-- **首个落地场景**：`workspace-trading`
-- **默认内部执行主链**：`sessions_spawn(runtime="subagent")`
-- **真实 `subagent.dispatch` adapter**：已落到 `orchestration_runtime/subagent_dispatch.py`（最小可复用版）
-- **重型引擎策略**：仅在 P2 选择性引入
-- **human-gate / POC 定位**：验证资产，不再主导仓库叙事
-
-## 真实 subagent.dispatch（P1a-1 最小实现）
-
-当前仓库已经提供可复用 adapter：`orchestration_runtime/subagent_dispatch.py`。
-
-它做的事很窄，但已经够 trading pilot / chain-basic 主链使用：
-
-- 从 workflow step 读取 `task_id / workflow_id / step_id / task prompt / workdir`
-- 通过 Gateway `POST /tools/invoke` 真调 `sessions_spawn(runtime="subagent")`
-- 归一化回执，产出：
-  - `child_session_key`
-  - `run_handle`
-  - `dispatch_evidence`
-- 落盘三类工件：
-  - dispatch request
-  - dispatch response
-  - `child_session_key -> task_id` 反查文件
-- 让 scheduler 继续沿用现有 `waiting -> resume -> callback` 语义
-
-### step 约定
-
-`subagent.dispatch` 最小需要：
-
-```json
-{
-  "id": "dispatch_acceptance_subagent",
-  "type": "subagent.dispatch",
-  "task": "python3 research/run_acceptance_harness.py --input {{request.input_config_path}}",
-  "workdir": "{{request.workspace_repo_path}}",
-  "label": "acceptance-{{request.run_label}}"
-}
+```
+openclaw-company-orchestration-proposal/
+├── docs/                      # 阅读入口：方案、真值、导航
+├── runtime/                   # 实现真值：orchestrator、scripts、skills
+├── orchestration_runtime/     # Runtime 库：task_registry、scheduler、handlers
+├── tests/                     # 验收测试：针对 runtime 的验证
+├── examples/                  # Operator-facing 示例
+├── scripts/                   # 工具脚本
+└── README.md                  # 本文件：唯一快速入口
 ```
 
-可选字段：
+**原则**：
+- `docs/` 持阅读入口
+- `runtime/` + `orchestration_runtime/` 持实现真值
+- `tests/` 持验收真值
+- 禁止双写：本地 workspace 副本已标记 deprecated
 
-- `timeout_seconds`
-- `session_key`
-- `spawn_args`（会合并进 `sessions_spawn` 参数，但 `runtime/task/cwd/label` 仍由 adapter 兜底）
+---
 
-### 示例
+## ✅ 已验证能力
 
-- workflow：`examples/workflows/workspace-trading-pilot.scheduler.json`
-- input：`examples/workspace-trading-pilot.input.json`
+| 能力 | 状态 |
+|------|------|
+| Subagent 默认主链 | ✅ 已验证 |
+| Lobster 顺序链 + approval | ✅ 已验证 |
+| Callback status 语义分离 | ✅ 已验证 |
+| Trading continuation 最小落地 | ✅ 已验证 (safe semi-auto) |
+| Channel roundtable 通用适配 | ✅ 已验证 |
+| Tmux backend 可选路径 | ✅ 已验证 (收紧边界) |
 
-### 环境前提
+---
 
-这版走 Gateway HTTP `tools/invoke`，所以需要：
+## ⚠️ 当前边界
 
-1. Gateway 可达（默认 `http://127.0.0.1:18789`）
-2. 能拿到 token（`OPENCLAW_GATEWAY_TOKEN` 或 `~/.openclaw/openclaw.json` 的 `gateway.auth.token`）
-3. Gateway 显式放行 `/tools/invoke` 对 `sessions_spawn` 的调用，例如：
+- **总体定位**: Thin bridge / allowlist / safe semi-auto
+- **Trading**: 仅 clean PASS 默认 `triggered`，其余结果默认 `skipped`
+- **其他频道**: 首次接入建议 `allow_auto_dispatch=false`
+- **Tmux**: 正式可选 backend，但 trading real run 仍只到 dry-run
+- **重型引擎**: Temporal/LangGraph 仅进入叶子层，不接管 control plane
 
-```json5
-{
-  "gateway": {
-    "tools": {
-      "allow": ["sessions_spawn"]
-    }
-  }
-}
+---
+
+## 🔧 常用命令
+
+### 编排命令
+```bash
+# 统一入口
+python3 ~/.openclaw/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
+
+# 查看帮助
+python3 ~/.openclaw/scripts/orch_command.py --help
 ```
 
-> OpenClaw HTTP `/tools/invoke` 默认 deny `sessions_spawn`；不放行的话，adapter 会明确失败，而不是静默回退成假实现。
+### 测试命令
+```bash
+# 全量测试
+python3 -m unittest tests/ -v
+
+# 单测试文件
+python3 -m unittest tests/orchestrator/test_auto_dispatch.py -v
+```
+
+### Git 操作
+```bash
+# 查看状态
+git status
+
+# 查看最近提交
+git log --oneline -10
+```
+
+---
+
+## 📞 问题与反馈
+
+- **文档问题**: 在对应文档目录提 issue 或直接 PR
+- **Runtime 问题**: `runtime/` 或 `orchestration_runtime/` 目录提 issue
+- **紧急问题**: Discord #general 频道 @main (Zoe)
+
+---
+
+## 📜 许可证与贡献
+
+本仓库为 OpenClaw 公司内部项目。贡献前请阅读：
+- [`AGENTS.md`](../AGENTS.md) — Agent 工作规范
+- [`TEAM_RULES.md`](../shared-context/TEAM_RULES.md) — 团队共享规则
+
+---
+
+**最后更新**: 2026-03-23  
+**维护者**: Zoe (CTO & Chief Orchestrator)  
+**仓库**: `/Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal`
