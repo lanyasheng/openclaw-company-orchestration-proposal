@@ -1,190 +1,258 @@
-# OpenClaw Company Orchestration Monorepo
+# OpenClaw Orchestration Control Plane
 
-> **OpenClaw 公司级编排统一入口** — 5 分钟快速开始 + 当前架构真值 + 导航
+> A control-plane for multi-agent workflows on top of OpenClaw.
+> Default execution path: **subagent**. Optional compatibility path: **tmux**.
+> First real validation scenario: **trading continuation**.
 
-**最后更新**: 2026-03-23 | **状态**: Trading live path 已通 | Control-plane 主链已收口
+## What this repository is
 
----
+This repository is an attempt to answer a practical question:
 
-## 🚀 5 分钟快速开始
+**How do you make AI-agent workflows reliable enough to use for real work, without immediately jumping to a heavy workflow engine?**
 
-### 1. 阅读入口（从这里开始）
+The answer in this repo is:
+- keep **OpenClaw** as the runtime foundation,
+- build a thin but explicit **control plane** on top,
+- standardize contracts for dispatch, callback, continuation, and execution,
+- validate the design in a real business scenario first,
+- and only then decide what deserves heavier infrastructure.
 
-| 你是 | 读这个 | 时间 |
-|------|--------|------|
-| **第一次了解** | [`docs/executive-summary.md`](docs/executive-summary.md) | 5 分钟 |
-| **要看当前真值** | [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md) | 10 分钟 |
-| **要接入非 trading 频道** | [`docs/quickstart-other-channels.md`](docs/quickstart-other-channels.md) | 5 分钟 |
-| **完整架构评审** | [`docs/architecture-layering.md`](docs/architecture-layering.md) | 30 分钟 |
-
-### 2. 运行入口（从这里用）
-
-**统一命令**（推荐）：
-```bash
-python3 ~/.openclaw/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
-```
-
-**或从本仓运行**：
-```bash
-cd <path-to-repo>/openclaw-company-orchestration-proposal
-python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
-```
-
-### 3. 验证测试
-```bash
-python3 -m unittest tests/ -v
-```
+This is **not** just a collection of prompts or demos.
+It is a working repository for:
+- orchestration contracts,
+- workflow state and callback handling,
+- dispatch planning,
+- execution handoff,
+- and real integration with OpenClaw subagent execution.
 
 ---
 
-## 📐 当前架构（双轨策略）
+## What we are doing
 
-### 执行后端：Subagent 为主，Tmux 为辅
+At a high level, this repo is building a company-grade workflow layer for AI agents.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Control Plane (OpenClaw 原生)                              │
-│  - sessions_spawn / callback / dispatch                     │
-│  - task registry / state machine / timeline                 │
-└─────────────────────────────────────────────────────────────┘
-                            │
-            ┌───────────────┴───────────────┐
-            │                               │
-            ▼                               ▼
-┌───────────────────────┐     ┌───────────────────────────────┐
-│  Subagent Backend     │     │  Tmux Backend                 │
-│  (默认主路径)          │     │  (兼容路径)                   │
-│  - 编码/文档/长任务     │     │  - 需要中间状态观测            │
-│  - runner 管理          │     │  - 可 SSH attach               │
-│  - 自动超时/milestone  │     │  - 无自动超时                 │
-│  - 完成自动通知        │     │  - 需手动轮询 status           │
-└───────────────────────┘     └───────────────────────────────┘
-```
+That means making these things explicit and reusable:
+- **what to run next**,
+- **why a workflow stopped**,
+- **who owns the next step**,
+- **when a task is safe to auto-dispatch**,
+- **how completion gets back to the parent session**,
+- **how to move from planning → registration → execution**,
+- and **how to keep all of that observable and testable**.
 
-**选择指南**：
-- **默认选 Subagent**：编码实现、文档撰写、测试执行、长任务（>30 秒）
-- **选 Tmux**：需要监控中间进度、容易卡住的任务、需要 SSH 介入调试
-
-### 当前适用范围
-
-| 场景 | 状态 | 说明 |
-|------|------|------|
-| **Trading Live Path** | ✅ 已通 | `trading_roundtable` continuation 最小落地，safe semi-auto |
-| **Control-Plane 主链** | ✅ 已收口 | `channel_roundtable` 通用适配器就绪，白名单 + 条件触发 |
-| **其他频道** | 🟡 可按需接入 | 默认 `allow_auto_dispatch=false`，先验证 callback/ack 稳定 |
+In concrete terms, this repo already includes:
+- a continuation contract,
+- a planning handoff schema,
+- registration and readiness tracking,
+- bridge consumer auto-trigger decisions,
+- execution request generation,
+- real `sessions_spawn` integration,
+- and dual-track backend support:
+  - **subagent** as the default execution path,
+  - **tmux** as a compatibility path for observable interactive sessions.
 
 ---
 
-## 🗺️ 文档导航
+## What this repository brings
 
-### 核心文档
-- [`docs/executive-summary.md`](docs/executive-summary.md) — 5 分钟版本，给老板和评审
-- [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md) — 当前 live 真值、边界、计划入口
-- [`docs/architecture-layering.md`](docs/architecture-layering.md) — 五层架构详解
-- [`docs/quickstart-other-channels.md`](docs/quickstart-other-channels.md) — 非 trading 场景接入
+If you are building agent workflows, this repo is useful because it tries to solve the problems that usually make multi-agent systems feel flaky:
 
-### 支撑文档
-- [`docs/validation-status.md`](docs/validation-status.md) — 已验证 / 未验证清单
-- [`docs/technical-debt-2026-03-22.md`](docs/technical-debt-2026-03-22.md) — 技术债务与待办
-- [`docs/migration-retirement-plan.md`](docs/migration-retirement-plan.md) — 迁移与退役计划
+### 1. It separates control from execution
+Instead of burying workflow decisions inside ad-hoc scripts, it keeps:
+- planning,
+- dispatch,
+- callback,
+- continuation,
+- and execution
+as different layers with explicit contracts.
 
-### 历史文档
-- `docs/batch-summaries/` — 迭代批次总结（历史参考）
-- `docs/validation/` — 验证细节与 POC 证据（下沉资产）
+### 2. It treats workflow state as first-class
+This repo does not assume “task finished” means “business is done.”
+It explicitly distinguishes:
+- terminal state,
+- callback sent,
+- callback acknowledged,
+- next-step registration,
+- and final closeout.
+
+### 3. It gives you a thin path before a heavy engine
+Many teams jump too early into Temporal-style complexity, or stay stuck in script spaghetti.
+This repo explores the middle path:
+- enough structure to be reliable,
+- not so much machinery that iteration stops.
+
+### 4. It is validated in a real scenario
+The first serious validation path is **trading continuation**.
+That matters because the repo is not only theoretical; it has already been forced to deal with:
+- gated continuation,
+- real dispatch artifacts,
+- real execution,
+- completion delivery,
+- and legacy cleanup under production constraints.
+
+### 5. It stays compatible while migrating forward
+The current strategy is deliberately **dual-track**:
+- **subagent** is the default and recommended path for new work,
+- **tmux** remains supported where interactive observation still matters.
+
+So the repo is not forcing a breaking migration before the system is ready.
 
 ---
 
-## 🏗️ 仓库结构
+## What inspired it
 
-```
+This repository is not a clone of any single framework.
+It borrows ideas from several places, but keeps its own boundary.
+
+### OpenClaw native runtime
+OpenClaw is the foundation.
+This repo builds on:
+- sessions,
+- tools,
+- callbacks,
+- subagents,
+- messaging,
+- and plugin hooks.
+
+### Temporal
+Temporal influences the thinking around:
+- durable workflow state,
+- explicit boundaries between orchestration and execution,
+- retries / recovery / lifecycle semantics,
+- and treating workflow progression as a real system concern.
+
+But this repo does **not** currently adopt Temporal as the system backbone.
+
+### LangGraph
+LangGraph influences the thinking around:
+- graph-shaped control flow,
+- explicit node transitions,
+- and composable reasoning/execution steps.
+
+But LangGraph is treated here as a possible leaf-layer technique, **not** as the company-wide control plane.
+
+### Lobster / workflow-shell style tools
+Lobster-like workflow-shell ideas influenced:
+- approval boundaries,
+- thin orchestration shells,
+- invoke bridges,
+- and explicit workflow contracts.
+
+### Practical production debugging
+A lot of the shape of this repo came from real problems:
+- tasks completing without visible user acknowledgement,
+- callbacks not bubbling to the right parent,
+- dispatch plans existing but not executing,
+- tmux compatibility hanging around longer than expected,
+- docs drifting away from reality,
+- and tests that passed locally but did not reflect the real lifecycle.
+
+---
+
+## What this repository is not
+
+To understand the repo, it is equally important to say what it is **not**:
+
+- It is **not** a generic DAG platform.
+- It is **not** trying to replace OpenClaw.
+- It is **not** a LangGraph wrapper.
+- It is **not** a Temporal deployment template.
+- It is **not** just a trading bot repo.
+- It is **not** a pile of isolated POCs anymore.
+
+The current intent is much narrower and more practical:
+
+> **A reusable workflow control-plane on top of OpenClaw, validated first through trading continuation, but designed to stay generic.**
+
+---
+
+## Current status
+
+### Confirmed
+- trading continuation has entered the **real execution path**,
+- the control-plane main chain is in place,
+- subagent is the default path,
+- tmux remains supported as a compatibility path,
+- legacy docs / POCs / stale tests have been cleaned up,
+- and the repository has been cleaned for open-source publication.
+
+### Current backend policy
+- **Default:** `subagent`
+- **Compatibility:** `tmux`
+- **New development:** should prefer `subagent`
+- **Existing interactive/observable flows:** may still use `tmux`
+
+### Current maturity
+A fair description today is:
+
+> **thin bridge / explicit contracts / safe semi-auto / production-validated on one real scenario**
+
+This repo is further along than a proposal, but still intentionally earlier than a fully general-purpose workflow platform.
+
+---
+
+## Repository structure
+
+```text
 openclaw-company-orchestration-proposal/
-├── docs/                      # 阅读入口：方案、真值、导航
-├── runtime/                   # 实现真值：orchestrator、scripts、skills
-├── orchestration_runtime/     # Runtime 库：task_registry、scheduler、handlers
-├── tests/                     # 验收测试：针对 runtime 的验证
-├── examples/                  # Operator-facing 示例
-├── scripts/                   # 工具脚本
-└── README.md                  # 本文件：唯一快速入口
+├── README.md
+├── docs/
+├── runtime/
+├── tests/
+├── archive/
+└── scripts/
 ```
 
-**原则**：
-- `docs/` 持阅读入口
-- `runtime/` + `orchestration_runtime/` 持实现真值
-- `tests/` 持验收真值
-- 禁止双写：本地 workspace 副本已标记 deprecated
+### `docs/`
+Human-facing documentation:
+- current truth,
+- architecture,
+- migration/retirement notes,
+- release materials,
+- batch summaries.
+
+### `runtime/`
+The actual orchestration runtime and integration code:
+- contracts,
+- continuation handling,
+- dispatch planning,
+- bridge consumer,
+- sessions spawn integration,
+- backend strategy.
+
+### `tests/`
+Behavioral proof.
+This repo treats tests as a source of truth, not just packaging hygiene.
+
+### `archive/`
+Historical material kept for reference, not for the active path.
 
 ---
 
-## ✅ 已验证能力
+## Where to start
 
-| 能力 | 状态 |
-|------|------|
-| Subagent 默认主链 | ✅ 已验证 |
-| Lobster 顺序链 + approval | ✅ 已验证 |
-| Callback status 语义分离 | ✅ 已验证 |
-| Trading continuation 最小落地 | ✅ 已验证 (safe semi-auto) |
-| Channel roundtable 通用适配 | ✅ 已验证 |
-| Tmux backend 可选路径 | ✅ 已验证 (收紧边界) |
+### If you want the fast overview
+Read:
+- [`docs/executive-summary.md`](docs/executive-summary.md)
+- [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md)
 
----
+### If you want the architecture
+Read:
+- [`docs/architecture-layering.md`](docs/architecture-layering.md)
 
-## ⚠️ 当前边界
+### If you want the release / publishing material
+Read:
+- [`docs/open-source-release-kit.md`](docs/open-source-release-kit.md)
 
-- **总体定位**: Thin bridge / allowlist / safe semi-auto
-- **Trading**: 仅 clean PASS 默认 `triggered`，其余结果默认 `skipped`
-- **其他频道**: 首次接入建议 `allow_auto_dispatch=false`
-- **Tmux**: 正式可选 backend，但 trading real run 仍只到 dry-run
-- **重型引擎**: Temporal/LangGraph 仅进入叶子层，不接管 control plane
-
----
-
-## 🔧 常用命令
-
-### 编排命令
-```bash
-# 统一入口
-python3 ~/.openclaw/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
-
-# 查看帮助
-python3 ~/.openclaw/scripts/orch_command.py --help
-```
-
-### 测试命令
-```bash
-# 全量测试
-python3 -m unittest tests/ -v
-
-# 单测试文件
-python3 -m unittest tests/orchestrator/test_auto_dispatch.py -v
-```
-
-### Git 操作
-```bash
-# 查看状态
-git status
-
-# 查看最近提交
-git log --oneline -10
-```
+### If you want the current migration / retention boundary
+Read:
+- [`docs/migration-retirement-plan.md`](docs/migration-retirement-plan.md)
+- [`docs/technical-debt-2026-03-22.md`](docs/technical-debt-2026-03-22.md)
 
 ---
 
-## 📞 问题与反馈
+## How to think about the repo in one sentence
 
-- **文档问题**: 在对应文档目录提 issue 或直接 PR
-- **Runtime 问题**: `runtime/` 或 `orchestration_runtime/` 目录提 issue
-- **紧急问题**: Discord #general 频道 @main (Zoe)
+If you only keep one line in your head, make it this:
 
----
-
-## 📜 许可证与贡献
-
-本仓库为 OpenClaw 公司内部项目。贡献前请阅读：
-- [`AGENTS.md`](../AGENTS.md) — Agent 工作规范
-- [`TEAM_RULES.md`](../shared-context/TEAM_RULES.md) — 团队共享规则
-
----
-
-**最后更新**: 2026-03-23  
-**维护者**: Zoe (CTO & Chief Orchestrator)  
-**仓库**: `openclaw-company-orchestration-proposal` (OpenClaw workspace repo)
+> **This repository is building a practical orchestration control-plane for OpenClaw, with subagent as the default execution path, tmux as a compatibility path, and trading as the first real proving ground.**
