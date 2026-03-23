@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sessions_spawn_bridge.py — Universal Partial-Completion Continuation Framework v9
+sessions_spawn_bridge.py — Universal Partial-Completion Continuation Framework v10
 
 目标：实现 **Real OpenClaw sessions_spawn Integration**。
 
@@ -16,9 +16,15 @@ sessions_spawn_bridge.py — Universal Partial-Completion Continuation Framework
 5. 支持 auto-trigger 对 allowlist 场景进入真实 API execution
 6. 支持 guard / dedupe / safe mode
 
-当前阶段：V9 — Real OpenClaw sessions_spawn API execution
+当前阶段：V10 — Real OpenClaw sessions_spawn API execution via subagent runner
 
-这是 v9 模块，通用 kernel，trading 仅作为首个消费者/样例。
+**P0-3 Batch 4 增强**:
+- `_call_via_python_api()` 现在调用真实 subagent runner 脚本
+- 生成真实 runId / childSessionKey / pid
+- 后台启动 subagent 进程（非阻塞）
+- 保持 safe_mode 默认开启（生产安全）
+
+这是 v10 模块，通用 kernel，trading 仅作为首个消费者/样例。
 """
 
 from __future__ import annotations
@@ -649,35 +655,103 @@ class SessionsSpawnBridge:
         call_params: Dict[str, Any],
     ) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
         """
-        通过 Python API 调用 sessions_spawn。
+        **P0-3 Batch 4**: 通过 Python API 调用真实 sessions_spawn。
         
-        这是 fallback 方法，直接调用 OpenClaw sessions_spawn。
+        使用 OpenClaw 现有 subagent runner 基础设施：
+        - 调用 run_subagent_claude_v1.sh 脚本
+        - 生成唯一 run label
+        - 跟踪 run 目录和状态
+        - 返回 runId / childSessionKey
+        
+        Args:
+            call_params: {task, runtime, cwd, label, metadata}
+        
+        Returns:
+            (success, error_message, api_response)
         """
+        import uuid
+        import time
+        
         try:
-            # 尝试导入 OpenClaw sessions_spawn
-            # 注意：实际环境中需要正确导入
-            # 这里使用模拟调用作为示例
+            # 生成唯一 run label（如果未提供）
+            label = call_params.get("label", f"orch-{uuid.uuid4().hex[:8]}")
+            task = call_params.get("task", "")
+            cwd = call_params.get("cwd", str(Path.home() / ".openclaw" / "workspace"))
+            runtime = call_params.get("runtime", "subagent")
+            metadata = call_params.get("metadata", {})
             
-            # 真实场景：
-            # from openclaw import sessions_spawn
-            # result = sessions_spawn(**call_params)
+            # 验证 runtime（仅支持 subagent）
+            if runtime != "subagent":
+                return False, f"Unsupported runtime: {runtime}. Only 'subagent' is supported.", None
             
-            # V9 模拟成功响应（真实集成需要替换）
-            import uuid
-            mock_response = {
+            # 检查 runner 脚本是否存在
+            runner_script = Path.home() / ".openclaw" / "workspace" / "scripts" / "run_subagent_claude_v1.sh"
+            if not runner_script.exists():
+                # Fallback: 尝试 workspace 相对路径
+                runner_script = Path(__file__).parent.parent.parent / "scripts" / "run_subagent_claude_v1.sh"
+            
+            if not runner_script.exists():
+                return False, "Runner script not found: run_subagent_claude_v1.sh", None
+            
+            # 生成 runId / childSessionKey
+            run_id = f"run_{uuid.uuid4().hex[:8]}"
+            child_session_key = f"session_{uuid.uuid4().hex[:12]}"
+            
+            # 构建 runner 命令
+            # 注意：runner 脚本需要 task prompt 作为第一个参数
+            cmd = [
+                "bash",
+                str(runner_script),
+                "--cwd", cwd,
+                "--profile", "auto",
+                task,  # task prompt 作为最后一个位置参数
+                label,  # label 作为可选的第二个位置参数
+            ]
+            
+            # 在后台启动 subagent（非阻塞）
+            # 使用 subprocess.Popen 启动，不等待完成
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=cwd,
+                env={**os.environ, "RUN_ID": run_id, "CHILD_SESSION_KEY": child_session_key},
+            )
+            
+            # 等待短暂时间确保进程启动
+            time.sleep(0.5)
+            
+            # 检查进程是否成功启动
+            poll_result = process.poll()
+            if poll_result is not None and poll_result != 0:
+                # 进程立即退出，获取错误
+                _, stderr = process.communicate(timeout=5)
+                return False, f"Runner failed to start: {stderr.decode('utf-8', errors='replace')}", None
+            
+            # 成功启动
+            api_response = {
                 "status": "started",
-                "childSessionKey": f"session_{uuid.uuid4().hex[:12]}",
-                "runId": f"run_{uuid.uuid4().hex[:8]}",
-                "message": "V9: Real sessions_spawn API integration (mock)",
+                "childSessionKey": child_session_key,
+                "runId": run_id,
+                "label": label,
+                "runtime": runtime,
+                "cwd": cwd,
+                "pid": process.pid,
+                "message": "P0-3 Batch 4: Real sessions_spawn via subagent runner",
                 "input": call_params,
+                "runner_script": str(runner_script),
             }
             
-            return True, None, mock_response
+            return True, None, api_response
             
-        except ImportError as e:
-            return False, f"OpenClaw API not available: {e}", None
+        except subprocess.TimeoutExpired:
+            return False, "Runner startup timeout", None
+        except FileNotFoundError as e:
+            return False, f"Runner script not found: {e}", None
+        except PermissionError as e:
+            return False, f"Runner script not executable: {e}", None
         except Exception as e:
-            return False, str(e), None
+            return False, f"Unexpected error: {str(e)}", None
     
     def execute(
         self,

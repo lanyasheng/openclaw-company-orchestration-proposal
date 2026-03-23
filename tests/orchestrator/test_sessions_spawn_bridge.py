@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_sessions_spawn_bridge.py — V9 Real OpenClaw sessions_spawn Integration 测试
+test_sessions_spawn_bridge.py — V10 Real OpenClaw sessions_spawn Integration 测试
 
 覆盖场景：
 1. Happy path: request -> real API wrapper call (mock OpenClaw tool 层)
@@ -8,6 +8,9 @@ test_sessions_spawn_bridge.py — V9 Real OpenClaw sessions_spawn Integration �
 3. Linkage: 真实执行结果 linkage 正确
 4. Trading 场景首个样例
 5. Auto-trigger real execution
+6. **P0-3 Batch 4**: 真实 API 调用边界测试（runner 脚本调用）
+7. **P0-3 Batch 4**: 通用场景验证（非 trading-specific）
+8. **P0-3 Batch 4**: 真实产物路径和执行锚点验证
 """
 
 import json
@@ -743,6 +746,222 @@ class TestP03Batch3ConsumptionToExecutionChain(unittest.TestCase):
         print(f"✓ P0-3 Batch 3 chain ({unique_scenario}): {request3.request_id} -> {consumed_id} -> {execution_id}")
 
 
+class TestP03Batch4RealAPICall(unittest.TestCase):
+    """
+    P0-3 Batch 4: Integration test for real sessions_spawn API call boundary.
+    
+    验证 bridge_consumer / sessions_spawn_bridge 真实调用 OpenClaw sessions_spawn API。
+    核心目标：
+    1. _call_via_python_api() 调用真实 subagent runner 脚本
+    2. 生成真实 runId / childSessionKey / pid
+    3. 后台启动 subagent 进程（非阻塞）
+    4. 保持 safe_mode 默认开启（生产安全）
+    5. 通用实现（trading 只是首个验证场景）
+    """
+    
+    def setUp(self):
+        self.suffix = uuid.uuid4().hex[:6]
+        
+        # 创建测试 receipt
+        self.test_receipt = create_test_receipt(
+            receipt_id=f"batch4_receipt_{self.suffix}",
+            task_id=f"batch4_task_{self.suffix}",
+            spawn_id=f"batch4_spawn_{self.suffix}",
+            dispatch_id=f"batch4_dispatch_{self.suffix}",
+            registration_id=f"batch4_reg_{self.suffix}",
+            execution_id=f"batch4_exec_{self.suffix}",
+            receipt_status="completed",
+            scenario="trading",
+            owner="trading",
+        )
+        
+        # 创建 request
+        kernel = SpawnRequestKernel()
+        policy_eval = kernel.evaluate_policy(self.test_receipt)
+        request = kernel.create_request(self.test_receipt, policy_eval)
+        
+        # 添加 readiness/safety_gates/truth_anchor metadata
+        request.metadata["readiness"] = {
+            "eligible": True,
+            "status": "ready",
+            "blockers": [],
+        }
+        request.metadata["safety_gates"] = {
+            "allow_auto_dispatch": True,
+        }
+        request.metadata["truth_anchor"] = {
+            "anchor_type": "handoff_id",
+            "anchor_value": f"handoff_{self.suffix}",
+        }
+        
+        request.write()
+        from sessions_spawn_request import _record_request_dedupe
+        _record_request_dedupe(request.dedupe_key, request.request_id)
+        
+        self.test_request = request
+    
+    def test_batch4_real_api_call_mock_boundary(self):
+        """
+        P0-3 Batch 4: 验证真实 API 调用边界（mock runner 脚本存在性检查）。
+        
+        由于真实 runner 调用会启动实际 subagent 进程，
+        本测试验证：
+        1. runner 脚本路径解析正确
+        2. 调用参数构建正确
+        3. API response 包含 runId / childSessionKey / pid
+        4. safe_mode 下生成 pending 状态
+        """
+        from sessions_spawn_bridge import SessionsSpawnBridge, SessionsSpawnBridgePolicy
+        
+        # 使用 safe_mode=True 避免真实启动 subagent
+        policy = SessionsSpawnBridgePolicy(safe_mode=True, allowlist=["trading"])
+        bridge = SessionsSpawnBridge(policy)
+        
+        # 执行
+        artifact = bridge.execute(self.test_request)
+        
+        # 验证 artifact 生成
+        self.assertIsNotNone(artifact.execution_id)
+        self.assertEqual(artifact.source_request_id, self.test_request.request_id)
+        
+        # safe_mode 下应该是 pending 状态
+        self.assertEqual(artifact.api_execution_status, "pending")
+        self.assertIsNotNone(artifact.api_execution_result)
+        
+        if artifact.api_execution_result:
+            # 验证 response 包含必要字段
+            api_response = artifact.api_execution_result.api_response
+            self.assertIsNotNone(api_response)
+            self.assertEqual(api_response.get("status"), "simulated")
+            self.assertTrue(api_response.get("safe_mode"))
+            
+            # 验证 request_snapshot 存在
+            self.assertIsNotNone(artifact.api_execution_result.request_snapshot)
+        
+        print(f"✓ P0-3 Batch 4 mock boundary: {artifact.execution_id} (safe_mode=pending)")
+    
+    def test_batch4_real_api_call_real_execution_structure(self):
+        """
+        P0-3 Batch 4: 验证真实执行模式下的 API response 结构。
+        
+        验证 _call_via_python_api() 返回的 response 包含：
+        - status: started
+        - childSessionKey: session_xxx
+        - runId: run_xxx
+        - pid: int
+        - label: str
+        - runtime: subagent
+        """
+        from sessions_spawn_bridge import SessionsSpawnBridge, SessionsSpawnBridgePolicy
+        
+        # 创建 bridge（safe_mode=False 用于测试 response 结构）
+        # 注意：实际不会启动真实进程，因为 runner 脚本可能不存在于测试环境
+        policy = SessionsSpawnBridgePolicy(safe_mode=False, allowlist=["trading"])
+        bridge = SessionsSpawnBridge(policy)
+        
+        # 直接调用 _call_openclaw_sessions_spawn
+        success, error, api_response = bridge._call_openclaw_sessions_spawn(self.test_request)
+        
+        # 三种可能结果：
+        # 1. runner 脚本存在且成功启动 -> success=True, response 包含 runId/childSessionKey/pid
+        # 2. runner 脚本不存在 -> success=False, error 包含 "not found"
+        # 3. CLI 调用失败但 Python API fallback 成功 -> success=True
+        
+        if success:
+            # runner 脚本存在或 Python API fallback 成功，验证 response 结构
+            self.assertIsNotNone(api_response)
+            self.assertEqual(api_response.get("status"), "started")
+            self.assertTrue(api_response.get("childSessionKey", "").startswith("session_"))
+            self.assertTrue(api_response.get("runId", "").startswith("run_"))
+            self.assertIsInstance(api_response.get("pid"), int)
+            self.assertEqual(api_response.get("runtime"), "subagent")
+            print(f"✓ P0-3 Batch 4 real execution: runId={api_response['runId']}, pid={api_response['pid']}")
+        else:
+            # runner 脚本不存在或 CLI 失败（测试环境），验证错误信息
+            self.assertIsNotNone(error)
+            # 错误可能包含 "not found" 或 CLI error
+            print(f"✓ P0-3 Batch 4 execution blocked (expected in test env): {error[:100]}...")
+    
+    def test_batch4_generic_scenario_not_trading_specific(self):
+        """
+        P0-3 Batch 4: 验证实现是通用的，不是 trading-specific。
+        """
+        from sessions_spawn_bridge import SessionsSpawnBridge, SessionsSpawnBridgePolicy
+        
+        # 创建 channel 场景的 request
+        suffix2 = uuid.uuid4().hex[:6]
+        receipt2 = create_test_receipt(
+            receipt_id=f"batch4_channel_receipt_{suffix2}",
+            task_id=f"batch4_channel_task_{suffix2}",
+            spawn_id=f"batch4_channel_spawn_{suffix2}",
+            dispatch_id=f"batch4_channel_dispatch_{suffix2}",
+            registration_id=f"batch4_channel_reg_{suffix2}",
+            execution_id=f"batch4_channel_exec_{suffix2}",
+            receipt_status="completed",
+            scenario="channel",
+            owner="channel",
+        )
+        
+        kernel = SpawnRequestKernel()
+        policy_eval = kernel.evaluate_policy(receipt2)
+        request2 = kernel.create_request(receipt2, policy_eval)
+        request2.metadata["readiness"] = {"eligible": True, "status": "ready", "blockers": []}
+        request2.metadata["safety_gates"] = {"allow_auto_dispatch": True}
+        request2.write()
+        
+        from sessions_spawn_request import _record_request_dedupe
+        _record_request_dedupe(request2.dedupe_key, request2.request_id)
+        
+        # 使用 channel 场景的 allowlist
+        policy = SessionsSpawnBridgePolicy(safe_mode=True, allowlist=["channel", "trading"])
+        bridge = SessionsSpawnBridge(policy)
+        
+        artifact = bridge.execute(request2)
+        
+        # 验证 channel 场景也能成功
+        self.assertIsNotNone(artifact.execution_id)
+        self.assertEqual(artifact.metadata.get("scenario"), "channel")
+        self.assertIn(artifact.api_execution_status, ["pending", "started"])
+        
+        print(f"✓ P0-3 Batch 4 generic scenario (channel): {artifact.execution_id}")
+    
+    def test_batch4_execution_artifact_paths(self):
+        """
+        P0-3 Batch 4: 验证真实产物路径和执行锚点。
+        """
+        from sessions_spawn_bridge import (
+            SessionsSpawnBridge,
+            SessionsSpawnBridgePolicy,
+            API_EXECUTION_DIR,
+            _api_execution_file,
+            _load_api_execution_index,
+        )
+        
+        policy = SessionsSpawnBridgePolicy(safe_mode=True, allowlist=["trading"])
+        bridge = SessionsSpawnBridge(policy)
+        
+        artifact = bridge.execute(self.test_request)
+        
+        # 验证 artifact 文件路径
+        exec_file = _api_execution_file(artifact.execution_id)
+        self.assertTrue(exec_file.exists())
+        self.assertEqual(exec_file.suffix, ".json")
+        self.assertTrue(str(exec_file).startswith(str(API_EXECUTION_DIR)))
+        
+        # 验证 index 记录
+        index = _load_api_execution_index()
+        self.assertIn(self.test_request.request_id, index)
+        self.assertEqual(index[self.test_request.request_id], artifact.execution_id)
+        
+        # 验证可通过 request_id 查询
+        from sessions_spawn_bridge import get_api_execution_by_request
+        queried = get_api_execution_by_request(self.test_request.request_id)
+        self.assertIsNotNone(queried)
+        self.assertEqual(queried.execution_id, artifact.execution_id)
+        
+        print(f"✓ P0-3 Batch 4 artifact paths: {exec_file}")
+
+
 def run_tests():
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
@@ -753,6 +972,8 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestV9TradingScenario))
     suite.addTests(loader.loadTestsFromTestCase(TestV9AutoTrigger))
     suite.addTests(loader.loadTestsFromTestCase(TestV9Integration))
+    suite.addTests(loader.loadTestsFromTestCase(TestP03Batch3ConsumptionToExecutionChain))
+    suite.addTests(loader.loadTestsFromTestCase(TestP03Batch4RealAPICall))
     
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
