@@ -10,6 +10,8 @@ dispatch_planner.py — Dispatch Plan Generator
 - 持久化 dispatch plan
 
 这是通用 kernel，不绑定任何业务场景。
+
+P0-1 Batch 4: 统一 continuation 语义，使用 ContinuationContract
 """
 
 from __future__ import annotations
@@ -33,6 +35,9 @@ DISPATCH_PLANNER_VERSION = "dispatch_planner_v1"
 
 # 回调信封版本（与 contracts.py 保持一致）
 from contracts import CANONICAL_CALLBACK_ENVELOPE_VERSION
+
+# P0-1 Batch 4: 导入统一的 ContinuationContract
+from partial_continuation import ContinuationContract, build_continuation_contract
 
 
 class DispatchBackend(str, Enum):
@@ -139,8 +144,11 @@ class DispatchPlan:
     # 跳过原因（如果 status=skipped）
     skip_reasons: List[SkipReason] = field(default_factory=list)
     
-    # 延续计划
+    # 延续计划（P0-1 Batch 4: 向后兼容，保留原始 dict）
     continuation: Dict[str, Any] = field(default_factory=dict)
+    
+    # 统一 Continuation Contract（P0-1 Batch 4 新增）
+    continuation_contract: Optional[ContinuationContract] = None
     
     # 编排契约
     orchestration_contract: Dict[str, Any] = field(default_factory=dict)
@@ -174,7 +182,9 @@ class DispatchPlan:
             "timeout_policy": self.timeout_policy.to_dict() if self.timeout_policy else None,
             "backend_plan": self.backend_plan.to_dict() if self.backend_plan else None,
             "skip_reasons": [sr.to_dict() for sr in self.skip_reasons],
+            # P0-1 Batch 4: 同时保留原始 continuation dict 和统一的 continuation_contract
             "continuation": self.continuation,
+            "continuation_contract": self.continuation_contract.to_dict() if self.continuation_contract else None,
             "orchestration_contract": self.orchestration_contract,
             "safety_gates": self.safety_gates,
             "recommended_spawn": self.recommended_spawn,
@@ -350,6 +360,21 @@ class DispatchPlanner:
         decision_metadata = decision.get("metadata", {}) if isinstance(decision.get("metadata"), dict) else {}
         orchestration_contract = decision_metadata.get("orchestration_contract", {})
         
+        # P0-1 Batch 4: 构建统一的 ContinuationContract
+        # 从 continuation dict 中提取 stopped_because/next_step/next_owner
+        continuation_contract = build_continuation_contract(
+            stopped_because=continuation.get("stopped_because", continuation.get("stop_reason", "continuation_requested")),
+            next_step=continuation.get("next_step", continuation.get("task_preview", "")),
+            next_owner=continuation.get("next_owner", continuation.get("owner", "main")),
+            metadata={
+                "source": "dispatch_plan",
+                "dispatch_id": dispatch_id,
+                "batch_id": batch_id,
+                "scenario": scenario,
+                "adapter": adapter,
+            },
+        )
+        
         # 创建计划
         plan = DispatchPlan(
             dispatch_id=dispatch_id,
@@ -364,6 +389,7 @@ class DispatchPlanner:
             backend_plan=backend_plan,
             skip_reasons=skip_reasons,
             continuation=continuation,
+            continuation_contract=continuation_contract,
             recommended_spawn=recommended_spawn,
             parent_message=parent_message,
         )
@@ -652,6 +678,32 @@ class DispatchPlanner:
                 SkipReason(code=sr["code"], message=sr["message"])
                 for sr in plan_data.get("skip_reasons", [])
             ]
+            
+            # P0-1 Batch 4: 加载 continuation_contract
+            if plan_data.get("continuation_contract"):
+                plan.continuation_contract = ContinuationContract.from_dict(plan_data["continuation_contract"])
+            
+            # 加载其他字段
+            if plan_data.get("safety_gates"):
+                plan.safety_gates = plan_data["safety_gates"]
+            if plan_data.get("orchestration_contract"):
+                plan.orchestration_contract = plan_data["orchestration_contract"]
+            if plan_data.get("recommended_spawn"):
+                plan.recommended_spawn = plan_data["recommended_spawn"]
+            if plan_data.get("canonical_callback"):
+                plan.canonical_callback = plan_data["canonical_callback"]
+            if plan_data.get("artifacts"):
+                plan.artifacts = plan_data["artifacts"]
+            if plan_data.get("parent_message"):
+                plan.parent_message = plan_data["parent_message"]
+            if plan_data.get("backend_plan"):
+                plan.backend_plan = BackendPlan(
+                    backend=DispatchBackend(plan_data["backend_plan"].get("backend", "subagent")),
+                    commands=plan_data["backend_plan"].get("commands", {}),
+                    workdir=plan_data["backend_plan"].get("workdir"),
+                    observable_intermediate_state=plan_data["backend_plan"].get("observable_intermediate_state", False),
+                    notes=plan_data["backend_plan"].get("notes", []),
+                )
             
             planner.plans[dispatch_id] = plan
         

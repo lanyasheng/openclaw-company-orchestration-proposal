@@ -9,6 +9,8 @@ post_completion_replan.py — 任务完成后的 follow-up registration contract
 - truth_anchor_type: task_id | batch_id | branch | commit | push | none
 - allowed_status_phrase: in_progress | pending_registration
 - 没 anchor 时默认只能是 pending_registration
+
+P0-1 Batch 4: 集成 ContinuationContract，统一 continuation 语义
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ __all__ = [
     "PostCompletionReplanContract",
     "validate_followup_status",
     "build_replan_contract",
+    "convert_replan_to_continuation_contract",
+    "convert_continuation_contract_to_replan",
     "REPLAN_CONTRACT_VERSION",
 ]
 
@@ -313,3 +317,132 @@ def check_continuation_in_original_dispatch(
                 return True, anchor_type, anchor_value
     
     return False, None, None
+
+
+# ============ P0-1 Batch 4: ContinuationContract Integration ============
+
+def convert_replan_to_continuation_contract(
+    replan: PostCompletionReplanContract,
+) -> "ContinuationContract":
+    """
+    将 PostCompletionReplanContract 转换为 ContinuationContract。
+    
+    这是 P0-1 Batch 4 统一 continuation 语义的一部分。
+    
+    映射规则：
+    - stopped_because: 从 followup_description + status_phrase 推导
+    - next_step: followup_description
+    - next_owner: 从 metadata 或 truth_anchor.metadata 中提取
+    
+    参数：
+    - replan: PostCompletionReplanContract
+    
+    返回：ContinuationContract
+    """
+    # 延迟导入，避免循环依赖
+    from partial_continuation import ContinuationContract
+    
+    # 推导 stopped_because
+    if replan.followup_mode == "pending_registration":
+        stopped_because = f"follow_up_pending_registration: {replan.followup_description}"
+    elif replan.truth_anchor.has_anchor():
+        stopped_because = f"follow_up_registered ({replan.truth_anchor.anchor_type}={replan.truth_anchor.anchor_value}): {replan.followup_description}"
+    else:
+        stopped_because = f"follow_up_{replan.status_phrase}: {replan.followup_description}"
+    
+    # next_step 直接使用 followup_description
+    next_step = replan.followup_description
+    
+    # next_owner 从 metadata 中提取
+    next_owner = (
+        replan.metadata.get("next_owner") or
+        replan.truth_anchor.anchor_metadata.get("owner") or
+        "main"
+    )
+    
+    return ContinuationContract(
+        stopped_because=stopped_because,
+        next_step=next_step,
+        next_owner=next_owner,
+        metadata={
+            "source": "post_completion_replan",
+            "replan_contract_version": REPLAN_CONTRACT_VERSION,
+            "followup_mode": replan.followup_mode,
+            "truth_anchor": replan.truth_anchor.to_dict(),
+            "status_phrase": replan.status_phrase,
+            "original_task_id": replan.original_task_id,
+            "original_batch_id": replan.original_batch_id,
+        },
+    )
+
+
+def convert_continuation_contract_to_replan(
+    continuation: "ContinuationContract",
+    *,
+    followup_mode: Optional[FollowUpMode] = None,
+    anchor_type: Optional[TruthAnchorType] = None,
+    anchor_value: Optional[str] = None,
+    force_pending: bool = False,
+) -> PostCompletionReplanContract:
+    """
+    将 ContinuationContract 转换为 PostCompletionReplanContract。
+    
+    这是 P0-1 Batch 4 统一 continuation 语义的一部分。
+    
+    映射规则：
+    - followup_description: 从 next_step 提取
+    - followup_mode: 根据 anchor 或显式指定
+    - truth_anchor: 从 continuation.metadata 或显式指定构建
+    - status_phrase: 根据 followup_mode 和 anchor 自动推导
+    
+    参数：
+    - continuation: ContinuationContract
+    - followup_mode: 可选，显式指定 followup_mode
+    - anchor_type: 可选，显式指定 anchor 类型
+    - anchor_value: 可选，显式指定 anchor 值
+    - force_pending: 是否强制设为 pending_registration
+    
+    返回：PostCompletionReplanContract
+    """
+    # 延迟导入，避免循环依赖
+    from partial_continuation import ContinuationContract
+    
+    # 从 continuation 中提取信息
+    followup_description = continuation.next_step
+    
+    # 尝试从 metadata 中提取 anchor
+    metadata = continuation.metadata or {}
+    if anchor_type is None:
+        anchor_type = metadata.get("truth_anchor", {}).get("anchor_type")
+    if anchor_value is None:
+        anchor_value = metadata.get("truth_anchor", {}).get("anchor_value")
+    
+    # 如果没有显式指定 anchor，尝试从其他 metadata 字段推导
+    if anchor_type is None:
+        if metadata.get("original_task_id"):
+            anchor_type = "task_id"
+            anchor_value = metadata["original_task_id"]
+        elif metadata.get("original_batch_id"):
+            anchor_type = "batch_id"
+            anchor_value = metadata["original_batch_id"]
+    
+    # 构建 replan contract
+    return build_replan_contract(
+        followup_description=followup_description,
+        original_task_id=metadata.get("original_task_id"),
+        original_batch_id=metadata.get("original_batch_id"),
+        anchor_type=anchor_type,
+        anchor_value=anchor_value,
+        anchor_metadata={
+            "source": "continuation_contract",
+            "stopped_because": continuation.stopped_because,
+            "next_owner": continuation.next_owner,
+        },
+        force_pending=force_pending,
+        metadata={
+            "source": "continuation_contract",
+            "continuation_contract_version": continuation.__class__.__dict__.get("CONTINUATION_CONTRACT_VERSION", "unknown"),
+            "stopped_because": continuation.stopped_because,
+            "next_owner": continuation.next_owner,
+        },
+    )
