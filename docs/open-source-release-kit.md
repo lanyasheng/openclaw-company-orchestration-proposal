@@ -475,7 +475,7 @@ P1 计划：
 
 ```bash
 # 1. 确认仓库状态
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>
 git status
 git log --oneline -10
 
@@ -483,7 +483,7 @@ git log --oneline -10
 python3 -m unittest tests/ -v
 
 # 3. 确认无本地路径/内部口径
-grep -r "/Users/study" . --include="*.md" --include="*.py"
+grep -r "/Users/" . --include="*.md" --include="*.py"
 grep -r "internal" . --include="*.md"
 
 # 4. 确认文档已更新
@@ -584,3 +584,4 @@ A: 鼓励用户通过 GitHub Issues 提交问题与建议，定期 review 并归
 ---
 
 **文档维护**: 本文件应随仓库演进定期更新，确保发布材料与当前真值一致。
+�定期更新，确保发布材料与当前真值一致。

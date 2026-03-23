@@ -8,7 +8,7 @@ test_openclaw_adapter_smoke.py — OpenClaw Adapter 冒烟测试
 3. 验证错误处理
 
 Usage:
-    cd /Users/study/.openclaw/workspace
+    cd <path-to-repo>
     python3 tests/orchestrator/alerts/test_openclaw_adapter_smoke.py
 """
 

@@ -10,7 +10,7 @@ acceptance_test_alert_chain.py — Trading Alert Chain 验收测试
 5. 真实发送出口验证
 
 Usage:
-    cd /Users/study/.openclaw/workspace
+    cd <path-to-repo>
     python3 tests/orchestrator/alerts/acceptance_test_alert_chain.py
 """
 

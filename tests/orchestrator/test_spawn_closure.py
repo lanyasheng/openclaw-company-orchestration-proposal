@@ -403,7 +403,7 @@ class TestTradingScenario:
                 "recommended_spawn": {
                     "runtime": "subagent",
                     "task": "Trading roundtable continuation: analyze remaining scope",
-                    "cwd": "/Users/study/.openclaw/workspace",
+                    "cwd": "/tmp/openclaw-workspace",
                     "metadata": {
                         "dispatch_id": f"dispatch_trading{suffix}",
                         "registration_id": f"reg_trading{suffix}",

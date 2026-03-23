@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +17,16 @@ ACK_RECEIPTS_DIR = STATE_DIR.parent / "orchestrator" / "ack_receipts"
 ACK_AUDIT_DIR = STATE_DIR.parent / "orchestrator" / "ack_audit"
 ACK_DISABLE_DELIVERY_ENV = "OPENCLAW_ACK_GUARD_DISABLE_DELIVERY"
 DEFAULT_NODE_BIN = Path("/opt/homebrew/bin/node")
-DEFAULT_OPENCLAW_BIN = Path("/Users/study/.npm-global/bin/openclaw")
+
+
+def _resolve_openclaw_bin() -> str:
+    env_path = os.environ.get("OPENCLAW_BIN")
+    if env_path:
+        return env_path
+    found = shutil.which("openclaw")
+    if found:
+        return found
+    return "openclaw"
 
 
 def extract_channel_id_from_session_key(requester_session_key: Optional[str]) -> Optional[str]:
@@ -137,7 +147,7 @@ def _deliver_message(*, message: str, channel_id: Optional[str]) -> Dict[str, An
 
     cmd = [
         str(DEFAULT_NODE_BIN),
-        str(DEFAULT_OPENCLAW_BIN),
+        _resolve_openclaw_bin(),
         "agent",
         "--agent",
         "main",
