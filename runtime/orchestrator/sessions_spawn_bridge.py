@@ -577,7 +577,12 @@ class SessionsSpawnBridge:
             # openclaw sessions_spawn --runtime subagent --task "..." --label "..."
             cli_path = self._find_openclaw_cli()
             if cli_path:
-                return self._call_via_cli(cli_path, call_params)
+                success, error, api_response = self._call_via_cli(cli_path, call_params)
+                # CLI 调用成功则返回，失败则回退到 Python API
+                if success:
+                    return success, error, api_response
+                # CLI 失败，记录警告并回退
+                print(f"[WARN] CLI call failed ({error}), falling back to Python API")
             
             # 方法 2: 直接调用 Python sessions_spawn API
             return self._call_via_python_api(call_params)
@@ -999,7 +1004,17 @@ def auto_trigger_real_execution(
     if allowlist and scenario not in allowlist:
         return False, f"Scenario '{scenario}' not in allowlist", None
     
-    # 5. Execute
+    # 5. Construct policy from config (P0-3 Batch 6 fix)
+    if policy is None:
+        policy = SessionsSpawnBridgePolicy(
+            safe_mode=config.get("safe_mode", True),
+            allowlist=config.get("allowlist", ["trading"]),
+            denylist=config.get("denylist", []),
+            require_manual_approval=config.get("require_manual_approval", True),
+            max_concurrent=config.get("max_concurrent_executions", 3),
+        )
+    
+    # 6. Execute
     try:
         exec_artifact = execute_sessions_spawn_api(request_id, policy)
         
