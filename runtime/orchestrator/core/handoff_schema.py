@@ -29,6 +29,7 @@ __all__ = [
     "HandoffVersion",
     "PlanningHandoff",
     "RegistrationHandoff",
+    "RegistrationReadiness",
     "ExecutionHandoff",
     "build_planning_handoff",
     "build_registration_handoff",
@@ -138,6 +139,46 @@ class PlanningHandoff:
 
 
 @dataclass
+class RegistrationReadiness:
+    """
+    Registration Readiness — 注册就绪状态评估。
+    
+    核心字段：
+    - eligible: 是否符合 auto-dispatch 资格
+    - status: ready | not_ready | blocked
+    - blockers: 阻塞原因列表
+    - criteria: 评估标准列表
+    - safety_gates_snapshot: 安全门快照
+    
+    P0-2 Batch 4: 明确 registration 与 readiness 的关系。
+    """
+    eligible: bool = False
+    status: Literal["ready", "not_ready", "blocked"] = "not_ready"
+    blockers: List[str] = field(default_factory=list)
+    criteria: List[str] = field(default_factory=list)
+    safety_gates_snapshot: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "eligible": self.eligible,
+            "status": self.status,
+            "blockers": self.blockers,
+            "criteria": self.criteria,
+            "safety_gates_snapshot": self.safety_gates_snapshot,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RegistrationReadiness":
+        return cls(
+            eligible=data.get("eligible", False),
+            status=data.get("status", "not_ready"),
+            blockers=data.get("blockers", []),
+            criteria=data.get("criteria", []),
+            safety_gates_snapshot=data.get("safety_gates_snapshot", {}),
+        )
+
+
+@dataclass
 class RegistrationHandoff:
     """
     Registration Handoff — 用于 task registration 的 handoff 数据。
@@ -152,9 +193,15 @@ class RegistrationHandoff:
     - truth_anchor: 真值锚点
     - registration_status: registered | skipped | blocked
     - ready_for_auto_dispatch: 是否准备好自动 dispatch
+    - readiness: 注册就绪状态评估 (P0-2 Batch 4)
     - metadata: 额外元数据
     
     这是从 planning handoff 到 task registration 的桥梁。
+    
+    P0-2 Batch 4 增强：
+    - 明确 registration 与 readiness / safety_gates / truth_anchor 的关系
+    - readiness 字段提供可查询的就绪状态评估
+    - truth_anchor 提供可追溯的来源 linkage
     """
     handoff_id: str
     registration_id: str
@@ -165,6 +212,7 @@ class RegistrationHandoff:
     truth_anchor: Optional[Dict[str, Any]] = None
     registration_status: Literal["registered", "skipped", "blocked"] = "registered"
     ready_for_auto_dispatch: bool = False
+    readiness: Optional[RegistrationReadiness] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -179,11 +227,16 @@ class RegistrationHandoff:
             "truth_anchor": self.truth_anchor,
             "registration_status": self.registration_status,
             "ready_for_auto_dispatch": self.ready_for_auto_dispatch,
+            "readiness": self.readiness.to_dict() if self.readiness else None,
             "metadata": self.metadata,
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RegistrationHandoff":
+        readiness = None
+        if data.get("readiness"):
+            readiness = RegistrationReadiness.from_dict(data["readiness"])
+        
         return cls(
             handoff_id=data.get("handoff_id", ""),
             registration_id=data.get("registration_id", ""),
@@ -194,6 +247,7 @@ class RegistrationHandoff:
             truth_anchor=data.get("truth_anchor"),
             registration_status=data.get("registration_status", "registered"),
             ready_for_auto_dispatch=data.get("ready_for_auto_dispatch", False),
+            readiness=readiness,
             metadata=data.get("metadata", {}),
         )
 
@@ -316,6 +370,67 @@ def build_planning_handoff(
     return handoff
 
 
+def _evaluate_registration_readiness(
+    planning_handoff: PlanningHandoff,
+    registration_status: str,
+) -> RegistrationReadiness:
+    """
+    P0-2 Batch 4: 评估 registration readiness。
+    
+    基于 safety_gates 和 registration_status 生成可读的就绪状态评估。
+    
+    参数：
+    - planning_handoff: planning handoff
+    - registration_status: 注册状态
+    
+    返回：RegistrationReadiness
+    """
+    sg = planning_handoff.safety_gates
+    blockers: List[str] = []
+    criteria: List[str] = [
+        "registration_status == 'registered'",
+        "safety_gates.allow_auto_dispatch == True",
+        "batch_has_timeout_tasks == False",
+        "batch_has_failed_tasks == False",
+        "packet_complete == True",
+    ]
+    
+    # 检查 blocker
+    if registration_status != "registered":
+        if registration_status == "skipped":
+            blockers.append(f"registration_status={registration_status}")
+        elif registration_status == "blocked":
+            blockers.append(f"registration_status={registration_status}")
+    
+    if sg.get("allow_auto_dispatch") is False:
+        blockers.append("safety_gates.allow_auto_dispatch=False")
+    
+    if sg.get("batch_has_timeout_tasks"):
+        blockers.append(f"batch_has_timeout_tasks={sg.get('batch_has_timeout_tasks')}")
+    
+    if sg.get("batch_has_failed_tasks"):
+        blockers.append(f"batch_has_failed_tasks={sg.get('batch_has_failed_tasks')}")
+    
+    if sg.get("packet_complete") is False:
+        blockers.append("packet_complete=False")
+    
+    eligible = len(blockers) == 0 and registration_status == "registered"
+    status = "ready" if eligible else ("blocked" if blockers else "not_ready")
+    
+    return RegistrationReadiness(
+        eligible=eligible,
+        status=status,
+        blockers=blockers,
+        criteria=criteria,
+        safety_gates_snapshot={
+            "allow_auto_dispatch": sg.get("allow_auto_dispatch"),
+            "batch_has_timeout_tasks": sg.get("batch_has_timeout_tasks"),
+            "batch_has_failed_tasks": sg.get("batch_has_failed_tasks"),
+            "packet_complete": sg.get("packet_complete"),
+        },
+    )
+
+
 def build_registration_handoff(
     planning_handoff: PlanningHandoff,
     *,
@@ -333,6 +448,8 @@ def build_registration_handoff(
     - ready_for_auto_dispatch: 是否准备好自动 dispatch
     
     返回：RegistrationHandoff
+    
+    P0-2 Batch 4: 自动评估 readiness 状态，提供可查询的就绪评估。
     """
     # 生成 stable IDs
     registration_id = _generate_id("reg")
@@ -391,6 +508,9 @@ def build_registration_handoff(
             planning_handoff.safety_gates.get("allow_auto_dispatch", False) is True
         )
     
+    # P0-2 Batch 4: 评估 readiness
+    readiness = _evaluate_registration_readiness(planning_handoff, registration_status)
+    
     return RegistrationHandoff(
         handoff_id=planning_handoff.handoff_id,
         registration_id=registration_id,
@@ -401,6 +521,7 @@ def build_registration_handoff(
         truth_anchor=truth_anchor,
         registration_status=registration_status,
         ready_for_auto_dispatch=ready_for_auto_dispatch,
+        readiness=readiness,
         metadata={
             "created_from": "planning_handoff",
             "created_at": _iso_now(),

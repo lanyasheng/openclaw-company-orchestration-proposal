@@ -631,5 +631,194 @@ class TestRoundtableRegistrationIntegration:
         assert reg_record2.ready_for_auto_dispatch is True
 
 
+class TestRegistrationReadiness:
+    """P0-2 Batch 4: 测试 RegistrationReadiness"""
+    
+    def test_readiness_evaluation_ready(self):
+        """测试：readiness 评估 - ready 状态"""
+        planning = build_planning_handoff(
+            source_type="dispatch_plan",
+            source_id="dispatch_ready",
+            continuation_contract={
+                "stopped_because": "gate_pass",
+                "next_step": "Continue work",
+                "next_owner": "trading",
+            },
+            scenario="trading_roundtable",
+            adapter="trading",
+            owner="trading",
+            safety_gates={
+                "allow_auto_dispatch": True,
+                "batch_has_timeout_tasks": False,
+                "batch_has_failed_tasks": False,
+                "packet_complete": True,
+            },
+        )
+        
+        registration = build_registration_handoff(planning)
+        
+        assert registration.readiness is not None
+        assert registration.readiness.eligible is True
+        assert registration.readiness.status == "ready"
+        assert len(registration.readiness.blockers) == 0
+        assert registration.ready_for_auto_dispatch is True
+    
+    def test_readiness_evaluation_blocked(self):
+        """测试：readiness 评估 - blocked 状态"""
+        planning = build_planning_handoff(
+            source_type="dispatch_plan",
+            source_id="dispatch_blocked",
+            continuation_contract={
+                "stopped_because": "gate_fail",
+                "next_step": "Fix issues",
+                "next_owner": "trading",
+            },
+            scenario="trading_roundtable",
+            adapter="trading",
+            owner="trading",
+            safety_gates={
+                "allow_auto_dispatch": False,
+                "batch_has_timeout_tasks": True,
+                "batch_has_failed_tasks": False,
+                "packet_complete": True,
+            },
+        )
+        
+        registration = build_registration_handoff(planning)
+        
+        assert registration.readiness is not None
+        assert registration.readiness.eligible is False
+        assert registration.readiness.status == "blocked"
+        assert len(registration.readiness.blockers) > 0
+        assert "safety_gates.allow_auto_dispatch=False" in registration.readiness.blockers
+        assert "batch_has_timeout_tasks=True" in registration.readiness.blockers
+    
+    def test_readiness_evaluation_not_ready(self):
+        """测试：readiness 评估 - not_ready 状态"""
+        planning = build_planning_handoff(
+            source_type="manual",
+            source_id="manual_not_ready",
+            continuation_contract={
+                "stopped_because": "manual_review",
+                "next_step": "Wait for review",
+                "next_owner": "main",
+            },
+            scenario="manual",
+            adapter="manual",
+            owner="main",
+            safety_gates={
+                "allow_auto_dispatch": False,
+            },
+        )
+        
+        registration = build_registration_handoff(planning)
+        
+        assert registration.readiness is not None
+        assert registration.readiness.eligible is False
+        assert registration.readiness.status in ("not_ready", "blocked")
+    
+    def test_readiness_serialization(self):
+        """测试：RegistrationReadiness 序列化"""
+        from core.handoff_schema import RegistrationReadiness
+        
+        readiness = RegistrationReadiness(
+            eligible=True,
+            status="ready",
+            blockers=[],
+            criteria=["criterion_1", "criterion_2"],
+            safety_gates_snapshot={"allow_auto_dispatch": True},
+        )
+        
+        d = readiness.to_dict()
+        assert d["eligible"] is True
+        assert d["status"] == "ready"
+        assert d["blockers"] == []
+        assert d["criteria"] == ["criterion_1", "criterion_2"]
+        
+        # 反序列化
+        restored = RegistrationReadiness.from_dict(d)
+        assert restored.eligible is True
+        assert restored.status == "ready"
+
+
+class TestRegistrationLedgerIntegration:
+    """P0-2 Batch 4: 测试 Registration Ledger 集成"""
+    
+    def test_registration_record_includes_readiness(self):
+        """测试：注册记录包含 readiness 信息"""
+        planning = build_planning_handoff(
+            source_type="dispatch_plan",
+            source_id="dispatch_ledger_test",
+            continuation_contract={
+                "stopped_because": "test",
+                "next_step": "test",
+                "next_owner": "test",
+            },
+            scenario="test",
+            adapter="test",
+            owner="test",
+            safety_gates={"allow_auto_dispatch": True},
+        )
+        
+        registration = build_registration_handoff(planning)
+        record = register_from_handoff(registration)
+        
+        # 验证 metadata 包含 readiness
+        assert "readiness" in record.metadata
+        assert record.metadata["readiness"]["status"] == "ready"
+        assert record.metadata["readiness"]["eligible"] is True
+    
+    def test_registration_handoff_to_dict_includes_readiness(self):
+        """测试：RegistrationHandoff.to_dict() 包含 readiness"""
+        planning = build_planning_handoff(
+            source_type="dispatch_plan",
+            source_id="dispatch_dict_test",
+            continuation_contract={
+                "stopped_because": "test",
+                "next_step": "test",
+                "next_owner": "test",
+            },
+            scenario="test",
+            adapter="test",
+            owner="test",
+        )
+        
+        registration = build_registration_handoff(planning)
+        d = registration.to_dict()
+        
+        assert "readiness" in d
+        assert d["readiness"] is not None
+        assert "status" in d["readiness"]
+        assert "blockers" in d["readiness"]
+    
+    def test_registration_handoff_from_dict_with_readiness(self):
+        """测试：RegistrationHandoff.from_dict() 解析 readiness"""
+        d = {
+            "handoff_version": "handoff_schema_v1",
+            "handoff_id": "handoff_test",
+            "registration_id": "reg_test",
+            "task_id": "task_test",
+            "batch_id": "batch_test",
+            "proposed_task": {"title": "Test"},
+            "registration_status": "registered",
+            "ready_for_auto_dispatch": True,
+            "readiness": {
+                "eligible": True,
+                "status": "ready",
+                "blockers": [],
+                "criteria": ["test"],
+                "safety_gates_snapshot": {},
+            },
+            "metadata": {},
+        }
+        
+        from core.handoff_schema import RegistrationHandoff
+        registration = RegistrationHandoff.from_dict(d)
+        
+        assert registration.readiness is not None
+        assert registration.readiness.eligible is True
+        assert registration.readiness.status == "ready"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

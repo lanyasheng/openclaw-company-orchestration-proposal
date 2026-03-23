@@ -27,10 +27,13 @@ __all__ = [
     "RegistrationStatus",
     "TaskRegistrationRecord",
     "TaskRegistry",
+    "RegistrationLedger",
     "register_task",
     "get_registration",
     "list_registrations",
     "get_registrations_by_source",
+    "get_registrations_by_readiness",
+    "get_registrations_by_truth_anchor",
     "register_from_handoff",
     "TASK_REGISTRY_VERSION",
 ]
@@ -568,6 +571,8 @@ def register_from_handoff(handoff) -> TaskRegistrationRecord:
     这是 handoff schema 的统一入口，用于把 planning handoff 转换成真实注册记录。
     直接使用 handoff 中的 IDs，不重新生成。
     
+    P0-2 Batch 4: 同时保存 readiness 状态到 metadata，供 ledger 查询。
+    
     Args:
         handoff: RegistrationHandoff (from core.handoff_schema)
     
@@ -578,6 +583,11 @@ def register_from_handoff(handoff) -> TaskRegistrationRecord:
     truth_anchor = None
     if handoff.truth_anchor:
         truth_anchor = TruthAnchor.from_dict(handoff.truth_anchor)
+    
+    # P0-2 Batch 4: 构建 readiness metadata
+    readiness_meta = {}
+    if handoff.readiness:
+        readiness_meta = handoff.readiness.to_dict()
     
     # 创建记录
     record = TaskRegistrationRecord(
@@ -596,6 +606,7 @@ def register_from_handoff(handoff) -> TaskRegistrationRecord:
             "handoff_id": handoff.handoff_id,
             "truth_anchor": handoff.truth_anchor,
             "ready_for_auto_dispatch": handoff.ready_for_auto_dispatch,
+            "readiness": readiness_meta,  # P0-2 Batch 4
         },
     )
     
@@ -604,6 +615,331 @@ def register_from_handoff(handoff) -> TaskRegistrationRecord:
     registry.register(record)
     
     return record
+
+
+# P0-2 Batch 4: Registration Ledger for queryable/traceable semantics
+
+@dataclass
+class LedgerEntry:
+    """
+    Ledger Entry — 注册账簿条目（P0-2 Batch 4）。
+    
+    核心字段：
+    - registration_id: 注册 ID
+    - task_id: 任务 ID
+    - handoff_id: 关联 handoff ID
+    - truth_anchor: 真值锚点
+    - registration_status: registered | skipped | blocked
+    - ready_for_auto_dispatch: 是否准备好自动 dispatch
+    - readiness_status: ready | not_ready | blocked
+    - readiness_blockers: 阻塞原因列表
+    - registered_at: 注册时间戳
+    
+    这是可查询、可追溯的 registration ledger 语义。
+    """
+    registration_id: str
+    task_id: str
+    handoff_id: Optional[str]
+    truth_anchor: Optional[Dict[str, Any]]
+    registration_status: RegistrationStatus
+    ready_for_auto_dispatch: bool
+    readiness_status: Optional[str]
+    readiness_blockers: List[str]
+    registered_at: Optional[str]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "registration_id": self.registration_id,
+            "task_id": self.task_id,
+            "handoff_id": self.handoff_id,
+            "truth_anchor": self.truth_anchor,
+            "registration_status": self.registration_status,
+            "ready_for_auto_dispatch": self.ready_for_auto_dispatch,
+            "readiness_status": self.readiness_status,
+            "readiness_blockers": self.readiness_blockers,
+            "registered_at": self.registered_at,
+        }
+    
+    @classmethod
+    def from_record(cls, record: TaskRegistrationRecord) -> "LedgerEntry":
+        """从 TaskRegistrationRecord 构建 LedgerEntry"""
+        handoff_id = record.metadata.get("handoff_id")
+        readiness = record.metadata.get("readiness") or {}
+        
+        return cls(
+            registration_id=record.registration_id,
+            task_id=record.task_id,
+            handoff_id=handoff_id,
+            truth_anchor=record.truth_anchor.to_dict() if record.truth_anchor else None,
+            registration_status=record.registration_status,
+            ready_for_auto_dispatch=record.ready_for_auto_dispatch,
+            readiness_status=readiness.get("status"),
+            readiness_blockers=readiness.get("blockers", []),
+            registered_at=record.metadata.get("registered_at"),
+        )
+
+
+class RegistrationLedger:
+    """
+    Registration Ledger — 可查询、可追溯的注册账簿（P0-2 Batch 4）。
+    
+    提供：
+    - list_entries(): 列出 ledger 条目
+    - get_by_handoff(): 按 handoff_id 查询
+    - get_by_truth_anchor(): 按 truth_anchor 查询
+    - get_ready_for_dispatch(): 获取准备好 auto-dispatch 的注册
+    - get_blocked(): 获取被阻塞的注册
+    - trace_lineage(): 追溯注册来源 lineage
+    """
+    
+    def __init__(self):
+        self.registry = TaskRegistry()
+    
+    def list_entries(
+        self,
+        registration_status: Optional[str] = None,
+        readiness_status: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[LedgerEntry]:
+        """
+        列出 ledger 条目。
+        
+        Args:
+            registration_status: 按注册状态过滤
+            readiness_status: 按就绪状态过滤
+            limit: 最大返回数量
+        
+        Returns:
+            LedgerEntry 列表
+        """
+        records = self.registry.list(
+            registration_status=registration_status,
+            limit=limit,
+        )
+        
+        entries = []
+        for record in records:
+            entry = LedgerEntry.from_record(record)
+            
+            # 按 readiness_status 过滤
+            if readiness_status and entry.readiness_status != readiness_status:
+                continue
+            
+            entries.append(entry)
+        
+        return entries
+    
+    def get_by_handoff(self, handoff_id: str) -> List[LedgerEntry]:
+        """
+        按 handoff_id 查询 ledger 条目。
+        
+        Args:
+            handoff_id: handoff ID
+        
+        Returns:
+            LedgerEntry 列表
+        """
+        records = self.registry.list(limit=1000)
+        entries = []
+        
+        for record in records:
+            if record.metadata.get("handoff_id") == handoff_id:
+                entries.append(LedgerEntry.from_record(record))
+        
+        return entries
+    
+    def get_by_truth_anchor(
+        self,
+        anchor_type: Optional[str] = None,
+        anchor_value: Optional[str] = None,
+    ) -> List[LedgerEntry]:
+        """
+        按 truth_anchor 查询 ledger 条目。
+        
+        Args:
+            anchor_type: 锚点类型 (task_id | batch_id | handoff_id)
+            anchor_value: 锚点值
+        
+        Returns:
+            LedgerEntry 列表
+        """
+        records = self.registry.list(limit=1000)
+        entries = []
+        
+        for record in records:
+            if not record.truth_anchor:
+                continue
+            
+            if anchor_type and record.truth_anchor.anchor_type != anchor_type:
+                continue
+            
+            if anchor_value and record.truth_anchor.anchor_value != anchor_value:
+                continue
+            
+            entries.append(LedgerEntry.from_record(record))
+        
+        return entries
+    
+    def get_ready_for_dispatch(self, limit: int = 100) -> List[LedgerEntry]:
+        """
+        获取准备好 auto-dispatch 的注册。
+        
+        Args:
+            limit: 最大返回数量
+        
+        Returns:
+            LedgerEntry 列表
+        """
+        records = self.registry.list(
+            registration_status="registered",
+            limit=limit,
+        )
+        
+        entries = []
+        for record in records:
+            if record.ready_for_auto_dispatch:
+                entry = LedgerEntry.from_record(record)
+                if entry.readiness_status == "ready":
+                    entries.append(entry)
+        
+        return entries
+    
+    def get_blocked(self, limit: int = 100) -> List[LedgerEntry]:
+        """
+        获取被阻塞的注册。
+        
+        Args:
+            limit: 最大返回数量
+        
+        Returns:
+            LedgerEntry 列表
+        """
+        records = self.registry.list(limit=limit)
+        entries = []
+        
+        for record in records:
+            entry = LedgerEntry.from_record(record)
+            if entry.registration_status == "blocked" or entry.readiness_status == "blocked":
+                entries.append(entry)
+        
+        return entries
+    
+    def trace_lineage(self, registration_id: str) -> List[Dict[str, Any]]:
+        """
+        追溯注册来源 lineage。
+        
+        Args:
+            registration_id: 注册 ID
+        
+        Returns:
+            lineage 列表（从当前注册到源头）
+        """
+        record = self.registry.get(registration_id)
+        if not record:
+            return []
+        
+        lineage = []
+        current = record
+        seen_ids = set()  # 防止死循环
+        
+        while current and current.registration_id not in seen_ids:
+            seen_ids.add(current.registration_id)
+            
+            lineage.append({
+                "registration_id": current.registration_id,
+                "task_id": current.task_id,
+                "truth_anchor": current.truth_anchor.to_dict() if current.truth_anchor else None,
+                "registration_status": current.registration_status,
+            })
+            
+            # 查找上一个来源
+            if not current.truth_anchor:
+                break
+            
+            prev_records = self.registry.get_by_source(
+                source_task_id=current.truth_anchor.anchor_value
+                if current.truth_anchor.anchor_type == "task_id"
+                else None,
+                source_batch_id=current.truth_anchor.anchor_value
+                if current.truth_anchor.anchor_type == "batch_id"
+                else None,
+            )
+            
+            # 排除当前记录本身，避免死循环
+            prev_records = [
+                r for r in prev_records 
+                if r.registration_id != current.registration_id
+            ]
+            
+            current = prev_records[0] if prev_records else None
+        
+        return lineage
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """序列化 ledger 状态"""
+        entries = self.list_entries(limit=1000)
+        return {
+            "ledger_version": TASK_REGISTRY_VERSION,
+            "entry_count": len(entries),
+            "entries": [e.to_dict() for e in entries],
+        }
+
+
+def get_registrations_by_readiness(
+    readiness_status: str,
+    limit: int = 100,
+) -> List[TaskRegistrationRecord]:
+    """
+    P0-2 Batch 4: 按 readiness 状态查询注册记录。
+    
+    Args:
+        readiness_status: ready | not_ready | blocked
+        limit: 最大返回数量
+    
+    Returns:
+        TaskRegistrationRecord 列表
+    """
+    ledger = RegistrationLedger()
+    entries = ledger.list_entries(readiness_status=readiness_status, limit=limit)
+    
+    # 转换回 TaskRegistrationRecord
+    records = []
+    for entry in entries:
+        record = ledger.registry.get(entry.registration_id)
+        if record:
+            records.append(record)
+    
+    return records
+
+
+def get_registrations_by_truth_anchor(
+    anchor_type: Optional[str] = None,
+    anchor_value: Optional[str] = None,
+) -> List[TaskRegistrationRecord]:
+    """
+    P0-2 Batch 4: 按 truth_anchor 查询注册记录。
+    
+    Args:
+        anchor_type: 锚点类型 (task_id | batch_id | handoff_id)
+        anchor_value: 锚点值
+    
+    Returns:
+        TaskRegistrationRecord 列表
+    """
+    ledger = RegistrationLedger()
+    entries = ledger.get_by_truth_anchor(
+        anchor_type=anchor_type,
+        anchor_value=anchor_value,
+    )
+    
+    # 转换回 TaskRegistrationRecord
+    records = []
+    for entry in entries:
+        record = ledger.registry.get(entry.registration_id)
+        if record:
+            records.append(record)
+    
+    return records
 
 
 # CLI 入口
@@ -617,6 +953,11 @@ if __name__ == "__main__":
         print("  python task_registration.py list [--status <status>] [--batch <batch_id>]")
         print("  python task_registration.py by-source [--task <task_id>] [--batch <batch_id>]")
         print("  python task_registration.py update <registration_id> <new_status>")
+        print("  python task_registration.py ledger [--readiness <status>]")
+        print("  python task_registration.py by-anchor [--type <type>] [--value <value>]")
+        print("  python task_registration.py ready-for-dispatch")
+        print("  python task_registration.py blocked")
+        print("  python task_registration.py lineage <registration_id>")
         sys.exit(1)
     
     cmd = sys.argv[1]
@@ -704,6 +1045,53 @@ if __name__ == "__main__":
         else:
             print(f"Registration {registration_id} not found")
             sys.exit(1)
+    
+    # P0-2 Batch 4: Ledger commands
+    elif cmd == "ledger":
+        ledger = RegistrationLedger()
+        readiness_status = None
+        if "--readiness" in sys.argv:
+            idx = sys.argv.index("--readiness")
+            if idx + 1 < len(sys.argv):
+                readiness_status = sys.argv[idx + 1]
+        entries = ledger.list_entries(readiness_status=readiness_status)
+        print(json.dumps([e.to_dict() for e in entries], indent=2))
+    
+    elif cmd == "by-anchor":
+        anchor_type = None
+        anchor_value = None
+        if "--type" in sys.argv:
+            idx = sys.argv.index("--type")
+            if idx + 1 < len(sys.argv):
+                anchor_type = sys.argv[idx + 1]
+        if "--value" in sys.argv:
+            idx = sys.argv.index("--value")
+            if idx + 1 < len(sys.argv):
+                anchor_value = sys.argv[idx + 1]
+        records = get_registrations_by_truth_anchor(
+            anchor_type=anchor_type,
+            anchor_value=anchor_value,
+        )
+        print(json.dumps([r.to_dict() for r in records], indent=2))
+    
+    elif cmd == "ready-for-dispatch":
+        ledger = RegistrationLedger()
+        entries = ledger.get_ready_for_dispatch()
+        print(json.dumps([e.to_dict() for e in entries], indent=2))
+    
+    elif cmd == "blocked":
+        ledger = RegistrationLedger()
+        entries = ledger.get_blocked()
+        print(json.dumps([e.to_dict() for e in entries], indent=2))
+    
+    elif cmd == "lineage":
+        if len(sys.argv) < 3:
+            print("Error: missing registration_id")
+            sys.exit(1)
+        registration_id = sys.argv[2]
+        ledger = RegistrationLedger()
+        lineage = ledger.trace_lineage(registration_id)
+        print(json.dumps(lineage, indent=2))
     
     else:
         print(f"Unknown command: {cmd}")

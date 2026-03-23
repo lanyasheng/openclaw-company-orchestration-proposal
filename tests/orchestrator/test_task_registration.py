@@ -405,6 +405,177 @@ class TestRegistrationPayloadToRecord:
         print(f"✓ test_register_next_task_from_payload: registered from payload")
 
 
+# P0-2 Batch 4: Registration Ledger Tests
+
+class TestRegistrationLedger:
+    """P0-2 Batch 4: 测试 RegistrationLedger"""
+    
+    def test_ledger_list_entries(self):
+        """测试：列出 ledger 条目"""
+        from task_registration import RegistrationLedger
+        
+        # 先注册一些任务
+        for i in range(3):
+            register_task(
+                proposed_task={"title": f"Ledger Test {i}"},
+                registration_status="registered",
+                batch_id="batch_ledger_test",
+                ready_for_auto_dispatch=True,
+                metadata={"readiness": {"status": "ready", "eligible": True, "blockers": []}},
+            )
+        
+        ledger = RegistrationLedger()
+        entries = ledger.list_entries(limit=10)
+        
+        assert len(entries) >= 3
+        
+        for entry in entries:
+            assert entry.registration_id is not None
+            assert entry.task_id is not None
+            assert entry.registration_status in ("registered", "skipped", "blocked")
+        
+        print(f"✓ test_ledger_list_entries: listed {len(entries)} entries")
+    
+    def test_ledger_get_ready_for_dispatch(self):
+        """测试：获取准备好 auto-dispatch 的注册"""
+        from task_registration import RegistrationLedger
+        
+        # 注册一个 ready 的任务
+        record = register_task(
+            proposed_task={"title": "Ready for dispatch"},
+            registration_status="registered",
+            ready_for_auto_dispatch=True,
+            metadata={"readiness": {"status": "ready", "eligible": True, "blockers": []}},
+        )
+        
+        ledger = RegistrationLedger()
+        ready_entries = ledger.get_ready_for_dispatch()
+        
+        # 验证至少有一个 ready 的条目
+        ready_ids = [e.registration_id for e in ready_entries]
+        assert record.registration_id in ready_ids
+        
+        print(f"✓ test_ledger_get_ready_for_dispatch: found {len(ready_entries)} ready entries")
+    
+    def test_ledger_get_blocked(self):
+        """测试：获取被阻塞的注册"""
+        from task_registration import RegistrationLedger
+        
+        # 注册一个 blocked 的任务
+        record = register_task(
+            proposed_task={"title": "Blocked task"},
+            registration_status="blocked",
+            ready_for_auto_dispatch=False,
+            metadata={"readiness": {"status": "blocked", "eligible": False, "blockers": ["test_blocker"]}},
+        )
+        
+        ledger = RegistrationLedger()
+        blocked_entries = ledger.get_blocked()
+        
+        # 验证至少有一个 blocked 的条目
+        blocked_ids = [e.registration_id for e in blocked_entries]
+        assert record.registration_id in blocked_ids
+        
+        print(f"✓ test_ledger_get_blocked: found {len(blocked_entries)} blocked entries")
+    
+    def test_ledger_trace_lineage(self):
+        """测试：追溯注册来源 lineage"""
+        from task_registration import RegistrationLedger, TruthAnchor
+        
+        # 注册一个带 truth_anchor 的任务
+        record = register_task(
+            proposed_task={"title": "Lineage test"},
+            source_closeout={"original_batch_id": "batch_parent"},
+            registration_status="registered",
+            ready_for_auto_dispatch=True,
+        )
+        
+        ledger = RegistrationLedger()
+        lineage = ledger.trace_lineage(record.registration_id)
+        
+        assert len(lineage) >= 1
+        assert lineage[0]["registration_id"] == record.registration_id
+        
+        print(f"✓ test_ledger_trace_lineage: traced {len(lineage)} generations")
+    
+    def test_get_registrations_by_readiness(self):
+        """测试：按 readiness 状态查询"""
+        from task_registration import get_registrations_by_readiness
+        
+        # 注册不同 readiness 状态的任务
+        record_ready = register_task(
+            proposed_task={"title": "Ready task"},
+            registration_status="registered",
+            ready_for_auto_dispatch=True,
+            metadata={"readiness": {"status": "ready", "eligible": True, "blockers": []}},
+        )
+        
+        record_not_ready = register_task(
+            proposed_task={"title": "Not ready task"},
+            registration_status="skipped",
+            ready_for_auto_dispatch=False,
+            metadata={"readiness": {"status": "not_ready", "eligible": False, "blockers": ["test"]}},
+        )
+        
+        # 查询 ready 的任务
+        ready_records = get_registrations_by_readiness("ready")
+        ready_ids = [r.registration_id for r in ready_records]
+        assert record_ready.registration_id in ready_ids
+        
+        # 查询 not_ready 的任务
+        not_ready_records = get_registrations_by_readiness("not_ready")
+        not_ready_ids = [r.registration_id for r in not_ready_records]
+        assert record_not_ready.registration_id in not_ready_ids
+        
+        print(f"✓ test_get_registrations_by_readiness: queried by readiness status")
+    
+    def test_get_registrations_by_truth_anchor(self):
+        """测试：按 truth_anchor 查询"""
+        from task_registration import get_registrations_by_truth_anchor, TruthAnchor
+        
+        # 注册一个带 batch_id truth_anchor 的任务
+        record = register_task(
+            proposed_task={"title": "Anchor test"},
+            source_closeout={"original_batch_id": "batch_anchor_test"},
+            registration_status="registered",
+        )
+        
+        # 按 batch_id 查询
+        records = get_registrations_by_truth_anchor(
+            anchor_type="batch_id",
+            anchor_value="batch_anchor_test",
+        )
+        
+        record_ids = [r.registration_id for r in records]
+        assert record.registration_id in record_ids
+        
+        print(f"✓ test_get_registrations_by_truth_anchor: queried by truth anchor")
+    
+    def test_ledger_entry_from_record(self):
+        """测试：LedgerEntry.from_record()"""
+        from task_registration import LedgerEntry
+        
+        record = register_task(
+            proposed_task={"title": "Entry test"},
+            registration_status="registered",
+            ready_for_auto_dispatch=True,
+            metadata={
+                "handoff_id": "handoff_entry_test",
+                "readiness": {"status": "ready", "blockers": []},
+            },
+        )
+        
+        entry = LedgerEntry.from_record(record)
+        
+        assert entry.registration_id == record.registration_id
+        assert entry.task_id == record.task_id
+        assert entry.handoff_id == "handoff_entry_test"
+        assert entry.ready_for_auto_dispatch is True
+        assert entry.readiness_status == "ready"
+        
+        print(f"✓ test_ledger_entry_from_record: converted record to entry")
+
+
 def run_tests():
     """运行所有测试"""
     import pytest
