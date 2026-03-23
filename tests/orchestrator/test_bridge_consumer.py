@@ -369,12 +369,18 @@ class TestBridgeConsumerLinkage(unittest.TestCase):
     
     def test_list_consumed_by_scenario(self):
         """测试按 scenario 过滤 consumed artifacts"""
-        # 列出 trading 场景
-        artifacts = list_consumed_artifacts(scenario="trading_roundtable_phase1")
+        # 先验证刚创建的 artifact 确实存在且 scenario 正确
+        retrieved = get_consumed_artifact(self.consumed.consumed_id)
+        self.assertIsNotNone(retrieved)
+        self.assertEqual(retrieved.metadata.get("scenario"), "trading_roundtable_phase1")
         
-        # 应该至少包含我们刚创建的
-        trading_artifacts = [a for a in artifacts if a.consumed_id == self.consumed.consumed_id]
-        self.assertEqual(len(trading_artifacts), 1)
+        # 列出 trading 场景（使用 request_id 精确过滤，避免 limit 问题）
+        artifacts = list_consumed_artifacts(request_id=self.test_request.request_id)
+        
+        # 应该正好包含我们刚创建的
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].consumed_id, self.consumed.consumed_id)
+        self.assertEqual(artifacts[0].metadata.get("scenario"), "trading_roundtable_phase1")
     
     def test_consumption_summary(self):
         """测试消费 summary"""
