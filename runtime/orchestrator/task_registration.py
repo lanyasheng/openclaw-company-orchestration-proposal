@@ -31,10 +31,17 @@ __all__ = [
     "get_registration",
     "list_registrations",
     "get_registrations_by_source",
+    "register_from_handoff",
     "TASK_REGISTRY_VERSION",
 ]
 
 TASK_REGISTRY_VERSION = "task_registration_v1"
+
+# P0-2 Batch 1: 导入 handoff schema helper (lazy import to avoid circular dependency)
+def _get_handoff_helpers():
+    """Lazy import helper to avoid circular dependency issues"""
+    from core.handoff_schema import RegistrationHandoff, handoff_to_task_registration
+    return RegistrationHandoff, handoff_to_task_registration
 
 RegistrationStatus = Literal["registered", "skipped", "blocked"]
 
@@ -552,6 +559,51 @@ def register_next_task_from_payload(
             "source_registration_id": registration_payload.get("registration_id"),
         },
     )
+
+
+def register_from_handoff(handoff) -> TaskRegistrationRecord:
+    """
+    P0-2 Batch 1: 从 RegistrationHandoff 注册新任务。
+    
+    这是 handoff schema 的统一入口，用于把 planning handoff 转换成真实注册记录。
+    直接使用 handoff 中的 IDs，不重新生成。
+    
+    Args:
+        handoff: RegistrationHandoff (from core.handoff_schema)
+    
+    Returns:
+        TaskRegistrationRecord
+    """
+    # 构建 TruthAnchor
+    truth_anchor = None
+    if handoff.truth_anchor:
+        truth_anchor = TruthAnchor.from_dict(handoff.truth_anchor)
+    
+    # 创建记录
+    record = TaskRegistrationRecord(
+        registration_id=handoff.registration_id,  # 使用 handoff 中的 ID
+        task_id=handoff.task_id,  # 使用 handoff 中的 ID
+        batch_id=handoff.batch_id,
+        registration_status=handoff.registration_status,
+        registration_reason=f"Handoff from {handoff.handoff_id}",
+        truth_anchor=truth_anchor,
+        owner=handoff.proposed_task.get("owner"),
+        status="pending",
+        source_closeout=handoff.source_closeout,
+        proposed_task=handoff.proposed_task,
+        metadata={
+            **handoff.metadata,
+            "handoff_id": handoff.handoff_id,
+            "truth_anchor": handoff.truth_anchor,
+            "ready_for_auto_dispatch": handoff.ready_for_auto_dispatch,
+        },
+    )
+    
+    # 注册到 registry
+    registry = TaskRegistry()
+    registry.register(record)
+    
+    return record
 
 
 # CLI 入口

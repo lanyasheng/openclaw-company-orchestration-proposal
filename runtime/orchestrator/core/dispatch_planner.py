@@ -39,6 +39,9 @@ from contracts import CANONICAL_CALLBACK_ENVELOPE_VERSION
 # P0-1 Batch 4: 导入统一的 ContinuationContract
 from partial_continuation import ContinuationContract, build_continuation_contract
 
+# P0-2 Batch 1: 导入 handoff schema helper
+from core.handoff_schema import PlanningHandoff, build_planning_handoff
+
 
 class DispatchBackend(str, Enum):
     """调度后端类型"""
@@ -193,6 +196,48 @@ class DispatchPlan:
             "artifacts": self.artifacts,
             "canonical_callback": self.canonical_callback,
         }
+    
+    def to_planning_handoff(self) -> PlanningHandoff:
+        """
+        P0-2 Batch 1: 将 DispatchPlan 转换为 PlanningHandoff。
+        
+        这是 handoff schema 的统一出口，用于连接到 task registration / execution。
+        
+        返回：PlanningHandoff
+        """
+        # 从 continuation_contract 提取核心字段
+        cc_dict = self.continuation_contract.to_dict() if self.continuation_contract else self.continuation
+        
+        # 从 recommended_spawn 提取 task_preview
+        task_preview = (
+            self.recommended_spawn.get("task_preview") or
+            self.recommended_spawn.get("task") or
+            cc_dict.get("next_step", "")
+        )
+        
+        # 从 backend 推导 backend_preference
+        backend_pref = (
+            "subagent" if self.backend == DispatchBackend.SUBAGENT else
+            "tmux" if self.backend == DispatchBackend.TMUX else
+            "manual"
+        )
+        
+        return build_planning_handoff(
+            source_type="dispatch_plan",
+            source_id=self.dispatch_id,
+            continuation_contract=cc_dict,
+            scenario=self.scenario,
+            adapter=self.adapter,
+            owner=self.orchestration_contract.get("owner", "main"),
+            backend_preference=backend_pref,  # type: ignore
+            task_preview=task_preview,
+            safety_gates=self.safety_gates,
+            metadata={
+                "dispatch_plan_status": self.status.value,
+                "decision_id": self.decision_id,
+                "batch_id": self.batch_id,
+            },
+        )
 
 
 class DispatchPlanner:
