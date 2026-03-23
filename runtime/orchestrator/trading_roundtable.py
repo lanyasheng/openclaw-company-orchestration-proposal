@@ -44,6 +44,7 @@ from partial_continuation import (
     build_partial_closeout,
     adapt_closeout_for_trading,
     generate_registered_registrations_for_closeout,
+    build_continuation_contract,
     ScopeItem,
 )
 from state_machine import (
@@ -281,7 +282,39 @@ def _build_partial_closeout_for_trading(
     )
     
     # 适配 trading 场景
-    return adapt_closeout_for_trading(closeout=closeout, packet=packet, roundtable=roundtable)
+    adapted = adapt_closeout_for_trading(closeout=closeout, packet=packet, roundtable=roundtable)
+    
+    # P0-1 Batch 3: Inject unified continuation contract into closeout metadata
+    # Derive stopped_because from stop_reason and decision
+    if decision.action == "proceed":
+        stopped_because = "roundtable_gate_pass_continuation_ready"
+    elif decision.action == "fix_blocker":
+        stopped_because = f"roundtable_gate_conditional_blocker_{roundtable.get('blocker', 'unknown')}"
+    elif decision.action == "abort":
+        stopped_because = f"roundtable_gate_fail_blocker_{roundtable.get('blocker', 'unknown')}"
+    else:
+        stopped_because = f"decision_action_{decision.action}"
+    
+    # Derive next_step from roundtable or decision
+    next_step = roundtable.get("next_step", "") or decision.reason
+    
+    # Derive next_owner from roundtable or packet
+    next_owner = roundtable.get("owner", "") or packet.get("owner", "") or "trading"
+    
+    # Build and merge continuation contract
+    continuation = build_continuation_contract(
+        stopped_because=stopped_because,
+        next_step=next_step,
+        next_owner=next_owner,
+        metadata={
+            "decision_action": decision.action,
+            "roundtable_conclusion": roundtable.get("conclusion", ""),
+            "roundtable_blocker": roundtable.get("blocker", ""),
+        },
+    )
+    continuation.merge_into_closeout(adapted)
+    
+    return adapted
 
 
 def _generate_next_registrations_for_trading(closeout: Any, batch_id: str) -> List[Dict[str, Any]]:

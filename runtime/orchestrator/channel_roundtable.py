@@ -55,6 +55,7 @@ from state_machine import (
     mark_next_dispatched,
 )
 from waiting_guard import reconcile_batch_waiting_anomalies
+from partial_continuation import build_continuation_contract
 
 ADAPTER_NAME = "channel_roundtable"
 PACKET_VERSION = "channel_roundtable_v1"
@@ -251,19 +252,51 @@ def _decision_from_payload(batch_id: str, analysis: Dict[str, Any]) -> Decision:
             }
         )
 
+    metadata = {
+        "adapter": ADAPTER_NAME,
+        "scenario": scenario,
+        "channel_packet": packet,
+        "roundtable": roundtable,
+        "packet_validation": validation,
+        "batch_analysis": analysis,
+        "supporting_results": payloads["supporting_results"],
+    }
+    
+    # P0-1 Batch 3: Inject unified continuation contract into decision metadata
+    # Derive stopped_because from action and conclusion
+    if action == "proceed":
+        stopped_because = "roundtable_gate_pass_continuation_ready"
+    elif action == "fix_blocker":
+        stopped_because = f"roundtable_gate_conditional_blocker_{blocker}"
+    elif action == "abort":
+        stopped_because = f"roundtable_gate_fail_blocker_{blocker}"
+    else:
+        stopped_because = f"decision_action_{action}"
+    
+    # Derive next_step from roundtable or decision reason
+    derived_next_step = next_step or reason
+    
+    # Derive next_owner from roundtable or packet
+    derived_next_owner = roundtable.get("owner", "") or packet.get("owner", "") or "main"
+    
+    # Build continuation contract and inject into metadata
+    continuation = build_continuation_contract(
+        stopped_because=stopped_because,
+        next_step=derived_next_step,
+        next_owner=derived_next_owner,
+        metadata={
+            "decision_action": action,
+            "roundtable_conclusion": conclusion,
+            "roundtable_blocker": blocker,
+        },
+    )
+    metadata["continuation_contract"] = continuation.to_dict()
+    
     return Decision(
         action=action,
         reason=reason,
         next_tasks=recommended_next_tasks,
-        metadata={
-            "adapter": ADAPTER_NAME,
-            "scenario": scenario,
-            "channel_packet": packet,
-            "roundtable": roundtable,
-            "packet_validation": validation,
-            "batch_analysis": analysis,
-            "supporting_results": payloads["supporting_results"],
-        },
+        metadata=metadata,
     )
 
 
