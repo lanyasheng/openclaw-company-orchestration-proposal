@@ -480,18 +480,21 @@ class DispatchPlanner:
             )
         
         elif backend == DispatchBackend.TMUX:
+            # P0-3 Batch 2: Removed non-existent 'stop' command reference
+            # The orchestrator_dispatch_bridge.py does not implement a 'stop' command.
+            # Tmux sessions are managed directly via tmux CLI when needed.
             return BackendPlan(
                 backend=backend,
                 commands={
                     "start": f'python3 scripts/orchestrator_dispatch_bridge.py start --dispatch {dispatch_id} --backend tmux',
                     "status": f'python3 scripts/orchestrator_dispatch_bridge.py status --dispatch {dispatch_id}',
-                    "stop": f'python3 scripts/orchestrator_dispatch_bridge.py stop --dispatch {dispatch_id}',
                 },
                 observable_intermediate_state=True,
                 notes=[
                     "Tmux observable session",
                     "Intermediate state can be monitored",
                     "Backend terminal is diagnostic only",
+                    "Note: 'stop' command removed (not implemented in bridge); use tmux CLI directly for session management",
                 ],
             )
         

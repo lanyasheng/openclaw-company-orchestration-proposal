@@ -8,6 +8,13 @@ from typing import Any, Dict, Optional, Tuple
 from contracts import build_canonical_callback_envelope
 from partial_continuation import ContinuationContract, build_continuation_contract
 
+# P0-3 Batch 2: Legacy compatibility module
+# This module provides tmux terminal receipt handling for backward compatibility.
+# Primary live path (2026-03-23): subagent backend with runner-based completion receipts.
+# Tmux path retained for:
+# - Existing tmux-based dispatches in production
+# - Observable session use cases requiring intermediate state monitoring
+# New development should prefer subagent backend unless intermediate observation is explicitly required.
 
 TERMINAL_DONE_STATUSES = {"likely_done", "done_session_ended"}
 TERMINAL_FAILED_STATUSES = {"dead", "stuck"}

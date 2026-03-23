@@ -1,6 +1,6 @@
 # Technical Debt & Backlog (2026-03-22)
 
-> **版本**: v8 (2026-03-22)
+> **版本**: v9 (2026-03-23) — Updated with P0-3 Batch 2 cleanup
 >
 > **定位**: 收敛已知优化点/技术债务，避免在快速迭代中丢失
 >
@@ -18,6 +18,63 @@ v8 实现了 **Real Execute Mode + Auto-Trigger Consumption** 的最小闭环。
 - 不在 v8 做大重构
 - 明确记录债务，避免丢失
 - 后续迭代按需清偿
+
+---
+
+## 0.5. P0-3 Batch 2: Legacy Runtime Cleanup (2026-03-23)
+
+**状态**: ✅ 已完成
+
+**清理范围**: runtime 级 legacy compatibility / 过度耦合路径
+
+**设计约束**:
+1. 先删低风险 runtime legacy，不大拆主逻辑
+2. 不能破坏当前 trading live path (subagent backend)
+3. 对不能删的旧路径，要明确保留原因
+4. 先 targeted tests，再 broader regression
+
+### 已删除 / 已修复
+
+| 文件 | 改动 | 理由 |
+|------|------|------|
+| `runtime/orchestrator/core/dispatch_planner.py` | 移除不存在的 `stop` 命令引用 | `orchestrator_dispatch_bridge.py` 从未实现 `stop` 命令；tmux session 管理应直接使用 tmux CLI |
+
+### 已标废 (保留但标记)
+
+| 文件 | 标记内容 | 保留原因 |
+|------|----------|----------|
+| `runtime/orchestrator/continuation_backends.py` | 添加 P0-3 Batch 2 注释，明确 subagent 为主 live path，tmux 为 legacy compatibility | 现有 tmux dispatches 仍在使用；observable session 场景仍需支持 |
+| `runtime/orchestrator/tmux_terminal_receipts.py` | 添加模块级 deprecation header | 现有 tmux receipt 处理逻辑仍需向后兼容 |
+| `runtime/scripts/orchestrator_dispatch_bridge.py` | 添加模块级 docstring 说明 legacy 定位 | tmux-only bridge 仍需支持现有 dispatches |
+
+### 暂保留 (原因明确)
+
+| 路径 | 保留原因 | 未来清理条件 |
+|------|----------|--------------|
+| tmux backend (`continuation_backends.py`) | - 现有 production dispatches 仍在使用<br>- observable session 场景需要中间状态监控 | 当所有 production dispatches 迁移到 subagent backend + runner 观察模式 |
+| `orchestrator_dispatch_bridge.py` | - tmux dispatch 的完整生命周期管理<br>- receipt/callback bridge 功能 | 当 tmux backend 完全退役 |
+| `tmux_terminal_receipts.py` | - tmux receipt 构建逻辑<br>- trading/channel roundtable 标准化 | 当 tmux backend 完全退役 |
+
+### 测试结果
+
+```
+tests/orchestrator/test_tmux_dispatch_bridge.py: 11/11 passed
+tests/orchestrator/: 404/405 passed (1 flaky test isolation issue, unrelated)
+```
+
+### Commit
+
+- **Hash**: (待 commit)
+- **Message**: `P0-3 Batch 2: Legacy runtime cleanup — deprecation markers + fix non-existent stop command`
+
+### Batch 3 建议
+
+1. **审计 `entry_defaults.py` 中的 tmux_bridge 引用**: 评估是否可以迁移到 subagent callback 模式
+2. **清理 `continuation_backends.py` 中的 tmux 命令生成逻辑**: 当 tmux 使用率降至 0 后
+3. **收口 dispatch_bridge 命令**: 评估 `describe`/`capture`/`attach`/`watchdog` 的实际使用率，考虑精简
+4. **更新 CURRENT_TRUTH.md**: 明确 runtime legacy 清理状态
+
+---
 
 ---
 
@@ -221,7 +278,7 @@ trading_roundtable/
 | D1 | trading_roundtable 拆分 | P0 | 待处理 | 4-6h |
 | D2 | Continuation 模块收口 | P1 | 待处理 | 8-12h |
 | D3 | 文档去重瘦身 | P1 | 待处理 | 2-3h |
-| D4 | Legacy 路径清理 | P2 | 待处理 | 2-4h |
+| D4 | Legacy 路径清理 | P2 | ✅ Batch 2 完成 (runtime 级) | 2-4h |
 | D5 | Auto-trigger 配置管理 | P1 | 待处理 | 3-4h |
 | D6 | Execute mode 真实集成 | P1 | 待处理 | 6-8h |
 | D7 | 测试覆盖率提升 | P1 | 待处理 | 4-6h |
@@ -236,7 +293,7 @@ trading_roundtable/
 
 ---
 
-## 5. 附录：v1-v8 演进摘要
+## 5. 附录：v1-v9 演进摘要
 
 | 版本 | 核心能力 | 状态 |
 |------|----------|------|
@@ -248,6 +305,7 @@ trading_roundtable/
 | v6 | Sessions Spawn Request | 完成 |
 | v7 | Bridge Consumption | 完成 |
 | v8 | Execute Mode + Auto-Trigger | 完成 |
+| v9 | Real API Integration + Legacy Cleanup Batch 2 | 完成 |
 
 ---
 

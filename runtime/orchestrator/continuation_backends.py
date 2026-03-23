@@ -4,6 +4,10 @@ import shlex
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+# P0-3 Batch 2: Legacy compatibility note
+# - 'subagent' backend: Primary live path for trading continuation (2026-03-23)
+# - 'tmux' backend: Legacy compatibility layer for observable sessions; retained for backward compatibility
+#   but new development should prefer subagent backend with runner-based observation
 SUPPORTED_DISPATCH_BACKENDS = ("subagent", "tmux")
 DEFAULT_DISPATCH_BACKEND = "subagent"
 

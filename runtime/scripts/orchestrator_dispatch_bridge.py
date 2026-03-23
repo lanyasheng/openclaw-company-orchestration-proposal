@@ -1,4 +1,28 @@
 #!/usr/bin/env python3
+"""
+P0-3 Batch 2: Legacy compatibility bridge script
+
+This script provides tmux-specific dispatch bridge commands for backward compatibility.
+Primary live path (2026-03-23): subagent backend with runner-based execution.
+
+Retained for:
+- Existing tmux-based dispatches in production
+- Observable session use cases requiring intermediate state monitoring
+
+Commands:
+- prepare/prepare: Prepare dispatch plan reference document
+- start: Launch tmux session with Claude Code
+- status: Query tmux session status
+- capture: Capture tmux pane output
+- attach: Attach to tmux session
+- receipt: Build terminal receipt from tmux status
+- complete: Complete dispatch and bridge to callback
+- watchdog: Evaluate timeout/stuck policy
+- describe: Describe dispatch plan (debug)
+
+Note: This bridge only supports tmux backend. For subagent backend,
+use sessions_spawn directly with runner-based observation.
+"""
 from __future__ import annotations
 
 import argparse
