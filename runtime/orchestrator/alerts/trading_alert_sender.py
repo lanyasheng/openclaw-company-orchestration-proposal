@@ -12,6 +12,7 @@ trading_alert_sender.py — Trading Spider Alert Sender (Minimal Viable Chain)
 - 不重复刷屏：基于 candidate_id + signal_type 去重
 - 发送前有结构化 payload：统一 schema
 - 发送结果可查：状态文件 + 日志文件
+- 发送方式可插拔：支持文件 mock / OpenClaw 原生消息
 
 Usage:
     from orchestrator.alerts.trading_alert_sender import TradingAlertSender
@@ -31,6 +32,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -41,6 +44,9 @@ __all__ = [
     "AlertPayload",
     "SendResult",
     "ALERT_SENDER_VERSION",
+    "AlertDeliveryAdapter",
+    "FileDeliveryAdapter",
+    "OpenClawAgentDeliveryAdapter",
 ]
 
 ALERT_SENDER_VERSION = "trading_alert_sender_v1"
@@ -114,6 +120,263 @@ def _throttle_state_file() -> Path:
     """返回节流状态文件路径"""
     return ALERT_STATE_DIR / "throttle_state.json"
 
+
+# =============================================================================
+# 发送适配器接口与实现
+# =============================================================================
+
+class AlertDeliveryAdapter(ABC):
+    """
+    Alert 发送适配器抽象接口。
+    
+    设计目标：
+    - 解耦发送逻辑与提醒链核心
+    - 支持多种发送方式（文件 mock / OpenClaw 原生 / 其他）
+    - 统一返回格式
+    """
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """适配器名称"""
+        pass
+    
+    @abstractmethod
+    def deliver(self, payload: AlertPayload, dry_run: bool = False) -> Dict[str, Any]:
+        """
+        发送消息。
+        
+        Args:
+            payload: Alert payload
+            dry_run: 是否干跑
+        
+        Returns:
+            Dict with status, reason, and optional metadata
+        """
+        pass
+
+
+class FileDeliveryAdapter(AlertDeliveryAdapter):
+    """
+    文件交付适配器（Mock 模式）。
+    
+    将 alert 写入文件，用于：
+    - 本地测试
+    - 无真实发送出口时的降级
+    - 审计日志
+    """
+    
+    def __init__(self, output_dir: Optional[Path] = None):
+        self.output_dir = output_dir or ALERT_LOG_DIR
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+    
+    @property
+    def name(self) -> str:
+        return "file"
+    
+    def deliver(self, payload: AlertPayload, dry_run: bool = False) -> Dict[str, Any]:
+        """写入文件作为 Mock。"""
+        if dry_run:
+            return {"status": "dry_run", "reason": "dry_run_enabled"}
+        
+        notification_file = self.output_dir / f"{payload.alert_id}.json"
+        notification_data = {
+            "alert_id": payload.alert_id,
+            "channel": payload.delivery.get("channel", "discord"),
+            "reply_to": payload.delivery.get("reply_to", ""),
+            "message": self._format_message(payload),
+            "timestamp": payload.timestamp,
+            "payload": payload.to_dict(),
+        }
+        
+        tmp_file = notification_file.with_suffix(".tmp")
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(notification_data, f, ensure_ascii=False, indent=2)
+        tmp_file.replace(notification_file)
+        
+        return {
+            "status": "sent",
+            "reason": "delivered_to_file",
+            "file": str(notification_file),
+        }
+    
+    def _format_message(self, payload: AlertPayload) -> str:
+        """格式化消息文本（与 TradingAlertSender 保持一致）。"""
+        emoji_map = {
+            "buy_watch": "👀",
+            "sell_watch": "⚠️",
+            "hold_watch": "📊",
+            "candidate_new": "🆕",
+            "candidate_update": "🔄",
+            "candidate_remove": "❌",
+            "gate_pass": "✅",
+            "gate_fail": "❌",
+            "gate_conditional": "🟡",
+        }
+        emoji = emoji_map.get(payload.signal_type, "📋")
+        
+        return f"""{emoji} 交易提醒
+
+- 候选 ID: {payload.candidate_id}
+- 标的：{payload.symbol}
+- 类型：{payload.signal_type}
+- 原因：{payload.reason}
+- 时间：{payload.timestamp}
+
+Metadata: {json.dumps(payload.metadata, ensure_ascii=False)}"""
+
+
+class OpenClawAgentDeliveryAdapter(AlertDeliveryAdapter):
+    """
+    OpenClaw 原生消息适配器。
+    
+    使用 `openclaw agent --deliver` 发送真实 Discord 消息。
+    
+    设计原则：
+    - 不脑补 Discord API 直连，走 OpenClaw 官方路径
+    - 保留 dry_run 安全开关
+    - 失败可见，成功可验
+    """
+    
+    def __init__(
+        self,
+        agent_id: str = "main",
+        openclaw_bin: Optional[str] = None,
+        default_channel: str = "discord",
+    ):
+        """
+        初始化 OpenClaw 发送适配器。
+        
+        Args:
+            agent_id: 发送 agent ID，默认 "main"
+            openclaw_bin: openclaw 二进制路径，自动检测
+            default_channel: 默认频道
+        """
+        self.agent_id = agent_id
+        self.default_channel = default_channel
+        self.openclaw_bin = openclaw_bin or self._find_openclaw_bin()
+    
+    @property
+    def name(self) -> str:
+        return "openclaw_agent"
+    
+    def _find_openclaw_bin(self) -> str:
+        """查找 openclaw 二进制路径。"""
+        candidates = [
+            os.path.expanduser("~/.npm-global/bin/openclaw"),
+            "/opt/homebrew/bin/openclaw",
+            "/usr/local/bin/openclaw",
+            "openclaw",  # fallback to PATH
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+        return candidates[0]
+    
+    def deliver(self, payload: AlertPayload, dry_run: bool = False) -> Dict[str, Any]:
+        """
+        通过 openclaw agent --deliver 发送消息。
+        
+        Returns:
+            Dict with status, reason, and metadata
+        """
+        if dry_run:
+            return {"status": "dry_run", "reason": "dry_run_enabled"}
+        
+        message = self._format_message(payload)
+        channel = payload.delivery.get("channel", self.default_channel)
+        reply_to = payload.delivery.get("reply_to", "")
+        
+        # 构建命令
+        cmd = [
+            self.openclaw_bin,
+            "agent",
+            "--agent", self.agent_id,
+            "--channel", channel,
+            "--deliver",
+            "--message", f"[TradingAlert] {message}",
+        ]
+        
+        # 如果有 reply_to，添加到指定频道
+        if reply_to:
+            cmd.extend(["--reply-to", reply_to])
+        
+        try:
+            # 执行命令
+            env = os.environ.copy()
+            env["PATH"] = "/opt/homebrew/bin:" + env.get("PATH", "")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env,
+            )
+            
+            if result.returncode == 0:
+                return {
+                    "status": "sent",
+                    "reason": "delivered_via_openclaw_agent",
+                    "method": "openclaw_agent",
+                    "stdout": result.stdout[:500] if result.stdout else "",
+                }
+            else:
+                return {
+                    "status": "failed",
+                    "reason": f"openclaw_agent_exit_{result.returncode}",
+                    "error": result.stderr[:300] if result.stderr else "unknown error",
+                    "method": "openclaw_agent",
+                }
+        
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "failed",
+                "reason": "openclaw_agent_timeout",
+                "error": "Command timed out after 120s",
+            }
+        except FileNotFoundError:
+            return {
+                "status": "failed",
+                "reason": "openclaw_binary_not_found",
+                "error": f"Cannot find openclaw binary at {self.openclaw_bin}",
+            }
+        except Exception as e:
+            return {
+                "status": "failed",
+                "reason": f"unexpected_error: {type(e).__name__}",
+                "error": str(e),
+            }
+    
+    def _format_message(self, payload: AlertPayload) -> str:
+        """格式化消息文本。"""
+        emoji_map = {
+            "buy_watch": "👀",
+            "sell_watch": "⚠️",
+            "hold_watch": "📊",
+            "candidate_new": "🆕",
+            "candidate_update": "🔄",
+            "candidate_remove": "❌",
+            "gate_pass": "✅",
+            "gate_fail": "❌",
+            "gate_conditional": "🟡",
+        }
+        emoji = emoji_map.get(payload.signal_type, "📋")
+        
+        return f"""交易提醒
+
+- 候选 ID: {payload.candidate_id}
+- 标的：{payload.symbol}
+- 类型：{payload.signal_type}
+- 原因：{payload.reason}
+- 时间：{payload.timestamp}
+
+Metadata: {json.dumps(payload.metadata, ensure_ascii=False)}"""
+
+
+# =============================================================================
+# Alert Payload 和 SendResult
+# =============================================================================
 
 @dataclass
 class AlertPayload:
@@ -200,12 +463,25 @@ class TradingAlertSender:
         enable_dedup: bool = True,
         enable_throttle: bool = True,
         dry_run: bool = False,
+        delivery_adapter: Optional[AlertDeliveryAdapter] = None,
     ):
+        """
+        初始化 TradingAlertSender。
+        
+        Args:
+            throttle_window_seconds: 节流窗口（秒）
+            max_alerts_per_window: 每窗口最大发送数
+            enable_dedup: 启用去重
+            enable_throttle: 启用节流
+            dry_run: 干跑模式（安全开关）
+            delivery_adapter: 发送适配器（默认 FileDeliveryAdapter）
+        """
         self.throttle_window_seconds = throttle_window_seconds
         self.max_alerts_per_window = max_alerts_per_window
         self.enable_dedup = enable_dedup
         self.enable_throttle = enable_throttle
         self.dry_run = dry_run
+        self.delivery_adapter = delivery_adapter or FileDeliveryAdapter()
         _ensure_dirs()
     
     def _load_throttle_state(self) -> Dict[str, Any]:
@@ -340,59 +616,14 @@ class TradingAlertSender:
     
     def _deliver_message(self, payload: AlertPayload) -> Dict[str, Any]:
         """
-        发送消息（真实发送逻辑）。
+        发送消息（使用配置的适配器）。
         
-        当前实现：写入文件作为 Mock，后续可替换为真实 Discord API。
+        支持：
+        - FileDeliveryAdapter: 写入文件（Mock/降级）
+        - OpenClawAgentDeliveryAdapter: 通过 openclaw agent --deliver 发送
+        - 自定义适配器
         """
-        if self.dry_run:
-            return {"status": "dry_run", "reason": "dry_run_enabled"}
-        
-        # 当前实现：写入通知文件（与 task-callback-bus 兼容）
-        notification_file = ALERT_LOG_DIR / f"{payload.alert_id}.json"
-        notification_data = {
-            "alert_id": payload.alert_id,
-            "channel": payload.delivery.get("channel", "discord"),
-            "reply_to": payload.delivery.get("reply_to", ""),
-            "message": self._format_message(payload),
-            "timestamp": payload.timestamp,
-            "payload": payload.to_dict(),
-        }
-        
-        tmp_file = notification_file.with_suffix(".tmp")
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(notification_data, f, ensure_ascii=False, indent=2)
-        tmp_file.replace(notification_file)
-        
-        return {
-            "status": "sent",
-            "reason": "delivered_to_file",
-            "file": str(notification_file),
-        }
-    
-    def _format_message(self, payload: AlertPayload) -> str:
-        """格式化消息文本"""
-        emoji_map = {
-            "buy_watch": "👀",
-            "sell_watch": "⚠️",
-            "hold_watch": "📊",
-            "candidate_new": "🆕",
-            "candidate_update": "🔄",
-            "candidate_remove": "❌",
-            "gate_pass": "✅",
-            "gate_fail": "❌",
-            "gate_conditional": "🟡",
-        }
-        emoji = emoji_map.get(payload.signal_type, "📋")
-        
-        return f"""{emoji} 交易提醒
-
-- 候选 ID: {payload.candidate_id}
-- 标的：{payload.symbol}
-- 类型：{payload.signal_type}
-- 原因：{payload.reason}
-- 时间：{payload.timestamp}
-
-Metadata: {json.dumps(payload.metadata, ensure_ascii=False)}"""
+        return self.delivery_adapter.deliver(payload, dry_run=self.dry_run)
     
     def send_candidate_alert(
         self,
@@ -518,15 +749,44 @@ def send_alert(
     reason: str,
     metadata: Optional[Dict[str, Any]] = None,
     dry_run: bool = False,
+    delivery_adapter: Optional[AlertDeliveryAdapter] = None,
 ) -> SendResult:
-    """便捷发送函数"""
-    sender = TradingAlertSender(dry_run=dry_run)
+    """
+    便捷发送函数。
+    
+    Args:
+        candidate_id: 候选 ID
+        signal_type: 信号类型
+        symbol: 标的代码
+        reason: 触发原因
+        metadata: 额外元数据
+        dry_run: 干跑模式
+        delivery_adapter: 发送适配器（默认 FileDeliveryAdapter）
+    """
+    sender = TradingAlertSender(dry_run=dry_run, delivery_adapter=delivery_adapter)
     return sender.send_candidate_alert(
         candidate_id=candidate_id,
         signal_type=signal_type,
         symbol=symbol,
         reason=reason,
         metadata=metadata,
+    )
+
+
+def create_openclaw_adapter(
+    agent_id: str = "main",
+    default_channel: str = "discord",
+) -> OpenClawAgentDeliveryAdapter:
+    """
+    创建 OpenClaw 原生消息适配器。
+    
+    Usage:
+        adapter = create_openclaw_adapter()
+        sender = TradingAlertSender(delivery_adapter=adapter, dry_run=False)
+    """
+    return OpenClawAgentDeliveryAdapter(
+        agent_id=agent_id,
+        default_channel=default_channel,
     )
 
 
@@ -540,8 +800,22 @@ if __name__ == "__main__":
     parser.add_argument("--signal-type", default="buy_watch", help="Signal type")
     parser.add_argument("--symbol", default="000001.SZ", help="Symbol")
     parser.add_argument("--reason", default="测试提醒", help="Reason")
+    parser.add_argument(
+        "--adapter",
+        choices=["file", "openclaw"],
+        default="file",
+        help="Delivery adapter (default: file)",
+    )
     
     args = parser.parse_args()
+    
+    # 创建适配器
+    if args.adapter == "openclaw":
+        adapter = create_openclaw_adapter()
+        print(f"Using OpenClaw adapter (agent=main, channel=discord)")
+    else:
+        adapter = FileDeliveryAdapter()
+        print(f"Using File adapter (mock mode)")
     
     result = send_alert(
         candidate_id=args.candidate_id,
@@ -549,6 +823,12 @@ if __name__ == "__main__":
         symbol=args.symbol,
         reason=args.reason,
         dry_run=args.dry_run,
+        delivery_adapter=adapter,
     )
     
-    print(f"Alert sent: {result.to_dict()}")
+    print(f"\nAlert result: {result.to_dict()}")
+    
+    if result.delivered or result.dedup_skipped or result.throttle_skipped:
+        print("\n✅ Alert processed successfully")
+    else:
+        print(f"\n⚠️ Alert not delivered: {result.error}")

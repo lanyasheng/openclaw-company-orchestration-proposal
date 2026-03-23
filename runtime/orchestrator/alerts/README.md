@@ -201,12 +201,79 @@ def process_trading_roundtable_callback(...):
     )
 ```
 
+## 发送适配器
+
+当前支持两种发送方式：
+
+### 1. FileDeliveryAdapter（默认）
+写入文件作为 Mock，用于测试和降级：
+```python
+from orchestrator.alerts import TradingAlertSender, FileDeliveryAdapter
+
+sender = TradingAlertSender(
+    delivery_adapter=FileDeliveryAdapter(),
+    dry_run=False
+)
+```
+
+### 2. OpenClawAgentDeliveryAdapter（真实发送）
+通过 `openclaw agent --deliver` 发送真实 Discord 消息。
+
+**前提条件**：
+- Gateway 必须运行中 (`openclaw gateway status`)
+- Discord 频道必须已配置并授权 (`openclaw channels list`)
+- 发送可能超时（120s），建议先在测试环境验证
+
+```python
+from orchestrator.alerts import TradingAlertSender, create_openclaw_adapter
+
+# 创建 OpenClaw 适配器
+adapter = create_openclaw_adapter(agent_id="main", default_channel="discord")
+
+# 使用适配器（建议先用 dry_run=True 测试）
+sender = TradingAlertSender(
+    delivery_adapter=adapter,
+    dry_run=False  # 关闭干跑模式
+)
+
+result = sender.send_candidate_alert(
+    candidate_id="candidate_001",
+    signal_type="buy_watch",
+    symbol="000001.SZ",
+    reason="趋势反转 + 量价共振"
+)
+
+if result.delivered:
+    print(f"✅ Alert sent via OpenClaw: {result.alert_id}")
+elif result.error:
+    print(f"❌ Alert failed: {result.error}")
+    # 常见错误：
+    # - openclaw_agent_timeout: Gateway 响应超时，检查 Gateway 状态
+    # - openclaw_binary_not_found: openclaw CLI 路径不对
+    # - openclaw_agent_exit_1: Gateway 返回错误，检查日志
+```
+
+### 发送状态对比
+
+| 状态 | 说明 | 处理方式 |
+|------|------|---------|
+| `delivered=True` | 发送成功 | 正常继续 |
+| `dedup_skipped=True` | 被去重跳过 | 预期行为，无需处理 |
+| `throttle_skipped=True` | 被节流跳过 | 预期行为，无需处理 |
+| `error=...` | 发送失败 | 检查错误原因，必要时降级到 File 适配器 |
+
+### 适配器对比
+
+| 适配器 | 发送方式 | 使用场景 |
+|--------|---------|---------|
+| `FileDeliveryAdapter` | 写入文件 | 本地测试、降级、审计 |
+| `OpenClawAgentDeliveryAdapter` | `openclaw agent --deliver` | 真实 Discord 消息 |
+
 ## 未来扩展
 
-1. **真实 Discord 发送**：当前实现写入文件，可替换为真实 Discord API
-2. **多频道支持**：支持 Telegram、Slack 等
-3. **优先级队列**：支持 alert 优先级排序
-4. **批量发送**：支持批量 alert 聚合发送
+1. **多频道支持**：支持 Telegram、Slack 等
+2. **优先级队列**：支持 alert 优先级排序
+3. **批量发送**：支持批量 alert 聚合发送
 
 ## 版本
 
