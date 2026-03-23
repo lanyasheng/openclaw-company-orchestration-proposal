@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from contracts import build_canonical_callback_envelope
+from partial_continuation import ContinuationContract, build_continuation_contract
 
 
 TERMINAL_DONE_STATUSES = {"likely_done", "done_session_ended"}
@@ -254,9 +255,24 @@ def build_tmux_terminal_receipt(
         report_exists=report_exists,
     )
 
+    # P0-1 Batch 2: Use unified ContinuationContract
     contract = dispatch.get("orchestration_contract") if isinstance(dispatch.get("orchestration_contract"), dict) else {}
     next_owner = str(contract.get("owner") or dispatch.get("adapter") or "main")
     next_step = derive_next_step(dispatch_readiness=dispatch_readiness, dispatch=dispatch)
+    
+    # Build unified continuation contract
+    continuation = build_continuation_contract(
+        stopped_because=stopped_because,
+        next_step=next_step,
+        next_owner=next_owner,
+        metadata={
+            "dispatch_readiness": dispatch_readiness,
+            "terminal_state": terminal_state,
+            "tmux_status": tmux_status,
+            "report_exists": report_exists,
+        },
+    )
+    
     summary = derive_summary(
         terminal_state=terminal_state,
         report_exists=report_exists,
@@ -277,6 +293,9 @@ def build_tmux_terminal_receipt(
         "tmux_status": tmux_status,
         "terminal_state": terminal_state,
         "summary": summary,
+        # P0-1 Batch 2: Include unified continuation contract
+        "continuation_contract": continuation.to_dict(),
+        # Keep individual fields for backward compatibility
         "stopped_because": stopped_because,
         "next_step": next_step,
         "next_owner": next_owner,
@@ -308,6 +327,25 @@ def build_tmux_terminal_receipt(
 
 
 def _derived_closeout(receipt: Dict[str, Any], source: str) -> Dict[str, Any]:
+    """
+    Derive closeout from receipt.
+    
+    P0-1 Batch 2: Prefer unified continuation_contract if available,
+    fall back to individual fields for backward compatibility.
+    """
+    # Try to use unified continuation contract first
+    if isinstance(receipt.get("continuation_contract"), dict):
+        cont = receipt["continuation_contract"]
+        return {
+            "stopped_because": cont.get("stopped_because") or receipt.get("stopped_because"),
+            "next_step": cont.get("next_step") or receipt.get("next_step"),
+            "next_owner": cont.get("next_owner") or receipt.get("next_owner"),
+            "dispatch_readiness": receipt.get("dispatch_readiness"),
+            "continuation_contract": cont,
+            "business_payload_source": source,
+        }
+    
+    # Fallback to individual fields
     return {
         "stopped_because": receipt.get("stopped_because"),
         "next_step": receipt.get("next_step"),
