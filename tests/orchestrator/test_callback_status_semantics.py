@@ -58,7 +58,7 @@ def validate_case(case: dict) -> None:
 class CallbackStatusSemanticsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        repo_root = Path(__file__).resolve().parent.parent
+        repo_root = Path(__file__).resolve().parents[2]
         examples_path = repo_root / "examples" / "callback-status-transitions.json"
         cls.payload = json.loads(examples_path.read_text(encoding="utf-8"))
 

@@ -20,7 +20,7 @@ from orchestration_runtime import (
     load_json_file,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAIN_WORKFLOW_PATH = REPO_ROOT / "examples" / "workflows" / "chain-basic.scheduler.json"
 
 

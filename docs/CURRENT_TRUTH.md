@@ -13,7 +13,7 @@
 1. **首次了解** → `../README.md`(仓库总览 + 快速开始)
 2. **5 分钟版本** → `executive-summary.md`
 3. **当前真值** → 本页(`CURRENT_TRUTH.md`)
-4. **其他频道 quickstart** → `quickstart-other-channels.md`(非 trading 场景)
+4. **其他频道 quickstart** → [`quickstart/quickstart-other-channels.md`](quickstart/quickstart-other-channels.md)(非 trading 场景)
 5. **完整方案** → `executive-summary.md`
 
 ### Runtime 入口
@@ -162,7 +162,7 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 这轮 canonical 计划入口改为:
 
-1. `overall-plan.md` - 当前真值 + P0/P1/P2 计划 + 明确边界
+1. [`plans/overall-plan.md`](plans/overall-plan.md) - 当前真值 + P0/P1/P2 计划 + 明确边界
 2. `p0-execution-backlog-2026-03-21.md` - P0 第一批执行清单、顺序与 cut line
 3. `roadmap.md` - 按阶段展开的最小路线图
 4. `validation-status.md` - 已验证 / 未验证边界
@@ -379,7 +379,7 @@ V8 Execute Mode + Auto-Trigger 功能验证
    ```
 
 4. **技术债务收口**:
-   - `docs/technical-debt-2026-03-22.md`: 收敛已知优化点（trading_roundtable 拆分 / 模块收口 / 文档去重等）
+   - [`technical-debt/technical-debt-2026-03-22.md`](technical-debt/technical-debt-2026-03-22.md): 收敛已知优化点（trading_roundtable 拆分 / 模块收口 / 文档去重等）
 
 **交付物示例**:
 - Executed artifact: `consumed_abc123` with `consumer_status=executed`
@@ -388,8 +388,9 @@ V8 Execute Mode + Auto-Trigger 功能验证
 
 **详细文档**: 
 - `archive/old-docs/partial-continuation-kernel-v8.md`（已归档，历史参考）
-- `docs/technical-debt-2026-03-22.md`
+- [`technical-debt/technical-debt-2026-03-22.md`](technical-debt/technical-debt-2026-03-22.md)
 
 ---
 
 > **详细演进历史**：各版本 kernel 的详细设计文档见各模块源码的 docstring。
+的 docstring。

@@ -240,7 +240,7 @@ backend = normalize_dispatch_backend(dispatch.get("backend"))
 - Example commands show both backends
 - Both paths are fully functional
 
-**From `technical-debt-2026-03-22.md`**:
+**From [`../technical-debt/technical-debt-2026-03-22.md`](../technical-debt/technical-debt-2026-03-22.md)**:
 - Section 0.5-0.9 document each batch
 - Clear rationale for dual-track strategy
 

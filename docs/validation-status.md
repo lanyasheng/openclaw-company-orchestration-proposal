@@ -31,7 +31,7 @@
 
 | 主题 | 当前结论 | 证据位置 |
 |------|----------|----------|
-| terminal != sent != acked | 成立 | `docs/validation/p0-5-callback-status.md`、`tests/test_callback_status_semantics.py` |
+| terminal != sent != acked | 成立 | `docs/validation/p0-5-callback-status.md`、`tests/orchestrator/test_callback_status_semantics.py` |
 | callback plane 需要幂等 | 成立 | `docs/validation/p0-6-callback-integration.md` |
 
 **结论**：task 终态与消息投递终态不能混成一个字段。

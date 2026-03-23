@@ -268,12 +268,12 @@ Read:
 
 ### If you want the release / publishing material
 Read:
-- [`docs/open-source-release-kit.md`](docs/open-source-release-kit.md)
+- [`docs/release/open-source-release-kit.md`](docs/release/open-source-release-kit.md)
 
 ### If you want the current migration / retention boundary
 Read:
-- [`docs/migration-retirement-plan.md`](docs/migration-retirement-plan.md)
-- [`docs/technical-debt-2026-03-22.md`](docs/technical-debt-2026-03-22.md)
+- [`docs/migration/migration-retirement-plan.md`](docs/migration/migration-retirement-plan.md)
+- [`docs/technical-debt/technical-debt-2026-03-22.md`](docs/technical-debt/technical-debt-2026-03-22.md)
 
 ---
 

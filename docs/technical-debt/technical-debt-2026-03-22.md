@@ -381,7 +381,7 @@ python3 -m pytest tests/orchestrator/ -v --tb=short
 
 #### 交付文档
 
-- `docs/migration-retirement-plan.md` → 更名为双轨策略文档
+- [`../migration/migration-retirement-plan.md`](../migration/migration-retirement-plan.md) → 更名为双轨策略文档
 - `docs/CURRENT_TRUTH.md` - 更新 V10 双轨策略状态
 - `runtime/orchestrator/README.md` - Backend Policy 已更新
 - `runtime/orchestrator/continuation_backends.py` - 代码注释已更新
