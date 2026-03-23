@@ -6,18 +6,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Protocol
 
-# P0-3 Batch 4 (2026-03-23): BACKEND POLICY UPDATE
-# - 'subagent' backend: PRIMARY AND DEFAULT recommended backend for ALL new development
-# - 'tmux' backend: COMPATIBILITY-ONLY legacy path retained for EXISTING production dispatches
-#   DO NOT USE tmux backend for new development; migrate existing dispatches to subagent
+# ============ Dual-Track Backend Strategy (2026-03-23) ============
 #
-# P0-3 Batch 2 + Batch 3: Legacy compatibility note
-# - 'subagent' backend: Primary live path for trading continuation (2026-03-23)
-# - 'tmux' backend: Legacy compatibility layer for observable sessions; retained for backward compatibility
-#   but new development should prefer subagent backend with runner-based observation
-# P0-3 Batch 3 (2026-03-23): tmux bridge commands `describe`, `capture`, `attach` are deprecated
-#   due to low usage. Core commands (`prepare`, `start`, `status`, `receipt`, `complete`) remain supported.
+# SUPPORTED BACKENDS:
+# - 'subagent': DEFAULT backend for automated execution, CI/CD, new development
+# - 'tmux': FULLY SUPPORTED backend for interactive sessions, manual observation
 #
+# BOTH BACKENDS ARE RETAINED INDEFINITELY - no breaking removal planned.
+#
+# P0-3 Batch 4 (2026-03-23): Documented backend policy.
+# P0-3 Batch 5 (2026-03-23): Clarified default path while retaining tmux support.
 # P0-3 Batch 6 (2026-03-23): Generic lifecycle kernel — extract backend-agnostic watchdog/lifecycle logic
 # - Move tmux-specific status constants to tmux_terminal_receipts.py
 # - Add GenericBackendStatus enum for backend-agnostic lifecycle states
@@ -381,24 +379,22 @@ def build_backend_plan(
     task_preview_q = shlex.quote(task_preview)
 
     if normalized_backend == "subagent":
-        # P0-3 Batch 4 (2026-03-23): subagent is PRIMARY recommended backend
-        # P0-3 Batch 5 (2026-03-23): Reinforced - subagent is the ONLY default path for new development
+        # Dual-Track Strategy (2026-03-23): subagent is DEFAULT backend
         return {
             "backend": "subagent",
             "mode": "tool_managed_non_interactive",
             "observable_intermediate_state": False,
             "notes": [
-                "PRIMARY RECOMMENDED BACKEND: Use sessions_spawn(runtime=\"subagent\") with recommended_spawn.task.",
+                "DEFAULT BACKEND: Use sessions_spawn(runtime=\"subagent\") with recommended_spawn.task.",
                 "Progress is primarily observed via runner artifacts (status.json, final-summary.json, final-report.md).",
-                "For new development, ALWAYS prefer subagent backend over tmux backend.",
-                "P0-3 Batch 5: This is the ONLY default path for new dispatches.",
+                "Recommended for: automated execution, CI/CD, new development.",
+                "Dual-Track: tmux backend also fully supported for interactive scenarios.",
             ],
         }
 
-    # P0-3 Batch 5 (2026-03-23): COMPATIBILITY-ONLY LEGACY PATH
-    # This tmux backend plan is retained ONLY for existing production dispatches that have not yet migrated.
-    # DO NOT USE for new development. All new dispatches MUST use subagent backend.
-    # Migration path: existing tmux dispatches should be migrated to subagent backend at next opportunity.
+    # Dual-Track Strategy (2026-03-23): tmux is FULLY SUPPORTED backend
+    # Retained for: interactive sessions, manual observation, debugging
+    # Both backends coexist indefinitely - no breaking removal planned.
     label = _slugify([adapter, scenario, batch_id, dispatch_id.split("_")[-1]])[:48].strip("-") or "dispatch"
     session = f"cc-{label}"
     prompt_file = Path("/tmp") / f"{session}-dispatch-ref.md"
@@ -422,25 +418,22 @@ def build_backend_plan(
             "monitor_tmux_task": str(TMUX_MONITOR_SCRIPT),
         },
         "commands": {
-            # P0-3 Batch 5: Only core lifecycle commands retained for migration path
+            # Core lifecycle commands for tmux backend
             "prepare": f"python3 scripts/orchestrator_dispatch_bridge.py prepare --dispatch {dispatch_q}",
             "start": f"python3 scripts/orchestrator_dispatch_bridge.py start --dispatch {dispatch_q}",
             "status": f"python3 scripts/orchestrator_dispatch_bridge.py status --dispatch {dispatch_q}",
             "receipt": f"python3 scripts/orchestrator_dispatch_bridge.py receipt --dispatch {dispatch_q}",
             "complete": f"python3 scripts/orchestrator_dispatch_bridge.py complete --dispatch {dispatch_q} --task-id <tmux-task-id>",
-            # P0-3 Batch 5: Deprecated commands removed - use subagent backend instead
-            # P0-3 Batch 6: watchdog command removed from backend_plan - integrated into kernel
-            # "start_dry_run": ...,
-            # "capture": ...,  # Deprecated - low usage
-            # "attach": ...,   # Deprecated - low usage
-            # "watchdog": ..., # Internal use only - now part of continuation kernel
+            # Additional tmux utilities (available but not in default plan)
+            # "capture": ...,  # tmux pane observation
+            # "attach": ...,   # tmux session attachment
+            # "watchdog": ..., # Lifecycle monitoring (integrated into kernel)
         },
         "notes": [
-            "COMPATIBILITY-ONLY LEGACY BACKEND: Retained ONLY for existing production tmux dispatches awaiting migration.",
-            "DO NOT USE for new development - ALL new dispatches MUST use subagent backend.",
-            "Migration required: existing tmux dispatches should migrate to subagent at next opportunity.",
-            "tmux backend provides interactive session separate from OpenClaw runtime process.",
+            "FULLY SUPPORTED BACKEND: tmux provides interactive sessions separate from OpenClaw runtime process.",
+            "Recommended for: interactive debugging, manual observation, live monitoring.",
             "tmux STATUS/completion report are diagnostic only; business closeout requires canonical callback bridge.",
+            "Dual-Track: Both subagent and tmux backends are supported indefinitely.",
             "P0-3 Batch 6: Watchdog/lifecycle logic now in continuation kernel (continuation_backends.py).",
         ],
     }

@@ -43,29 +43,27 @@ python3 cli.py stuck [--timeout 60]
 
 ---
 
-## Backend Policy (P0-3 Batch 5, 2026-03-23)
+## Backend Policy (Dual-Track Strategy, 2026-03-23)
 
-**Default Backend**: `subagent` (PRIMARY AND RECOMMENDED - ONLY DEFAULT FOR NEW DEVELOPMENT)
+**Supported Backends**: `subagent` (DEFAULT) and `tmux` (FULLY SUPPORTED)
 
 ```python
-# Recommended: subagent backend with runner-based observation
+# Default: subagent backend (recommended for automated execution)
 from continuation_backends import normalize_dispatch_backend
-backend = normalize_dispatch_backend("subagent")  # DEFAULT - ONLY PATH FOR NEW DEVELOPMENT
+backend = normalize_dispatch_backend("subagent")  # DEFAULT
 
-# Legacy compat-only: tmux backend for EXISTING production dispatches awaiting migration
-# DO NOT USE for new development - migration required at next opportunity
-backend = normalize_dispatch_backend("tmux")  # COMPAT-ONLY - MIGRATION REQUIRED
+# Also fully supported: tmux backend (for interactive/observable sessions)
+backend = normalize_dispatch_backend("tmux")  # FULLY SUPPORTED
 ```
 
-**P0-3 Batch 4 (2026-03-23)**: Marked tmux as COMPAT-ONLY, subagent as PRIMARY.
+**P0-3 Batch 4 (2026-03-23)**: Documented backend policy.
 
-**P0-3 Batch 5 (2026-03-23)**: 
-- Removed tmux example commands from operator-facing documentation
-- Minimized tmux backend_plan command surface (removed deprecated commands)
-- Reinforced subagent as the ONLY default path for new development
-- All entry points now clearly recommend subagent
+**P0-3 Batch 5 (2026-03-23)**: Clarified default path while retaining tmux support.
 
-**Migration Path**: All existing tmux dispatches MUST migrate to subagent backend. tmux backend is retained ONLY for legacy dispatches awaiting migration.
+**Dual-Track Strategy**: 
+- **subagent**: Default for new development, automated execution, CI/CD
+- **tmux**: Fully supported for interactive sessions, manual observation, debugging
+- **Both backends retained indefinitely** - no breaking removal planned
 
 ---
 
