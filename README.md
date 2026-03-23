@@ -139,6 +139,184 @@ That is why this repo should be read as:
 
 ---
 
+## 中文速览
+
+如果只用中文讲一句，这个仓库在做的是：
+
+> **在 OpenClaw 之上补一层 workflow control plane，让多 agent / 多执行器 / 多轮回调的任务不会“做完一跳就停”，而是能按 contract 继续注册、判断、派发、执行、回流。**
+
+它不是在解决“模型会不会回答”，而是在解决：
+- 任务做完后谁接下一步
+- 多个子任务回来后怎么统一收口
+- 什么时候应该自动继续，什么时候应该停在 gate
+- 怎么把 owner、executor、callback、receipt、dispatch 分开，不让系统变成一堆脚本
+
+今天这套仓库的实际定位是：
+- **默认执行路径**：subagent
+- **兼容执行路径**：tmux
+- **默认 coding lane**：Claude Code
+- **首个真实验证场景**：trading continuation
+
+---
+
+## How it actually works
+
+### 1. Layering: control plane above execution
+
+```text
+┌──────────────────────────────────────────────────────┐
+│ Business scenarios                                  │
+│ trading / channel / future domain adapters          │
+└──────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────────┐
+│ Control plane                                        │
+│ contract / planning / registration / readiness      │
+│ callback / receipt / dispatch / continuation        │
+└──────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────────┐
+│ Execution layer                                      │
+│ subagent / Claude Code / tmux / browser / message   │
+└──────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────────┐
+│ OpenClaw runtime foundation                          │
+│ sessions / tools / hooks / channels / messaging     │
+└──────────────────────────────────────────────────────┘
+```
+
+The important boundary is:
+- the **control plane** decides what happens next,
+- the **execution layer** runs the next step,
+- and the runtime foundation provides the primitives.
+
+### 2. Single-task continuation loop
+
+```text
+request
+  ↓
+planning artifact
+  ↓
+handoff contract
+  ↓
+registration
+  ↓
+readiness + safety_gates + truth_anchor
+  ↓
+dispatch decision
+  ├─ skipped / blocked / wait_at_gate
+  └─ triggered
+       ↓
+execution request
+       ↓
+real execution (subagent / Claude Code / tmux)
+       ↓
+completion receipt
+       ↓
+next decision
+```
+
+This is the core idea of the repository:
+**a task is not finished when execution stops; it is finished when the next-step state is made explicit.**
+
+### 3. Fan-out / fan-in / next-batch progression
+
+```text
+parent task
+  ↓
+fan-out plan
+  ├─ child A
+  ├─ child B
+  └─ child C
+
+child receipts return
+  ├─ A = done
+  ├─ B = blocked
+  └─ C = done
+
+fan-in aggregation
+  ↓
+aggregate readiness / blockers / ownership
+  ↓
+next batch decision
+  ├─ trigger next batch
+  ├─ stop at gate
+  └─ request human/business decision
+```
+
+The point is not just parallel execution.
+The point is having a **truthful aggregation point** before deciding the next batch.
+
+### 4. Owner vs executor
+
+```text
+owner      = who owns the business judgment
+executor   = who actually performs the work
+
+examples:
+- owner=trading, executor=claude_code
+- owner=main, executor=subagent
+- owner=content, executor=tmux
+```
+
+This repo explicitly decouples the two.
+That is why coding lanes can default to Claude Code without making every business-role agent become the executor.
+
+### 5. What is inside the contract
+
+At a practical level, the contract usually carries:
+- entry context
+- adapter / scenario
+- owner
+- executor / execution_profile
+- continuation fields (`stopped_because`, `next_step`, `next_owner`)
+- readiness / safety_gates / truth_anchor
+- handoff / registration / execution intent
+
+That is what allows the system to do more than just “reply that it will continue.”
+It must produce a machine-consumable next-step object.
+
+---
+
+## Why we did not just adopt an existing framework
+
+This repo borrows a lot, but it does not simply wrap one upstream framework because the problem is not only "how to run one agent well".
+It is also:
+- how to route across scenarios,
+- how to preserve business ownership,
+- how to fan out and fan in,
+- how to gate continuation,
+- and how to keep user-visible completion aligned with internal truth.
+
+### Framework boundary summary
+
+| Framework / approach | What we borrow | Why we do not make it the backbone |
+|---|---|---|
+| **OpenClaw native** | runtime primitives, sessions, hooks, messaging | This *is* the foundation, not the thing we replace |
+| **Temporal** | durable workflow thinking, retries, lifecycle semantics | Too heavy to make the default backbone at current stage |
+| **LangGraph** | graph transitions, composable reasoning flow | Better as leaf-level reasoning structure than company-wide control plane |
+| **DeepAgents** | execution profile design, delegation style, context hygiene | Useful for execution lanes, not enough for full workflow control plane |
+| **OpenSWE / SWE-agent** | issue-to-patch lanes, execution envelopes | Useful as leaf engineering lanes, not enough for routing / callback / fan-in governance |
+| **tmux-based orchestration** | observability and intervention surface | Good as a compatibility backend, not as the default long-term control path |
+
+### The practical decision
+
+So the actual design choice is:
+- use **OpenClaw** as the runtime foundation,
+- keep a thin but explicit **control plane** in this repo,
+- let **subagent / Claude Code / tmux** stay execution choices,
+- and only adopt heavier frameworks in narrow places where they actually help.
+
+That is why this repository is best understood as:
+
+> **an execution-aware orchestration control plane, not a framework wrapper.**
+
+---
+
 ## What we are doing
 
 At a high level, this repo is building a company-grade workflow layer for AI agents.
