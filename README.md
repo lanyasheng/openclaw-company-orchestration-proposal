@@ -138,6 +138,30 @@ Lobster-like workflow-shell ideas influenced:
 - invoke bridges,
 - and explicit workflow contracts.
 
+### DeepAgents
+DeepAgents influenced the thinking around:
+- execution profiles for coding-heavy agent work,
+- clearer separation between orchestration policy and leaf execution behavior,
+- observable long-running agent work,
+- and keeping agent execution practical before introducing heavier infrastructure.
+
+But this repo does **not** treat DeepAgents as the company-wide control plane.
+It is closer to a reference point for execution patterns and evaluation, not the orchestration backbone.
+
+### OpenSWE / SWE-agent style systems
+OpenSWE- and SWE-agent-like systems influenced the thinking around:
+- issue-to-patch lanes,
+- engineering-task packaging,
+- reproducible execution envelopes,
+- and how coding agents can be plugged into a larger workflow.
+
+But here they are treated as:
+- leaf execution inspirations,
+- benchmarking references,
+- or future narrow lanes,
+
+not as the main workflow control plane for the company.
+
 ### Practical production debugging
 A lot of the shape of this repo came from real problems:
 - tasks completing without visible user acknowledgement,
@@ -157,6 +181,8 @@ To understand the repo, it is equally important to say what it is **not**:
 - It is **not** trying to replace OpenClaw.
 - It is **not** a LangGraph wrapper.
 - It is **not** a Temporal deployment template.
+- It is **not** a DeepAgents fork.
+- It is **not** an OpenSWE / SWE-agent replacement.
 - It is **not** just a trading bot repo.
 - It is **not** a pile of isolated POCs anymore.
 
