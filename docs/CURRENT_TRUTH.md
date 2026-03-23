@@ -237,6 +237,8 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - ✅ **通用 kernel**: adapter-agnostic design，trading 仅作为首个消费者
 - ✅ **状态扩展**: `prepared | consumed | executed | failed | blocked | pending | started`
 - ✅ **技术债务收口**: `docs/technical-debt-2026-03-22.md` 已创建
+- ✅ **P0-3 Batch 2**: Legacy runtime cleanup — deprecation markers + fix non-existent stop command (2026-03-23)
+- ✅ **P0-3 Batch 3**: Legacy command deprecation — mark describe/capture/attach as deprecated (2026-03-23)
 - ⚠️ **CLI Integration**: 当前优先 mock Python API call，OpenClaw CLI 集成需确认 `openclaw sessions_spawn` 命令
 - ⚠️ **Auto-trigger 配置**: 使用本地 JSON 文件，缺少版本控制（见 technical debt D5）
 - ❌ 不等于"全域全自动无人续跑"

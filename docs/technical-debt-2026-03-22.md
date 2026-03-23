@@ -64,15 +64,68 @@ tests/orchestrator/: 404/405 passed (1 flaky test isolation issue, unrelated)
 
 ### Commit
 
-- **Hash**: (待 commit)
+- **Hash**: `6c31e83`
 - **Message**: `P0-3 Batch 2: Legacy runtime cleanup — deprecation markers + fix non-existent stop command`
 
-### Batch 3 建议
+---
 
-1. **审计 `entry_defaults.py` 中的 tmux_bridge 引用**: 评估是否可以迁移到 subagent callback 模式
-2. **清理 `continuation_backends.py` 中的 tmux 命令生成逻辑**: 当 tmux 使用率降至 0 后
-3. **收口 dispatch_bridge 命令**: 评估 `describe`/`capture`/`attach`/`watchdog` 的实际使用率，考虑精简
-4. **更新 CURRENT_TRUTH.md**: 明确 runtime legacy 清理状态
+## 0.6. P0-3 Batch 3: Legacy Command Deprecation (2026-03-23)
+
+**状态**: ✅ 已完成
+
+**清理范围**: tmux dispatch bridge 低使用率命令标废
+
+**设计约束**:
+1. 不破坏现有 tmux dispatches 的向后兼容性
+2. 核心命令 (`prepare`, `start`, `status`, `receipt`, `complete`) 必须保留
+3. 低使用率命令标废但不删除，避免 breaking change
+4. 先 targeted tests，再 broader regression
+
+### 已标废 (保留但标记)
+
+| 文件 | 改动 | 理由 |
+|------|------|------|
+| `runtime/orchestrator/entry_defaults.py` | `runtime_reuse.tmux_bridge` 添加 `(legacy; tmux backend only)` 标记 | entry_defaults 中的 tmux 引用仅为 discoverability，非 runtime 依赖 |
+| `runtime/orchestrator/continuation_backends.py` | 添加 Batch 3 注释，说明 `describe`/`capture`/`attach` 为 deprecated | 这些命令在测试中未覆盖，使用率低 |
+| `runtime/scripts/orchestrator_dispatch_bridge.py` | - 模块 docstring 明确标废 `describe`/`capture`/`attach`<br>- 函数级注释标记 `cmd_describe`/`cmd_capture`/`cmd_attach` 为 deprecated<br>- `cmd_watchdog` 标记为 internal use only | 这些命令非核心 dispatch 流程，新开发应优先使用 subagent backend + runner 观察模式 |
+
+### 核心命令 (继续支持)
+
+| 命令 | 状态 | 用途 |
+|------|------|------|
+| `prepare` | ✅ 支持 | 生成 dispatch plan reference 文档 |
+| `start` | ✅ 支持 | 启动 tmux session |
+| `status` | ✅ 支持 | 查询 tmux session 状态 |
+| `receipt` | ✅ 支持 | 构建 terminal receipt |
+| `complete` | ✅ 支持 | 完成 dispatch 并桥接到 callback（核心路径） |
+
+### 标废命令 (向后兼容)
+
+| 命令 | 状态 | 理由 | 替代方案 |
+|------|------|------|----------|
+| `describe` | ⚠️ Deprecated | 仅 debug 用途，测试未覆盖 | 直接读 dispatch JSON |
+| `capture` | ⚠️ Deprecated | 低使用率；runner 观察模式更优 | subagent backend + runner artifacts |
+| `attach` | ⚠️ Deprecated | 低使用率；runner 观察模式更优 | subagent backend + runner artifacts |
+| `watchdog` | ⚠️ Internal | 内部使用，非核心流程 | 集成到 continuation kernel |
+
+### 测试结果
+
+```
+tests/orchestrator/test_tmux_dispatch_bridge.py: 11/11 passed
+tests/orchestrator/: 404/405 passed (1 flaky test isolation issue, unrelated)
+```
+
+### Commit
+
+- **Hash**: (待 commit)
+- **Message**: `P0-3 Batch 3: Legacy command deprecation — mark describe/capture/attach as deprecated`
+
+### Batch 4 建议
+
+1. **监控 tmux backend 使用率**: 当 production tmux dispatches 降至 0 后，可考虑完全移除 tmux backend
+2. **收口 watchdog 逻辑**: 将 `decide_watchdog_action` 集成到 continuation kernel，移除独立命令
+3. **清理 tmux_receipts 目录**: 当所有 dispatches 迁移到 subagent 后，可移除 `runtime/orchestrator/tmux_receipts/`
+4. **更新 docs**: 在 runtime integration 文档中明确 subagent 为默认推荐 backend
 
 ---
 

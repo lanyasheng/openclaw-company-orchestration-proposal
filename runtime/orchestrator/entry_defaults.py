@@ -289,7 +289,8 @@ def _build_onboarding_seam(
                 "callback_bridge": "scripts/orchestrator_callback_bridge.py complete",
                 "ack_guard": "orchestrator/completion_ack_guard.py",
                 "dispatch_plan": "summary -> decision -> dispatch plan",
-                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete",
+                # P0-3 Batch 3 (2026-03-23): tmux_bridge is legacy; prefer subagent backend with runner-based observation
+                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (legacy; tmux backend only)",
             },
             "current_boundary": (
                 "trading 仍是 richer specialization：默认 auto-dispatch 只对 clean PASS + truth 完整 + continuation whitelist 命中的 continuation 放开。"
@@ -324,7 +325,8 @@ def _build_onboarding_seam(
                 "callback_bridge": "scripts/orchestrator_callback_bridge.py complete",
                 "ack_guard": "orchestrator/completion_ack_guard.py",
                 "dispatch_plan": "summary -> decision -> dispatch plan",
-                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete",
+                # P0-3 Batch 3 (2026-03-23): tmux_bridge is legacy; prefer subagent backend with runner-based observation
+                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (legacy; tmux backend only)",
             },
             "operator_kit": _build_channel_operator_kit(
                 scenario=scenario,
