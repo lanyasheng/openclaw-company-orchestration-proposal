@@ -31,6 +31,9 @@ __all__ = [
 
 DISPATCH_PLANNER_VERSION = "dispatch_planner_v1"
 
+# 回调信封版本（与 contracts.py 保持一致）
+from contracts import CANONICAL_CALLBACK_ENVELOPE_VERSION
+
 
 class DispatchBackend(str, Enum):
     """调度后端类型"""
@@ -155,6 +158,9 @@ class DispatchPlan:
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     artifacts: Dict[str, str] = field(default_factory=dict)
     
+    # 回调契约
+    canonical_callback: Dict[str, Any] = field(default_factory=dict)
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
             "dispatch_id": self.dispatch_id,
@@ -175,6 +181,7 @@ class DispatchPlan:
             "parent_message": self.parent_message,
             "timestamp": self.timestamp,
             "artifacts": self.artifacts,
+            "canonical_callback": self.canonical_callback,
         }
 
 
@@ -322,6 +329,27 @@ class DispatchPlanner:
             status=status,
         )
         
+        # 构建 safety_gates（包含测试期望的所有字段）
+        analysis = analysis or {}
+        safety_gates = {
+            "allow_auto_dispatch": allow_auto_dispatch,
+            "auto_dispatch_source": auto_dispatch_source,
+            "default_auto_dispatch_eligible": readiness.get("eligible", False) if readiness else False,
+            "default_auto_dispatch_status": readiness.get("status", "not_ready") if readiness else "not_ready",
+            "default_auto_dispatch_blockers": readiness.get("blockers", []) if readiness else [],
+            "default_auto_dispatch_criteria": readiness.get("criteria", []) if readiness else [],
+            "batch_timeout_count": analysis.get("timeout", 0),
+            "batch_failed_count": analysis.get("failed", 0),
+            "packet_complete": validation.get("complete", False) if validation else False,
+            "roundtable_conclusion": roundtable.get("conclusion") if roundtable else None,
+            "business_terminal_source": "canonical_callback",
+            "backend_terminal_role": "diagnostic_only",
+        }
+        
+        # 构建 orchestration_contract
+        decision_metadata = decision.get("metadata", {}) if isinstance(decision.get("metadata"), dict) else {}
+        orchestration_contract = decision_metadata.get("orchestration_contract", {})
+        
         # 创建计划
         plan = DispatchPlan(
             dispatch_id=dispatch_id,
@@ -339,6 +367,18 @@ class DispatchPlanner:
             recommended_spawn=recommended_spawn,
             parent_message=parent_message,
         )
+        
+        # 添加额外字段
+        plan.safety_gates = safety_gates
+        plan.orchestration_contract = orchestration_contract
+        plan.canonical_callback = {
+            "required": True,
+            "business_terminal_source": "scripts/orchestrator_callback_bridge.py complete",
+            "callback_payload_schema": orchestration_contract.get("callback_payload_schema", "trading_roundtable.v1.callback"),
+            "callback_envelope_schema": CANONICAL_CALLBACK_ENVELOPE_VERSION,
+            "backend_terminal_role": "diagnostic_only",
+            "report_role": "evidence_only_until_callback",
+        }
         
         self.plans[dispatch_id] = plan
         return plan
@@ -488,6 +528,7 @@ class DispatchPlanner:
         return {
             "runtime": "subagent" if backend == DispatchBackend.SUBAGENT else "tmux",
             "task_preview": task_preview,
+            "task": task_preview,  # 兼容旧版本测试
             "dispatch_id": dispatch_id,
             "dispatch_path": dispatch_path,
         }
