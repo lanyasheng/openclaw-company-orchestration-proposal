@@ -523,6 +523,311 @@ class TestBridgeConsumerArtifact(unittest.TestCase):
         self.assertEqual(retrieved.consumer_status, artifact.consumer_status)
 
 
+class TestAutoTriggerWithReadinessSafetyGates(unittest.TestCase):
+    """
+    P0-3 Batch 2: Auto-trigger with readiness/safety_gates/truth_anchor checks.
+    
+    测试通用 bridge_consumer auto-trigger 路径，验证 readiness/safety_gates/truth_anchor
+    条件检查。trading 仅作为首个验证场景，但实现保持 adapter-agnostic。
+    """
+    
+    def setUp(self):
+        """创建测试用的 receipt 和 request"""
+        self.suffix = uuid.uuid4().hex[:6]
+        
+        # 创建测试 receipt（带 readiness/safety_gates/truth_anchor）
+        self.test_receipt = create_test_receipt(
+            receipt_id=f"test_receipt_at_{self.suffix}",
+            task_id=f"test_task_at_{self.suffix}",
+            spawn_id=f"test_spawn_at_{self.suffix}",
+            dispatch_id=f"test_dispatch_at_{self.suffix}",
+            registration_id=f"test_reg_at_{self.suffix}",
+            execution_id=f"test_exec_at_{self.suffix}",
+            receipt_status="completed",
+            scenario="trading",  # trading 作为首个验证场景
+            owner="trading",
+        )
+        
+        # 创建 request（带 readiness/safety_gates/truth_anchor metadata）
+        kernel = SpawnRequestKernel()
+        policy_eval = kernel.evaluate_policy(self.test_receipt)
+        request = kernel.create_request(self.test_receipt, policy_eval)
+        
+        # P0-3 Batch 2: 添加 readiness/safety_gates/truth_anchor metadata
+        request.metadata["readiness"] = {
+            "eligible": True,
+            "status": "ready",
+            "blockers": [],
+            "criteria": ["registration_status == 'registered'"],
+        }
+        request.metadata["safety_gates"] = {
+            "allow_auto_dispatch": True,
+            "batch_has_timeout_tasks": False,
+            "batch_has_failed_tasks": False,
+            "packet_complete": True,
+        }
+        request.metadata["truth_anchor"] = {
+            "anchor_type": "handoff_id",
+            "anchor_value": f"handoff_{self.suffix}",
+        }
+        
+        # 写入 request
+        request.write()
+        from sessions_spawn_request import _record_request_dedupe
+        _record_request_dedupe(request.dedupe_key, request.request_id)
+        
+        self.test_request = request
+    
+    def test_auto_trigger_with_ready_readiness_safety_gates(self):
+        """
+        P0-3 Batch 2: Auto-trigger 成功场景 - readiness/safety_gates 满足条件。
+        
+        验证：当 readiness.eligible=True, safety_gates.allow_auto_dispatch=True 时，
+        auto-trigger 应该成功。
+        """
+        from sessions_spawn_request import (
+            configure_auto_trigger,
+            auto_trigger_consumption,
+            _is_auto_triggered,
+        )
+        
+        # 1. 配置 auto-trigger（启用，trading 在 allowlist，不需要 manual approval）
+        config = configure_auto_trigger(
+            enabled=True,
+            allowlist=["trading"],
+            denylist=[],
+            require_manual_approval=False,
+        )
+        
+        self.assertTrue(config["enabled"])
+        self.assertIn("trading", config["allowlist"])
+        self.assertFalse(config["require_manual_approval"])
+        
+        # 2. 执行 auto-trigger
+        triggered, reason, consumed_id = auto_trigger_consumption(
+            self.test_request.request_id
+        )
+        
+        # 3. 验证结果
+        self.assertTrue(triggered, f"Auto-trigger should succeed, reason: {reason}")
+        self.assertIsNotNone(consumed_id)
+        self.assertIn("Auto-triggered consumption", reason)
+        
+        # 4. 验证已记录 auto-trigger
+        self.assertTrue(_is_auto_triggered(self.test_request.request_id))
+        
+        # 5. 验证 consumed artifact
+        from bridge_consumer import get_consumed_by_request
+        consumed = get_consumed_by_request(self.test_request.request_id)
+        self.assertIsNotNone(consumed)
+        self.assertEqual(consumed.consumer_status, "consumed")
+        
+        # 6. 验证 metadata 传递
+        self.assertEqual(consumed.metadata.get("scenario"), "trading")
+        self.assertIsNotNone(consumed.metadata.get("truth_anchor"))
+    
+    def test_auto_trigger_blocked_by_readiness(self):
+        """
+        P0-3 Batch 2: Auto-trigger 被 readiness 阻塞。
+        
+        验证：当 readiness.eligible=False 时，auto-trigger 应该被阻塞。
+        """
+        from sessions_spawn_request import (
+            configure_auto_trigger,
+            auto_trigger_consumption,
+            _should_auto_trigger,
+        )
+        
+        # 创建 readiness not ready 的 request
+        kernel = SpawnRequestKernel()
+        receipt = create_test_receipt(
+            receipt_id=f"test_receipt_not_ready_{self.suffix}",
+            task_id=f"test_task_not_ready_{self.suffix}",
+            spawn_id=f"test_spawn_not_ready_{self.suffix}",
+            dispatch_id=f"test_dispatch_not_ready_{self.suffix}",
+            registration_id=f"test_reg_not_ready_{self.suffix}",
+            execution_id=f"test_exec_not_ready_{self.suffix}",
+            receipt_status="completed",
+            scenario="trading",
+            owner="trading",
+        )
+        
+        policy_eval = kernel.evaluate_policy(receipt)
+        request = kernel.create_request(receipt, policy_eval)
+        
+        # 设置 readiness not ready
+        request.metadata["readiness"] = {
+            "eligible": False,
+            "status": "blocked",
+            "blockers": ["safety_gates.allow_auto_dispatch=False"],
+            "criteria": [],
+        }
+        request.metadata["safety_gates"] = {
+            "allow_auto_dispatch": False,
+        }
+        request.metadata["truth_anchor"] = {"anchor_type": "handoff_id", "anchor_value": "handoff_xxx"}
+        
+        request.write()
+        from sessions_spawn_request import _record_request_dedupe
+        _record_request_dedupe(request.dedupe_key, request.request_id)
+        
+        # 配置 auto-trigger
+        configure_auto_trigger(
+            enabled=True,
+            allowlist=["trading"],
+            require_manual_approval=False,
+        )
+        
+        # 评估 auto-trigger guard
+        should_trigger, reason = _should_auto_trigger(request)
+        
+        # 验证被阻塞
+        self.assertFalse(should_trigger)
+        self.assertIn("Readiness not met", reason)
+        self.assertIn("blocked", reason)
+        
+        # 执行 auto-trigger 应该失败
+        triggered, trigger_reason, consumed_id = auto_trigger_consumption(request.request_id)
+        self.assertFalse(triggered)
+        self.assertIn("Readiness not met", trigger_reason)
+        self.assertIsNone(consumed_id)
+    
+    def test_auto_trigger_blocked_by_safety_gates(self):
+        """
+        P0-3 Batch 2: Auto-trigger 被 safety_gates 阻塞。
+        
+        验证：当 safety_gates.allow_auto_dispatch=False 时，auto-trigger 应该被阻塞。
+        """
+        from sessions_spawn_request import (
+            configure_auto_trigger,
+            auto_trigger_consumption,
+            _should_auto_trigger,
+        )
+        
+        # 创建 safety_gates not passed 的 request
+        kernel = SpawnRequestKernel()
+        receipt = create_test_receipt(
+            receipt_id=f"test_receipt_sg_block_{self.suffix}",
+            task_id=f"test_task_sg_block_{self.suffix}",
+            spawn_id=f"test_spawn_sg_block_{self.suffix}",
+            dispatch_id=f"test_dispatch_sg_block_{self.suffix}",
+            registration_id=f"test_reg_sg_block_{self.suffix}",
+            execution_id=f"test_exec_sg_block_{self.suffix}",
+            receipt_status="completed",
+            scenario="trading",
+            owner="trading",
+        )
+        
+        policy_eval = kernel.evaluate_policy(receipt)
+        request = kernel.create_request(receipt, policy_eval)
+        
+        # 设置 readiness ready 但 safety_gates not passed
+        request.metadata["readiness"] = {
+            "eligible": True,
+            "status": "ready",
+            "blockers": [],
+        }
+        request.metadata["safety_gates"] = {
+            "allow_auto_dispatch": False,  # 关键：safety gates not passed
+            "batch_has_timeout_tasks": True,
+        }
+        request.metadata["truth_anchor"] = {"anchor_type": "handoff_id", "anchor_value": "handoff_xxx"}
+        
+        request.write()
+        from sessions_spawn_request import _record_request_dedupe
+        _record_request_dedupe(request.dedupe_key, request.request_id)
+        
+        # 配置 auto-trigger
+        configure_auto_trigger(
+            enabled=True,
+            allowlist=["trading"],
+            require_manual_approval=False,
+        )
+        
+        # 评估 auto-trigger guard
+        should_trigger, reason = _should_auto_trigger(request)
+        
+        # 验证被 safety_gates 阻塞
+        self.assertFalse(should_trigger)
+        self.assertIn("Safety gates not passed", reason)
+        self.assertIn("allow_auto_dispatch=False", reason)
+        
+        # 执行 auto-trigger 应该失败
+        triggered, trigger_reason, consumed_id = auto_trigger_consumption(request.request_id)
+        self.assertFalse(triggered)
+        self.assertIn("Safety gates not passed", trigger_reason)
+    
+    def test_auto_trigger_general_not_trading_specific(self):
+        """
+        P0-3 Batch 2: 验证 auto-trigger 实现是通用的，不是 trading-specific。
+        
+        验证：auto-trigger guard 检查的是通用字段（readiness/safety_gates），
+        而不是 trading 特定语义。
+        """
+        from sessions_spawn_request import (
+            configure_auto_trigger,
+            auto_trigger_consumption,
+            _should_auto_trigger,
+        )
+        
+        # 创建 generic 场景的 request（不是 trading）
+        kernel = SpawnRequestKernel()
+        receipt = create_test_receipt(
+            receipt_id=f"test_receipt_generic_{self.suffix}",
+            task_id=f"test_task_generic_{self.suffix}",
+            spawn_id=f"test_spawn_generic_{self.suffix}",
+            dispatch_id=f"test_dispatch_generic_{self.suffix}",
+            registration_id=f"test_reg_generic_{self.suffix}",
+            execution_id=f"test_exec_generic_{self.suffix}",
+            receipt_status="completed",
+            scenario="generic",  # generic 场景
+            owner="main",
+        )
+        
+        policy_eval = kernel.evaluate_policy(receipt)
+        request = kernel.create_request(receipt, policy_eval)
+        
+        # 设置 readiness/safety_gates（通用字段，不是 trading 特定）
+        request.metadata["readiness"] = {
+            "eligible": True,
+            "status": "ready",
+            "blockers": [],
+        }
+        request.metadata["safety_gates"] = {
+            "allow_auto_dispatch": True,
+        }
+        request.metadata["truth_anchor"] = {"anchor_type": "handoff_id", "anchor_value": "handoff_xxx"}
+        
+        request.write()
+        from sessions_spawn_request import _record_request_dedupe
+        _record_request_dedupe(request.dedupe_key, request.request_id)
+        
+        # 配置 auto-trigger（allowlist 包含 generic）
+        configure_auto_trigger(
+            enabled=True,
+            allowlist=["generic"],
+            require_manual_approval=False,
+        )
+        
+        # 评估 auto-trigger guard
+        should_trigger, reason = _should_auto_trigger(request)
+        
+        # 验证通用场景也能通过
+        self.assertTrue(should_trigger)
+        self.assertIn("Auto-trigger approved", reason)
+        
+        # 执行 auto-trigger 应该成功
+        triggered, trigger_reason, consumed_id = auto_trigger_consumption(request.request_id)
+        self.assertTrue(triggered)
+        self.assertIsNotNone(consumed_id)
+        
+        # 验证 consumed artifact
+        from bridge_consumer import get_consumed_by_request
+        consumed = get_consumed_by_request(request.request_id)
+        self.assertIsNotNone(consumed)
+        self.assertEqual(consumed.metadata.get("scenario"), "generic")
+
+
 if __name__ == "__main__":
     # 运行测试
     unittest.main(verbosity=2)

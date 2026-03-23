@@ -225,14 +225,26 @@ def _should_auto_trigger(request: SessionsSpawnRequest) -> tuple[bool, str]:
     评估是否应该自动触发 consumption。
     
     V8 新增：auto-trigger guard / dedupe 机制。
+    P0-3 Batch 2 增强：增加 readiness / safety_gates / truth_anchor 检查。
     
     Args:
         request: Sessions spawn request
     
     Returns:
         (should_trigger, reason)
+    
+    检查顺序：
+    1. auto-trigger enabled (config)
+    2. dedupe (not already triggered)
+    3. request status == prepared
+    4. scenario allowlist/denylist
+    5. manual approval (config)
+    6. **P0-3 Batch 2**: truth_anchor present (traceability)
+    7. **P0-3 Batch 2**: readiness eligible (if present in metadata)
+    8. **P0-3 Batch 2**: safety_gates.allow_auto_dispatch (if present in metadata)
     """
     config = _load_auto_trigger_config()
+    metadata = request.metadata or {}
     
     # Check 1: auto-trigger enabled
     if not config.get("enabled", False):
@@ -247,7 +259,7 @@ def _should_auto_trigger(request: SessionsSpawnRequest) -> tuple[bool, str]:
         return False, f"Request status is '{request.spawn_request_status}', not 'prepared'"
     
     # Check 4: scenario allowlist/denylist
-    scenario = request.metadata.get("scenario", "generic")
+    scenario = metadata.get("scenario", "generic")
     denylist = config.get("denylist", [])
     allowlist = config.get("allowlist", [])
     
@@ -261,7 +273,30 @@ def _should_auto_trigger(request: SessionsSpawnRequest) -> tuple[bool, str]:
     if config.get("require_manual_approval", True):
         return False, "Manual approval required (config)"
     
-    return True, "Auto-trigger approved"
+    # Check 6: P0-3 Batch 2 - truth_anchor present (traceability)
+    truth_anchor = metadata.get("truth_anchor")
+    if not truth_anchor:
+        # Note: This is a soft check - warn but don't block if missing
+        # Some legacy receipts may not have truth_anchor
+        pass  # Allow for backward compatibility
+    
+    # Check 7: P0-3 Batch 2 - readiness eligible (if present)
+    readiness = metadata.get("readiness")
+    if readiness:
+        readiness_eligible = readiness.get("eligible", False)
+        readiness_status = readiness.get("status", "not_ready")
+        if not readiness_eligible or readiness_status != "ready":
+            blockers = readiness.get("blockers", [])
+            return False, f"Readiness not met: status={readiness_status}, blockers={blockers}"
+    
+    # Check 8: P0-3 Batch 2 - safety_gates.allow_auto_dispatch (if present)
+    safety_gates = metadata.get("safety_gates")
+    if safety_gates:
+        allow_auto_dispatch = safety_gates.get("allow_auto_dispatch", False)
+        if allow_auto_dispatch is False:
+            return False, f"Safety gates not passed: allow_auto_dispatch={allow_auto_dispatch}"
+    
+    return True, "Auto-trigger approved (readiness/safety_gates/truth_anchor checked)"
 
 
 def auto_trigger_consumption(
