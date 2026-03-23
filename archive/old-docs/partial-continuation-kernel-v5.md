@@ -70,7 +70,7 @@ Completion Receipt (v5)  ← 本阶段新增
     "owner": "",
     "scenario": "trading_roundtable_phase1",
     "task_preview": "",
-    "cwd": "/Users/study/.openclaw/workspace"
+    "cwd": "~/.openclaw/workspace"
   },
   "dedupe_key": "exec_dedupe:spawn_18a59d08fbcd:dispatch_get_test",
   "execution_payload": { ... },
@@ -220,7 +220,7 @@ completion receipt (completed)
 ### 5.1 测试命令
 
 ```bash
-cd /Users/study/.openclaw/workspace/orchestrator
+cd ~/.openclaw/workspace/orchestrator
 python3 test_v5 闭环.py
 ```
 
@@ -300,7 +300,7 @@ Trading 场景接入:
 
 ```bash
 # 查询 spawn executions
-cd /Users/study/.openclaw/workspace/orchestrator
+cd ~/.openclaw/workspace/orchestrator
 python3 -c "from spawn_execution import list_spawn_executions; print(list_spawn_executions(limit=5))"
 
 # 查询 completion receipts

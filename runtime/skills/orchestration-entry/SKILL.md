@@ -37,4 +37,4 @@ If the task is about orchestration completion, subagent terminal/completion rece
 
 That reference is for capability discovery only; the actual guards live in runtime hook / orchestrator code.
 
-Read `docs/architecture/2026-03-21-orchestration-skill-and-command-defaults.md` (in workspace) before changing defaults or adding a new scenario.
+Read `docs/architecture/2026-03-21-orchestration-skill-and-command-defaults.md` (in OpenClaw workspace) before changing defaults or adding a new scenario.

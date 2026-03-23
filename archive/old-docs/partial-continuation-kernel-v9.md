@@ -358,7 +358,7 @@ v9 测试覆盖（14 个测试全部通过）：
 ### 4.2 Test Commands
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 tests/orchestrator/test_sessions_spawn_bridge.py -v
 ```
 

@@ -26,7 +26,7 @@ python3 ~/.openclaw/scripts/orch_command.py --context <场景> --channel-id "<�
 
 **或从本仓运行**：
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
 ```
 
@@ -187,4 +187,4 @@ git log --oneline -10
 
 **最后更新**: 2026-03-23  
 **维护者**: Zoe (CTO & Chief Orchestrator)  
-**仓库**: `/Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal`
+**仓库**: `openclaw-company-orchestration-proposal` (OpenClaw workspace repo)

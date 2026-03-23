@@ -41,12 +41,12 @@ python3 ~/.openclaw/scripts/orch_command.py \
 
 ```bash
 # 从 runtime 目录直接运行
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 runtime/scripts/orch_command.py \
   --context channel_roundtable \
-  --channel-id "-1002381931352" \
-  --channel-name "general" \
-  --topic "示例讨论"
+  --channel-id "<channel-id>" \
+  --channel-name "<channel-name>" \
+  --topic "<topic>"
 ```
 
 输出为 JSON contract，可重定向到文件：
@@ -95,7 +95,7 @@ python3 runtime/scripts/orch_command.py \
 
 4. **运行轻量测试**（可选）
    ```bash
-   cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+   cd <path-to-repo>/openclaw-company-orchestration-proposal
    python3 -m unittest tests.test_orchestration_entry -v
    ```
 

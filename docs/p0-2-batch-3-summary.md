@@ -71,7 +71,7 @@ P0-2 Batch 4+ could consider:
 
 ```bash
 # Run orchestrator tests
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 -m pytest tests/orchestrator/ -v --tb=short
 
 # Verify commit

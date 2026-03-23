@@ -312,7 +312,7 @@ if triggered and execution_id:
 ### CLI Usage
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 
 # Check auto-trigger status
 python3 -c "
@@ -384,7 +384,7 @@ print(f'Execution ID: {artifact.execution_id}')
 
 3. **Revert code changes**:
    ```bash
-   cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+   cd <path-to-repo>/openclaw-company-orchestration-proposal
    git revert <commit-hash>
    ```
 
@@ -419,7 +419,7 @@ P0-3 Batch 4 successfully connects the generic execution request main chain to t
 ## Commit Plan
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 
 git add -A
 git commit -m "P0-3 Batch 4: Real sessions_spawn API integration via subagent runner

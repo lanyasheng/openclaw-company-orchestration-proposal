@@ -12,7 +12,7 @@
 
 ### 1. 运行测试
 ```bash
-cd /Users/study/.openclaw/workspace/orchestrator
+cd <path-to-repo>/openclaw-company-orchestration-proposal/runtime/orchestrator
 python3 cli.py test
 ```
 
@@ -291,7 +291,7 @@ python3 cli.py stuck --timeout 60
 ## 与设计文档对应
 
 本实现对应设计文档：
-`/Users/study/.openclaw/workspace/docs/architecture/callback-driven-orchestration-v1-20260320.md`
+`docs/architecture/callback-driven-orchestration-v1-20260320.md` (in OpenClaw workspace)
 
 ---
 

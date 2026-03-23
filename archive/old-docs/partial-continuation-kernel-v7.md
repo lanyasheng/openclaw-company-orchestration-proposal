@@ -267,7 +267,7 @@ print(f"By status: {summary['by_status']}")
 ### 5.2 Test Commands
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 
 # bridge_consumer 测试
 python3 -m pytest tests/orchestrator/test_bridge_consumer.py -v

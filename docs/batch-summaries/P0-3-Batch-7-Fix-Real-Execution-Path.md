@@ -116,7 +116,7 @@ Reason: API call successful
 runId: run_fe98f3b0
 childSessionKey: session_4705ff51ed8d
 pid: 9580
-runner_script: /Users/study/.openclaw/workspace/scripts/run_subagent_claude_v1.sh
+runner_script: `~/.openclaw/scripts/run_subagent_claude_v1.sh`
 ```
 
 **Execution Anchors**:
@@ -126,7 +126,7 @@ runner_script: /Users/study/.openclaw/workspace/scripts/run_subagent_claude_v1.s
 | `childSessionKey` | `session_4705ff51ed8d` |
 | `pid` | `9580` |
 | `label` | `orch-batch7_l` |
-| `runner_script` | `/Users/study/.openclaw/workspace/scripts/run_subagent_claude_v1.sh` |
+| `runner_script` | `~/.openclaw/scripts/run_subagent_claude_v1.sh` |
 
 **Artifact Path**: `~/.openclaw/shared-context/api_executions/exec_api_*.json`
 
@@ -261,7 +261,7 @@ runner_script: /Users/study/.openclaw/workspace/scripts/run_subagent_claude_v1.s
 
 3. **Revert code changes**:
    ```bash
-   cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+   cd <path-to-repo>/openclaw-company-orchestration-proposal
    git revert 256e299
    ```
 

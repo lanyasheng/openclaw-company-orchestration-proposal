@@ -169,7 +169,7 @@ receipt → sessions_spawn_request (prepared) → auto-trigger guard → bridge_
 ### Configure Auto-Trigger
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 
 # Enable auto-trigger for trading scenario
 python3 -c "

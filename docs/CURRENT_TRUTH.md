@@ -18,11 +18,11 @@
 
 ### Runtime 入口
 ```bash
-# 统一入口命令
+# 统一入口命令 (standard OpenClaw installation)
 python3 ~/.openclaw/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
 
 # 或从本仓直接运行
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道 ID>" --topic "<主题>"
 ```
 
@@ -57,7 +57,7 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - **总体仍是 thin bridge / allowlist / safe semi-auto**
 
 ### 1.1 本地 workspace 副本已退役（2026-03-22）
-历史上 orchestration runtime 曾散落在 `~/.openclaw/workspace` 本地；从 2026-03-22 起：
+历史上 orchestration runtime 曾散落在本地 workspace；从 2026-03-22 起：
 - **Canonical 主线**：本仓 `runtime/` 目录
 - **本地副本状态**：已加 (已标记 deprecated) 标成 legacy / 只读 / 待退役
 - **规则**：禁止双写，新改动必须提交到本仓 monorepo
@@ -231,7 +231,7 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - ✅ **v8 auto-trigger 已实现**: request prepared 后可自动触发 consumption（带 guard/dedupe）
 - ✅ **v9 Real API Integration**: sessions_spawn_bridge 真实调用 OpenClaw sessions_spawn API
 - ✅ **v9 API Execution Artifact**: childSessionKey / runId / linkage 真实落盘
-- ✅ **真实落盘**: execution / receipt / request / close / consumed / api_execution artifacts 均已写入 `~/.openclaw/shared-context/`
+- ✅ **真实落盘**: execution / receipt / request / close / consumed / api_execution artifacts 均已写入 `~/.openclaw/shared-context/` (standard OpenClaw home directory)
 - ✅ **Linkage 验证**: registration_id → dispatch_id → spawn_id → execution_id → receipt_id → request_id → consumed_id → api_execution_id 链路正确
 - ✅ **去重机制**: duplicate execution / receipt / request / consumption / api_execution prevention 正常工作
 - ✅ **通用 kernel**: adapter-agnostic design，trading 仅作为首个消费者
@@ -252,8 +252,8 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 **测试命令**:
 ```bash
-cd /Users/study/.openclaw/workspace/orchestrator
-python3 test_v5 闭环.py
+cd <path-to-repo>/openclaw-company-orchestration-proposal
+python3 runtime/orchestrator/test_v5 闭环.py
 ```
 
 **测试结果**:
@@ -275,7 +275,7 @@ python3 test_v5 闭环.py
 
 **测试命令**:
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 -m pytest tests/orchestrator/test_sessions_spawn_request.py -v
 python3 -m pytest tests/orchestrator/test_callback_auto_close.py -v
 ```
@@ -301,7 +301,7 @@ python3 -m pytest tests/orchestrator/test_callback_auto_close.py -v
 
 **测试命令**:
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 -m pytest tests/orchestrator/test_bridge_consumer.py -v
 ```
 
@@ -335,8 +335,8 @@ python3 -m pytest tests/orchestrator/test_bridge_consumer.py -v
 
 **测试命令**:
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
-python3 test_v8_execute_and_auto_trigger.py
+cd <path-to-repo>/openclaw-company-orchestration-proposal
+python3 runtime/orchestrator/test_v8_execute_and_auto_trigger.py
 ```
 
 **测试结果**:

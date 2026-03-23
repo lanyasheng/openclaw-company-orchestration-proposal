@@ -165,13 +165,13 @@ for entry in recent:
 
 ### 单元测试
 ```bash
-cd /Users/study/.openclaw/workspace
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 tests/orchestrator/alerts/test_trading_alert_sender.py
 ```
 
 ### 验收测试
 ```bash
-cd /Users/study/.openclaw/workspace
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 tests/orchestrator/alerts/acceptance_test_alert_chain.py
 ```
 

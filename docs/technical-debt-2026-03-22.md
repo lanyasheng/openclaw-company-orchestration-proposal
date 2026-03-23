@@ -173,7 +173,7 @@ tests/orchestrator/: 404/405 passed (1 flaky test isolation issue, unrelated)
 ### 测试结果
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 -m pytest tests/orchestrator/test_tmux_dispatch_bridge.py -v
 python3 -m pytest tests/orchestrator/ -v --tb=short
 ```
@@ -229,7 +229,7 @@ python3 -m pytest tests/orchestrator/ -v --tb=short
 ### 测试结果
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 -m pytest tests/orchestrator/test_tmux_dispatch_bridge.py -v
 python3 -m pytest tests/orchestrator/ -v --tb=short
 ```
@@ -306,7 +306,7 @@ python3 -m pytest tests/orchestrator/ -v --tb=short
 ### 测试结果
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 -m pytest tests/orchestrator/test_continuation_backends_lifecycle.py -v
 python3 -m pytest tests/orchestrator/ -v --tb=short
 ```
@@ -389,7 +389,7 @@ python3 -m pytest tests/orchestrator/ -v --tb=short
 #### 测试结果
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 python3 -m pytest tests/orchestrator/ -v --tb=short
 ```
 

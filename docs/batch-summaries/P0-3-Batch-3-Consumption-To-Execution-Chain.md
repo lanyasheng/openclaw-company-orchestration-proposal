@@ -271,7 +271,7 @@ if triggered:
 ### CLI Usage
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 
 # Auto-trigger with execution chain
 python3 -c "
@@ -365,7 +365,7 @@ P0-3 Batch 3 successfully connects the bridge_consumer auto-trigger decision to 
 ## Commit Plan
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 
 git add -A
 git commit -m "P0-3 Batch 3: Connect bridge_consumer auto-trigger to execution chain

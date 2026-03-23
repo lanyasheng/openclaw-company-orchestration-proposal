@@ -280,7 +280,7 @@ All other conditions are met:
 ### Check Current Status
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 PYTHONPATH=runtime/orchestrator python3 -c "
 from sessions_spawn_bridge import get_auto_trigger_real_exec_status
 import json
@@ -366,7 +366,7 @@ if artifact.api_execution_result:
 
 3. **Revert config changes**:
    ```bash
-   cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+   cd <path-to-repo>/openclaw-company-orchestration-proposal
    git revert <commit-hash>
    ```
 
@@ -408,7 +408,7 @@ P0-3 Batch 5 successfully validates that the **trading continuation chain can re
 ## Commit Plan
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 
 git add -A
 git commit -m "P0-3 Batch 5: Trading continuation real E2E dispatch validation

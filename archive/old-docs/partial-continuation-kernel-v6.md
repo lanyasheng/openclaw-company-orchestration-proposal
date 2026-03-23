@@ -287,7 +287,7 @@ print(f"By status: {summary['by_status']}")
 ### 5.2 Test Commands
 
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <path-to-repo>/openclaw-company-orchestration-proposal
 
 # sessions_spawn_request 测试
 python3 -m pytest tests/orchestrator/test_sessions_spawn_request.py -v
