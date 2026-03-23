@@ -33,6 +33,8 @@ from spawn_execution import (
     SPAWN_EXECUTION_DIR,
 )
 
+from partial_continuation import ContinuationContract, build_continuation_contract
+
 __all__ = [
     "ReceiptStatus",
     "CompletionReceiptArtifact",
@@ -41,6 +43,7 @@ __all__ = [
     "list_completion_receipts",
     "get_completion_receipt",
     "RECEIPT_VERSION",
+    "build_receipt_continuation_contract",
 ]
 
 RECEIPT_VERSION = "completion_receipt_v1"
@@ -126,6 +129,62 @@ def _is_duplicate_receipt(dedupe_key: str) -> bool:
     """检查是否已存在 receipt（去重）"""
     index = _load_receipt_index()
     return dedupe_key in index
+
+
+def build_receipt_continuation_contract(
+    execution: SpawnExecutionArtifact,
+    receipt_status: ReceiptStatus,
+    receipt_reason: str,
+) -> ContinuationContract:
+    """
+    Build a ContinuationContract from receipt context.
+    
+    This is the canonical helper for deriving continuation semantics from
+    completion receipt data. Uses receipt status/reason as the source of truth
+    for stopped_because, and extracts next_step/next_owner from execution metadata.
+    
+    Args:
+        execution: Source spawn execution artifact
+        receipt_status: Receipt status (completed/failed/missing)
+        receipt_reason: Receipt reason string
+    
+    Returns:
+        ContinuationContract with continuation semantics derived from receipt
+    """
+    # Derive stopped_because from receipt status/reason
+    if receipt_status == "completed":
+        stopped_because = "receipt_completed"
+    elif receipt_status == "failed":
+        stopped_because = f"receipt_failed_{receipt_reason[:50].lower().replace(' ', '_')}"
+    else:
+        stopped_because = f"receipt_missing_{receipt_reason[:50].lower().replace(' ', '_')}"
+    
+    # Extract next_step from execution metadata or derive from status
+    next_step = execution.spawn_execution_target.get("next_step", "")
+    if not next_step:
+        if receipt_status == "completed":
+            next_step = "Awaiting downstream processing or manual review"
+        elif receipt_status == "failed":
+            next_step = f"Resolve failure: {receipt_reason[:100]}"
+        else:
+            next_step = f"Investigate missing receipt: {receipt_reason[:100]}"
+    
+    # Extract next_owner from execution metadata or default to main
+    next_owner = execution.spawn_execution_target.get("owner", "main")
+    
+    # Build continuation contract
+    return build_continuation_contract(
+        stopped_because=stopped_because,
+        next_step=next_step,
+        next_owner=next_owner,
+        metadata={
+            "source": "completion_receipt",
+            "receipt_status": receipt_status,
+            "receipt_reason": receipt_reason,
+            "execution_id": execution.execution_id,
+            "scenario": execution.spawn_execution_target.get("scenario", ""),
+        },
+    )
 
 
 @dataclass
@@ -319,6 +378,13 @@ class CompletionReceiptKernel:
         # 提取 business result
         business_result = self._extract_business_result(execution)
         
+        # Build ContinuationContract (P0-1 Batch 5: unified continuation semantics)
+        continuation = build_receipt_continuation_contract(
+            execution=execution,
+            receipt_status=receipt_status,
+            receipt_reason=receipt_reason,
+        )
+        
         artifact = CompletionReceiptArtifact(
             receipt_id=receipt_id,
             source_spawn_execution_id=execution.execution_id,
@@ -340,6 +406,11 @@ class CompletionReceiptKernel:
                 "truth_anchor": execution.metadata.get("truth_anchor"),
                 "scenario": execution.spawn_execution_target.get("scenario", ""),
                 "owner": execution.spawn_execution_target.get("owner", ""),
+                # P0-1 Batch 5: Include ContinuationContract as canonical continuation semantics
+                "continuation_contract": continuation.to_dict(),
+                "stopped_because": continuation.stopped_because,
+                "next_step": continuation.next_step,
+                "next_owner": continuation.next_owner,
             },
         )
         

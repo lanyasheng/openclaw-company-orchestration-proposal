@@ -542,5 +542,117 @@ class TestCallbackAutoCloseIntegration:
             receipt_file.unlink()
 
 
+class TestContinuationContractIntegration:
+    """测试 P0-1 Batch 5: ContinuationContract 集成"""
+    
+    def test_build_close_continuation_contract(self):
+        """测试 build_close_continuation_contract 函数"""
+        from callback_auto_close import build_close_continuation_contract
+        
+        # Test closed status
+        cont = build_close_continuation_contract(
+            receipt_status="completed",
+            request_status="prepared",
+            close_status="closed",
+            task_id="task_123",
+            scenario="test_scenario",
+        )
+        
+        assert cont.stopped_because == "callback_closed_full_completion"
+        assert "ready for operator review" in cont.next_step.lower()
+        assert cont.next_owner == "main"
+        assert cont.metadata["source"] == "callback_auto_close"
+        assert cont.metadata["close_status"] == "closed"
+    
+    def test_build_close_continuation_contract_partial(self):
+        """测试 partial close 的 ContinuationContract"""
+        from callback_auto_close import build_close_continuation_contract
+        
+        cont = build_close_continuation_contract(
+            receipt_status="completed",
+            request_status=None,
+            close_status="partial",
+            task_id="task_123",
+            scenario="test_scenario",
+        )
+        
+        assert cont.stopped_because == "callback_partial_awaiting_spawn_request"
+        assert "awaiting spawn request" in cont.next_step.lower()
+    
+    def test_build_close_continuation_contract_blocked(self):
+        """测试 blocked close 的 ContinuationContract"""
+        from callback_auto_close import build_close_continuation_contract
+        
+        cont = build_close_continuation_contract(
+            receipt_status="failed",
+            request_status=None,
+            close_status="blocked",
+            task_id="task_123",
+            scenario="test_scenario",
+        )
+        
+        assert "blocked" in cont.stopped_because
+        assert "resolve blocker" in cont.next_step.lower()
+    
+    def test_create_close_includes_continuation_contract(self, temp_close_dir, sample_receipt):
+        """测试 create_close 生成的 artifact 包含 ContinuationContract"""
+        from callback_auto_close import CallbackCloseKernel
+        
+        # 先写入 receipt
+        COMPLETION_RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
+        receipt_file = _completion_receipt_file(sample_receipt.receipt_id)
+        with open(receipt_file, "w") as f:
+            json.dump(sample_receipt.to_dict(), f)
+        
+        try:
+            kernel = CallbackCloseKernel()
+            close = kernel.create_close(sample_receipt.receipt_id)
+            
+            # 验证 metadata 包含 continuation_contract
+            assert "continuation_contract" in close.metadata
+            assert "stopped_because" in close.metadata
+            assert "next_step" in close.metadata
+            assert "next_owner" in close.metadata
+            
+            # 验证 continuation_contract 结构
+            cont_dict = close.metadata["continuation_contract"]
+            assert "contract_version" in cont_dict
+            assert "stopped_because" in cont_dict
+            assert "next_step" in cont_dict
+            assert "next_owner" in cont_dict
+            
+            # 验证值一致
+            assert close.metadata["stopped_because"] == cont_dict["stopped_because"]
+            assert close.metadata["next_step"] == cont_dict["next_step"]
+            assert close.metadata["next_owner"] == cont_dict["next_owner"]
+        finally:
+            receipt_file.unlink()
+    
+    def test_close_summary_uses_continuation_contract(self, temp_close_dir, sample_receipt):
+        """测试 close summary 使用 ContinuationContract 生成"""
+        from callback_auto_close import CallbackCloseKernel
+        
+        # 先写入 receipt
+        COMPLETION_RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
+        receipt_file = _completion_receipt_file(sample_receipt.receipt_id)
+        with open(receipt_file, "w") as f:
+            json.dump(sample_receipt.to_dict(), f)
+        
+        try:
+            kernel = CallbackCloseKernel()
+            close = kernel.create_close(sample_receipt.receipt_id)
+            
+            # 验证 summary 包含 continuation 语义
+            assert close.close_summary is not None
+            assert len(close.close_summary) > 0
+            
+            # Summary should use unified format with continuation semantics
+            assert close.metadata["stopped_because"] in close.close_summary or \
+                   close.metadata["next_step"] in close.close_summary or \
+                   close.metadata["next_owner"] in close.close_summary
+        finally:
+            receipt_file.unlink()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

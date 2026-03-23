@@ -33,6 +33,8 @@ from sessions_spawn_request import (
     SPAWN_REQUEST_DIR,
 )
 
+from partial_continuation import ContinuationContract, build_continuation_contract
+
 __all__ = [
     "CloseStatus",
     "CallbackAutoCloseArtifact",
@@ -42,6 +44,7 @@ __all__ = [
     "get_auto_close",
     "build_close_summary",
     "CLOSE_VERSION",
+    "build_close_continuation_contract",
 ]
 
 CLOSE_VERSION = "callback_auto_close_v1"
@@ -152,6 +155,73 @@ def _build_linkage_keys(
     if request_id:
         keys.append(f"by_request:{request_id}")
     return keys
+
+
+def build_close_continuation_contract(
+    receipt_status: str,
+    request_status: Optional[str],
+    close_status: CloseStatus,
+    task_id: str,
+    scenario: str,
+) -> ContinuationContract:
+    """
+    Build a ContinuationContract for callback close.
+    
+    This is the canonical helper for deriving continuation semantics from
+    callback close state. Uses close status as the source of truth for
+    stopped_because, and provides appropriate next_step/next_owner.
+    
+    Args:
+        receipt_status: Receipt status (completed/failed/missing)
+        request_status: Spawn request status (prepared/blocked/failed/None)
+        close_status: Close status (closed/pending/blocked/partial)
+        task_id: Source task ID
+        scenario: Scenario name
+    
+    Returns:
+        ContinuationContract with continuation semantics derived from close state
+    """
+    # Derive stopped_because from close status
+    if close_status == "closed":
+        stopped_because = "callback_closed_full_completion"
+    elif close_status == "partial":
+        stopped_because = "callback_partial_awaiting_spawn_request"
+    elif close_status == "blocked":
+        if receipt_status == "failed":
+            stopped_because = "callback_blocked_receipt_failed"
+        elif request_status in ("blocked", "failed"):
+            stopped_because = f"callback_blocked_request_{request_status}"
+        else:
+            stopped_because = "callback_blocked_unknown"
+    else:  # pending
+        stopped_because = "callback_pending_awaiting_completion"
+    
+    # Derive next_step based on close status
+    if close_status == "closed":
+        next_step = "Callback fully closed; ready for operator review or next batch"
+    elif close_status == "partial":
+        next_step = "Awaiting spawn request preparation to complete callback closure"
+    elif close_status == "blocked":
+        next_step = f"Resolve blocker before callback can close (status={close_status}, receipt={receipt_status})"
+    else:
+        next_step = "Awaiting completion receipt to proceed with callback closure"
+    
+    # Default next_owner is main (operator)
+    next_owner = "main"
+    
+    return build_continuation_contract(
+        stopped_because=stopped_because,
+        next_step=next_step,
+        next_owner=next_owner,
+        metadata={
+            "source": "callback_auto_close",
+            "close_status": close_status,
+            "receipt_status": receipt_status,
+            "request_status": request_status,
+            "task_id": task_id,
+            "scenario": scenario,
+        },
+    )
 
 
 @dataclass
@@ -326,6 +396,9 @@ class CallbackCloseKernel:
     ) -> str:
         """
         构建人类可读的 close summary。
+        
+        Legacy method kept for backward compatibility. New code should use
+        _build_close_summary_with_continuation instead.
         """
         scenario_label = scenario if scenario else "generic"
         
@@ -337,6 +410,30 @@ class CallbackCloseKernel:
             return f"Task {task_id} ({scenario_label}) blocked: cannot close due to receipt/request status"
         else:
             return f"Task {task_id} ({scenario_label}) pending: awaiting completion"
+    
+    def _build_close_summary_with_continuation(
+        self,
+        continuation: ContinuationContract,
+        scenario: str,
+        close_status: CloseStatus,
+    ) -> str:
+        """
+        Build close summary using ContinuationContract (unified semantics).
+        
+        This is the canonical method for generating close summaries, using
+        ContinuationContract as the source of truth for continuation semantics.
+        
+        Args:
+            continuation: ContinuationContract with stopped_because/next_step/next_owner
+            scenario: Scenario name
+            close_status: Close status
+        
+        Returns:
+            Human-readable close summary
+        """
+        scenario_label = scenario if scenario else "generic"
+        # Use continuation contract fields for consistent semantics
+        return f"[{close_status.upper()}] {continuation.stopped_because} — {continuation.next_step} (owner: {continuation.next_owner}, scenario: {scenario_label})"
     
     def create_close(
         self,
@@ -383,13 +480,21 @@ class CallbackCloseKernel:
             request_id=request_id,
         )
         
-        # 构建 close summary
+        # P0-1 Batch 5: Build ContinuationContract as canonical continuation semantics
         scenario = receipt.metadata.get("scenario", "generic")
-        close_summary = self._build_close_summary(
+        continuation = build_close_continuation_contract(
+            receipt_status=receipt.receipt_status,
+            request_status=request_status,
+            close_status=close_status,
             task_id=receipt.source_task_id,
             scenario=scenario,
+        )
+        
+        # Build close summary using ContinuationContract (unified semantics)
+        close_summary = self._build_close_summary_with_continuation(
+            continuation=continuation,
+            scenario=scenario,
             close_status=close_status,
-            request_status=request_status,
         )
         
         close_id = _generate_close_id()
@@ -415,6 +520,11 @@ class CallbackCloseKernel:
                 "owner": receipt.metadata.get("owner", ""),
                 "truth_anchor": receipt.metadata.get("truth_anchor"),
                 "request_status": request_status,
+                # P0-1 Batch 5: Include ContinuationContract as canonical continuation semantics
+                "continuation_contract": continuation.to_dict(),
+                "stopped_because": continuation.stopped_because,
+                "next_step": continuation.next_step,
+                "next_owner": continuation.next_owner,
             },
         )
         
