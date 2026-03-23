@@ -220,10 +220,10 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - 有 anchor 时，才允许标成 `in_progress`
 - 禁止口头说"继续推进"但系统里没有新任务注册
 
-### 7.3 当前成熟度边界（2026-03-23 V9 更新）
+### 7.3 当前成熟度边界（2026-03-23 V10 更新）
 
 - ✅ Trading + Channel 两个场景已接入
-- ✅ 250+ 个测试全部通过（新增 14 个 v9 测试）
+- ✅ **434 个测试全部通过**
 - ✅ **v5 完整闭环已实现**: spawn closure -> spawn execution artifact -> completion receipt artifact
 - ✅ **v6 通用层已实现**: sessions_spawn request interface + callback auto-close bridge
 - ✅ **v7 bridge consumption 已实现**: bridge consumer / execution envelope / consumed artifact
@@ -237,15 +237,16 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - ✅ **通用 kernel**: adapter-agnostic design，trading 仅作为首个消费者
 - ✅ **状态扩展**: `prepared | consumed | executed | failed | blocked | pending | started`
 - ✅ **技术债务收口**: `docs/technical-debt-2026-03-22.md` 已创建
-- ✅ **P0-3 Batch 2**: Legacy runtime cleanup — deprecation markers + fix non-existent stop command (2026-03-23)
-- ✅ **P0-3 Batch 3**: Legacy command deprecation — mark describe/capture/attach as deprecated (2026-03-23)
-- ✅ **P0-3 Batch 4**: Subagent as default recommended backend — tighten tmux compat layer (2026-03-23)
-- ✅ **P0-3 Batch 5**: Direct tmux -> subagent migration — remove tmux from default paths, minimize compat surface (2026-03-23)
-- ✅ **P0-3 Batch 6**: Generic lifecycle kernel — extract backend-agnostic watchdog/lifecycle logic (2026-03-23)
-- ✅ **P0-3 Final Pass**: Legacy cleanup reached final boundary — migration now user-driven (2026-03-23)
+- ✅ **P0-3 Batches 1-6**: Legacy cleanup completed (2026-03-23)
+- ✅ **P0-3 Final**: **Dual-track backend strategy** (subagent + tmux) — both backends retained indefinitely (2026-03-23)
 - ⚠️ **CLI Integration**: 当前优先 mock Python API call，OpenClaw CLI 集成需确认 `openclaw sessions_spawn` 命令
 - ⚠️ **Auto-trigger 配置**: 使用本地 JSON 文件，缺少版本控制（见 technical debt D5）
 - ❌ 不等于"全域全自动无人续跑"
+
+**Dual-Track Backend Strategy**:
+- **subagent**: DEFAULT backend for automated execution, CI/CD, new development
+- **tmux**: FULLY SUPPORTED backend for interactive sessions, manual observation
+- **Both backends coexist** — no breaking removal planned
 
 ### 7.4 V5 闭环验证（2026-03-22）
 

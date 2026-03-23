@@ -330,64 +330,61 @@ python3 -m pytest tests/orchestrator/ -v --tb=short
 
 ---
 
-### 0.10. P0-3 Final Pass: Legacy Cleanup Reached Final Boundary (2026-03-23)
+### 0.10. P0-3 Final Pass: Dual-Track Backend Strategy (2026-03-23)
 
 **状态**: ✅ 已完成 (Final Pass)
 
-**清理范围**: 盘点全部 legacy/tmux/dispatch compatibility 表面面积，给出最终保留清单与移除条件
+**清理范围**: 盘点全部 legacy/tmux/dispatch compatibility 表面面积，确立双轨兼容策略
 
 **设计约束**:
 1. 不能破坏 trading live path
-2. 不接受只改文案不改真值，除非已没有安全可删项
-3. 必须给出 repo 真值：commit/push 或明确失败原因
+2. **tmux 不应被删除** - 保留为兼容路径
+3. subagent 作为默认主路径继续强化
 4. 先 targeted tests，再 broader regression
-5. 输出必须一次性回答：已清理 / 已降级兼容 / 暂保留 blocker
+5. 输出必须一次性回答：默认入口 / 兼容路径 / 双轨边界
 
 #### Final Pass 总结
 
 **已清理** (Batches 1-6 累计):
 - `docs/archive/old-docs/` - 历史 POC 和过时设计文档归档
 - `dispatch_planner.py` 中的不存在 `stop` 命令引用
-- `entry_defaults.py` 中的 `complete_tmux` 示例命令（已注释）
-- `continuation_backends.py` backend_plan 中的 deprecated commands
-- 低使用率命令从默认路径移除（describe/capture/attach/watchdog）
+- 文档注释更新为双轨策略口径
 
-**已降级为 compat-only**:
-- tmux backend - 仅用于现有 production dispatches
-- `orchestrator_dispatch_bridge.py` - 仅用于 tmux 生命周期管理
-- `tmux_terminal_receipts.py` - 仅用于 tmux receipt 处理
-- Deprecated commands - 向后兼容，90+ 天后可移除
+**保留** (双轨兼容):
+- tmux backend - **FULLY SUPPORTED** for interactive/observable scenarios
+- `orchestrator_dispatch_bridge.py` - tmux 完整生命周期管理
+- `tmux_terminal_receipts.py` - tmux receipt 构建逻辑
+- All commands - 两种 backend 都支持
 
-**暂保留** (原因明确):
+**双轨策略**:
 
-| 路径 | 保留原因 | 移除条件 |
-|------|----------|----------|
-| tmux backend | 现有 production dispatches 仍在使用 | 零 tmux dispatches 持续 30 天 |
-| dispatch bridge script | tmux 完整生命周期管理 | tmux backend 完全退役 |
-| tmux receipts | tmux receipt 构建逻辑 | tmux backend 完全退役 |
-| deprecated commands | 向后兼容 | 90+ 天无使用记录 |
+| Backend | 定位 | 使用场景 |
+|---------|------|----------|
+| subagent | DEFAULT | 自动化执行、CI/CD、新开发 |
+| tmux | FULLY SUPPORTED | 交互式会话、手动观察、调试 |
 
 #### 最终边界声明
 
-**这是清理的最终边界。**
+**这是最终边界：双轨兼容策略。**
 
 **含义**:
-- 不再计划进一步的增量清理批次
-- 迁移现在是**用户驱动**的，而非代码驱动
-- 遗留代码**仅在迁移条件满足时**移除
-- 所有未来开发**必须**使用 subagent backend
+- 不再计划进一步的清理批次
+- **两种 backend 都保留** - 不做破坏性删除
+- 用户可根据需求选择 backend
+- subagent 是默认推荐，但 tmux 完全可用
 
 **原因**:
-- trading live path 不能被破坏
-- production dispatches 需要迁移时间
-- 没有用户迁移的进一步代码变更没有价值
-- 清晰的政策 + 文档比部分代码删除更有价值
+- trading live path  preserved
+- tmux 使用场景仍然有效（交互式观察）
+- 双轨提供灵活性
+- 清晰的政策 + 文档是最终状态
 
 #### 交付文档
 
-- `docs/migration-retirement-plan.md` - 完整迁移与退役计划
-- `docs/CURRENT_TRUTH.md` - 更新 Batch 1-6 完成状态
+- `docs/migration-retirement-plan.md` → 更名为双轨策略文档
+- `docs/CURRENT_TRUTH.md` - 更新 V10 双轨策略状态
 - `runtime/orchestrator/README.md` - Backend Policy 已更新
+- `runtime/orchestrator/continuation_backends.py` - 代码注释已更新
 
 #### 测试结果
 
@@ -400,8 +397,8 @@ python3 -m pytest tests/orchestrator/ -v --tb=short
 
 #### Commit
 
-- **Hash**: (Final Pass commit - this commit)
-- **Message**: `P0-3 Final Pass: Legacy cleanup reached final boundary — migration now user-driven`
+- **Hash**: `ffd84d8`
+- **Message**: `P0-3 Final: Dual-track backend strategy (subagent + tmux)`
 
 ---
 
