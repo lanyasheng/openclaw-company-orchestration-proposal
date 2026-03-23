@@ -8,9 +8,9 @@ Run `python3 ~/.openclaw/scripts/orch_command.py` as the canonical runtime entry
 This skill is also the **discovery entry** for already-existing orchestration guards. It helps an agent find completion receipt / ack / waiting hard-close paths without implying that the skill itself implements those guards.
 
 Source of truth:
-- Workspace skill source: `~/.openclaw/workspace/skills/orchestration-entry/SKILL.md`
-- Workspace command source: `~/.openclaw/workspace/scripts/orch_command.py`
-- Install / refresh global runtime copy: `python3 ~/.openclaw/workspace/scripts/install_orchestration_entry_global.py`
+- Monorepo skill source: `runtime/skills/orchestration-entry/SKILL.md`
+- Monorepo command source: `runtime/scripts/orch_command.py`
+- Install / refresh global runtime copy: `python3 runtime/scripts/install_orchestration_entry_global.py`
 
 Quick start:
 ```bash
@@ -37,4 +37,4 @@ If the task is about orchestration completion, subagent terminal/completion rece
 
 That reference is for capability discovery only; the actual guards live in runtime hook / orchestrator code.
 
-Read `~/.openclaw/workspace/docs/architecture/2026-03-21-orchestration-skill-and-command-defaults.md` before changing defaults or adding a new scenario.
+Read `docs/architecture/2026-03-21-orchestration-skill-and-command-defaults.md` (in workspace) before changing defaults or adding a new scenario.
