@@ -43,6 +43,13 @@ from batch_aggregator import analyze_batch_results, check_and_summarize_batch
 from completion_ack_guard import send_roundtable_completion_ack
 from continuation_backends import build_backend_plan, build_timeout_policy, normalize_dispatch_backend
 from contracts import CANONICAL_CALLBACK_ENVELOPE_VERSION, resolve_orchestration_contract
+from core.dispatch_planner import DispatchPlanner
+from core.handoff_schema import (
+    build_registration_handoff,
+    build_execution_handoff,
+    handoff_to_task_registration,
+    handoff_to_dispatch_spawn,
+)
 from orchestrator import Decision, DECISIONS_DIR, DISPATCHES_DIR, _ensure_dirs
 from state_machine import (
     STATE_DIR,
@@ -643,6 +650,46 @@ def process_channel_roundtable_callback(
         analysis=analysis,
     )
     dispatch_info["decision_path"] = str(decision_path)
+    
+    # P0-2 Batch 2: 使用统一 handoff schema 生成 registration/execution handoff
+    from core.dispatch_planner import DispatchPlan, DispatchBackend, DispatchStatus
+    dispatch_plan_data = dispatch_info["dispatch_plan"]
+    # Reconstruct DispatchPlan from dict for to_planning_handoff()
+    _planner = DispatchPlanner()
+    _planner.plans[dispatch_plan_data["dispatch_id"]] = DispatchPlan(
+        dispatch_id=dispatch_plan_data["dispatch_id"],
+        batch_id=dispatch_plan_data["batch_id"],
+        scenario=dispatch_plan_data["scenario"],
+        adapter=dispatch_plan_data["adapter"],
+        decision_id=dispatch_plan_data["decision_id"],
+        status=DispatchStatus(dispatch_plan_data["status"]),
+        reason=dispatch_plan_data.get("reason", ""),
+        backend=DispatchBackend(dispatch_plan_data["backend"]),
+        continuation=dispatch_plan_data.get("continuation", {}),
+        timestamp=dispatch_plan_data.get("timestamp", ""),
+    )
+    _planner.plans[dispatch_plan_data["dispatch_id"]].safety_gates = dispatch_plan_data.get("safety_gates", {})
+    _planner.plans[dispatch_plan_data["dispatch_id"]].orchestration_contract = dispatch_plan_data.get("orchestration_contract", {})
+    _planner.plans[dispatch_plan_data["dispatch_id"]].recommended_spawn = dispatch_plan_data.get("recommended_spawn", {})
+    if dispatch_plan_data.get("continuation_contract"):
+        from partial_continuation import ContinuationContract
+        _planner.plans[dispatch_plan_data["dispatch_id"]].continuation_contract = ContinuationContract.from_dict(dispatch_plan_data["continuation_contract"])
+    
+    planning_handoff = _planner.plans[dispatch_plan_data["dispatch_id"]].to_planning_handoff()
+    registration_handoff = build_registration_handoff(
+        planning_handoff,
+        batch_id=batch_id,
+        registration_status=None,
+        ready_for_auto_dispatch=None,
+    )
+    
+    execution_handoff = None
+    if dispatch_plan_data["status"] == "triggered":
+        execution_handoff = build_execution_handoff(
+            planning_handoff,
+            runtime="subagent" if normalized_backend == "subagent" else "tmux",
+            timeout_seconds=3600,
+        )
 
     triggered = dispatch_info["dispatch_plan"]["status"] == "triggered"
     if triggered:
@@ -666,6 +713,14 @@ def process_channel_roundtable_callback(
         scenario=decision.metadata.get("scenario", ADAPTER_NAME),
     )
 
+    # P0-2 Batch 2: 准备 handoff schema 输出
+    handoff_artifacts = {
+        "planning_handoff": planning_handoff.to_dict(),
+        "registration_handoff": registration_handoff.to_dict(),
+    }
+    if execution_handoff:
+        handoff_artifacts["execution_handoff"] = execution_handoff.to_dict()
+    
     return {
         "status": "processed",
         "batch_id": batch_id,
@@ -673,5 +728,6 @@ def process_channel_roundtable_callback(
         "summary_path": str(summary_path),
         "decision_path": str(decision_path),
         "ack_result": ack_result,
+        "handoff_schema": handoff_artifacts,
         **dispatch_info,
     }

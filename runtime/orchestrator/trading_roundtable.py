@@ -26,6 +26,12 @@ from typing import Any, Dict, List, Optional
 # 核心模块
 from adapters.trading import TradingAdapter, ADAPTER_NAME, SCENARIO
 from core.dispatch_planner import DispatchPlanner, DispatchBackend, DispatchStatus
+from core.handoff_schema import (
+    build_registration_handoff,
+    build_execution_handoff,
+    handoff_to_task_registration,
+    handoff_to_dispatch_spawn,
+)
 from core.quality_gate import (
     check_packet_completeness,
     check_artifact_truth,
@@ -512,6 +518,24 @@ def process_trading_roundtable_callback(
     dispatch_path = _dispatch_plan_file(dispatch_plan.dispatch_id)
     _atomic_json_write(dispatch_path, dispatch_plan.to_dict())
     
+    # P0-2 Batch 2: 使用统一 handoff schema 生成 registration/execution handoff
+    planning_handoff = dispatch_plan.to_planning_handoff()
+    registration_handoff = build_registration_handoff(
+        planning_handoff,
+        batch_id=batch_id,
+        registration_status=None,  # 从 safety_gates 推导
+        ready_for_auto_dispatch=None,  # 从 safety_gates 推导
+    )
+    
+    # 仅在 triggered 时构建 execution handoff
+    execution_handoff = None
+    if dispatch_plan.status == DispatchStatus.TRIGGERED:
+        execution_handoff = build_execution_handoff(
+            planning_handoff,
+            runtime="subagent" if normalized_backend == "subagent" else "tmux",
+            timeout_seconds=3600,
+        )
+    
     # 标记 batch 终端状态
     triggered = dispatch_plan.status == DispatchStatus.TRIGGERED
     if triggered:
@@ -541,6 +565,14 @@ def process_trading_roundtable_callback(
         scenario=SCENARIO,
     )
     
+    # P0-2 Batch 2: 准备 handoff schema 输出
+    handoff_artifacts = {
+        "planning_handoff": planning_handoff.to_dict(),
+        "registration_handoff": registration_handoff.to_dict(),
+    }
+    if execution_handoff:
+        handoff_artifacts["execution_handoff"] = execution_handoff.to_dict()
+    
     return {
         "status": "processed",
         "batch_id": batch_id,
@@ -554,4 +586,5 @@ def process_trading_roundtable_callback(
         "next_task_registrations": next_registrations,
         "has_remaining_work": partial_closeout.has_remaining_work(),
         "dispatch_plan": dispatch_plan.to_dict(),
+        "handoff_schema": handoff_artifacts,
     }
