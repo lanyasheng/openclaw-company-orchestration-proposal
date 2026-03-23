@@ -55,13 +55,23 @@ class PlanningHandoff:
     - continuation_contract: 统一 continuation contract
     - scenario: 场景标识
     - adapter: 适配器标识
-    - owner: 任务所有者
+    - owner: 任务所有者 (业务归属/判断/验收)
+    - executor: 执行器 (role_agent / claude_code / browser / message)
     - backend_preference: 后端偏好 (subagent / tmux / manual)
+    - execution_profile: 执行 profile (generic_subagent / coding / interactive_observable)
     - task_preview: 任务预览/描述
     - safety_gates: 安全门检查结果
     - metadata: 额外元数据
     
-    这是从 planning 层到 registration/execution 层的统一接口。
+    Owner/Executor 解耦 (P0-3 Batch 5):
+    - owner: 负责业务归属、判断、验收 (e.g., trading, main, channel)
+    - executor: 负责具体执行路径 (e.g., claude_code for coding, subagent for generic)
+    - backend: 执行通道 (subagent / tmux)，与 executor 解耦
+    
+    默认映射：
+    - execution_profile=coding → executor=claude_code
+    - execution_profile=generic_subagent → executor=subagent (role agent)
+    - execution_profile=interactive_observable → executor=subagent + tmux backend
     """
     handoff_id: str
     source_type: Literal["dispatch_plan", "completion_receipt", "manual"]
@@ -70,7 +80,9 @@ class PlanningHandoff:
     scenario: str
     adapter: str
     owner: str
+    executor: Literal["subagent", "claude_code", "browser", "message"] = "subagent"
     backend_preference: Literal["subagent", "tmux", "manual"] = "subagent"
+    execution_profile: Literal["generic_subagent", "coding", "interactive_observable"] = "generic_subagent"
     task_preview: str = ""
     safety_gates: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -114,7 +126,9 @@ class PlanningHandoff:
             "scenario": self.scenario,
             "adapter": self.adapter,
             "owner": self.owner,
+            "executor": self.executor,
             "backend_preference": self.backend_preference,
+            "execution_profile": self.execution_profile,
             "task_preview": self.task_preview,
             "safety_gates": self.safety_gates,
             "metadata": self.metadata,
@@ -131,7 +145,9 @@ class PlanningHandoff:
             scenario=data.get("scenario", ""),
             adapter=data.get("adapter", ""),
             owner=data.get("owner", "main"),
+            executor=data.get("executor", "subagent"),
             backend_preference=data.get("backend_preference", "subagent"),
+            execution_profile=data.get("execution_profile", "generic_subagent"),
             task_preview=data.get("task_preview", ""),
             safety_gates=data.get("safety_gates", {}),
             metadata=data.get("metadata", {}),
@@ -316,6 +332,88 @@ def _iso_now() -> str:
     return datetime.now().isoformat()
 
 
+def _resolve_executor_from_profile_and_task(
+    execution_profile: str,
+    task_preview: str,
+    executor_preference: Optional[str] = None,
+) -> Literal["subagent", "claude_code", "browser", "message"]:
+    """
+    P0-3 Batch 5: 根据 execution_profile 和 task_preview 解析 executor。
+    
+    规则：
+    1. 如果显式指定 executor_preference，优先使用
+    2. execution_profile=coding → executor=claude_code
+    3. execution_profile=interactive_observable → executor=subagent
+    4. execution_profile=generic_subagent → executor=subagent
+    5. task_preview 包含 coding keywords → executor=claude_code
+    
+    Coding keywords: coding, implementation, refactor, fix, test-fix, bugfix, test
+    """
+    # 显式 preference 优先
+    if executor_preference:
+        if executor_preference in ("subagent", "claude_code", "browser", "message"):
+            return executor_preference  # type: ignore
+    
+    # Profile 驱动
+    if execution_profile == "coding":
+        return "claude_code"
+    elif execution_profile == "interactive_observable":
+        return "subagent"
+    elif execution_profile == "generic_subagent":
+        return "subagent"
+    
+    # Task preview keywords 驱动 (fallback)
+    task_lower = task_preview.lower()
+    coding_keywords = ["coding", "implementation", "refactor", "fix", "test-fix", "bugfix", "test"]
+    if any(kw in task_lower for kw in coding_keywords):
+        return "claude_code"
+    
+    return "subagent"
+
+
+def _resolve_execution_profile_from_task(
+    task_preview: str,
+    backend_preference: str = "subagent",
+) -> Literal["generic_subagent", "coding", "interactive_observable"]:
+    """
+    P0-3 Batch 5: 根据 task_preview 和 backend_preference 推导 execution_profile。
+    
+    规则：
+    1. backend_preference=tmux → interactive_observable
+    2. task_preview 包含 coding keywords → coding
+    3. 默认 → generic_subagent
+    
+    Coding keywords (comprehensive list):
+    - implement/implementation/implementing
+    - refactor/refactoring
+    - fix/fixing/bugfix
+    - test/testing/test-fix
+    - code/coding
+    - build/develop/development
+    - feature (when combined with action verbs)
+    """
+    if backend_preference == "tmux":
+        return "interactive_observable"
+    
+    task_lower = task_preview.lower()
+    
+    # Comprehensive coding keywords
+    coding_keywords = [
+        "implement", "implementation", "implementing",
+        "refactor", "refactoring",
+        "fix", "fixing", "bugfix", "bug-fix",
+        "test", "testing", "test-fix",
+        "code", "coding",
+        "build", "develop", "development",
+        "api endpoint", "module", "feature"
+    ]
+    
+    if any(kw in task_lower for kw in coding_keywords):
+        return "coding"
+    
+    return "generic_subagent"
+
+
 def build_planning_handoff(
     *,
     source_type: Literal["dispatch_plan", "completion_receipt", "manual"],
@@ -325,6 +423,8 @@ def build_planning_handoff(
     adapter: str,
     owner: str,
     backend_preference: Literal["subagent", "tmux", "manual"] = "subagent",
+    executor_preference: Optional[str] = None,
+    execution_profile: Optional[Literal["generic_subagent", "coding", "interactive_observable"]] = None,
     task_preview: str = "",
     safety_gates: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -338,16 +438,38 @@ def build_planning_handoff(
     - continuation_contract: continuation contract (from DispatchPlan.continuation_contract)
     - scenario: 场景标识
     - adapter: 适配器标识
-    - owner: 任务所有者
-    - backend_preference: 后端偏好
+    - owner: 任务所有者 (业务归属/判断/验收)
+    - backend_preference: 后端偏好 (subagent / tmux / manual)
+    - executor_preference: 执行器偏好 (可选，显式指定 executor)
+    - execution_profile: 执行 profile (可选，自动推导 executor)
     - task_preview: 任务预览
     - safety_gates: 安全门检查结果
     - metadata: 额外元数据
+    
+    Owner/Executor 解耦 (P0-3 Batch 5):
+    - 如果 execution_profile 未指定，从 task_preview 推导
+    - 如果 executor_preference 未指定，从 execution_profile 推导
+    - coding profile → claude_code executor
+    - generic_subagent profile → subagent executor
     
     返回：PlanningHandoff
     """
     full_metadata = metadata or {}
     full_metadata["created_at"] = _iso_now()
+    
+    # Fallback: 如果 task_preview 为空，从 continuation_contract.next_step 推导
+    effective_task_preview = task_preview if task_preview else continuation_contract.get("next_step", "")
+    
+    # 推导 execution_profile (如果未指定)
+    if execution_profile is None:
+        execution_profile = _resolve_execution_profile_from_task(effective_task_preview, backend_preference)
+    
+    # 推导 executor (如果未显式指定)
+    executor = _resolve_executor_from_profile_and_task(
+        execution_profile=execution_profile,
+        task_preview=effective_task_preview,
+        executor_preference=executor_preference,
+    )
     
     handoff = PlanningHandoff(
         handoff_id=_generate_id("handoff"),
@@ -357,7 +479,9 @@ def build_planning_handoff(
         scenario=scenario,
         adapter=adapter,
         owner=owner,
+        executor=executor,
         backend_preference=backend_preference,
+        execution_profile=execution_profile,
         task_preview=task_preview,
         safety_gates=safety_gates or {},
         metadata=full_metadata,

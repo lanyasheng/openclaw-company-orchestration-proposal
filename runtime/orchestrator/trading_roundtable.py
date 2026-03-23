@@ -460,6 +460,24 @@ def process_trading_roundtable_callback(
         default_backend=normalized_backend,
     )
     
+    # P0-3 Batch 5: 注入 executor 信息 (owner/executor 解耦)
+    # 从 roundtable/continuation 推导 execution_profile 和 executor
+    roundtable = decision.metadata.get("roundtable", {})
+    next_step = roundtable.get("next_step", "") or decision.reason
+    
+    # 默认 trading 场景使用 generic_subagent profile
+    # 如果 next_step 包含 coding keywords，使用 coding profile
+    execution_profile = "generic_subagent"
+    coding_keywords = ["coding", "implementation", "refactor", "fix", "test-fix", "bugfix"]
+    if any(kw in next_step.lower() for kw in coding_keywords):
+        execution_profile = "coding"
+    
+    # 根据 profile 推导 executor
+    executor = "claude_code" if execution_profile == "coding" else "subagent"
+    
+    decision.metadata["orchestration_contract"]["execution_profile"] = execution_profile
+    decision.metadata["orchestration_contract"]["executor"] = executor
+    
     # 使用适配器构建 continuation plan
     continuation = _adapter.build_continuation_plan(decision.to_dict(), analysis)
     

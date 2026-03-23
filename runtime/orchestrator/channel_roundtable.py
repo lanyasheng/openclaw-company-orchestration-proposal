@@ -628,6 +628,23 @@ def process_channel_roundtable_callback(
         default_owner=decision.metadata.get("roundtable", {}).get("owner") or decision.metadata.get("channel_packet", {}).get("owner"),
         default_backend=normalized_backend,
     )
+    
+    # P0-3 Batch 5: 注入 executor 信息 (owner/executor 解耦)
+    roundtable = decision.metadata.get("roundtable", {})
+    next_step = roundtable.get("next_step", "") or decision.reason
+    
+    # 默认 channel 场景使用 generic_subagent profile
+    # 如果 next_step 包含 coding keywords，使用 coding profile
+    execution_profile = "generic_subagent"
+    coding_keywords = ["coding", "implementation", "refactor", "fix", "test-fix", "bugfix"]
+    if any(kw in next_step.lower() for kw in coding_keywords):
+        execution_profile = "coding"
+    
+    # 根据 profile 推导 executor
+    executor = "claude_code" if execution_profile == "coding" else "subagent"
+    
+    decision.metadata["orchestration_contract"]["execution_profile"] = execution_profile
+    decision.metadata["orchestration_contract"]["executor"] = executor
 
     channel_packet = decision.metadata.get("channel_packet", {})
     resolved_allow_auto_dispatch, auto_dispatch_source = _resolve_allow_auto_dispatch(

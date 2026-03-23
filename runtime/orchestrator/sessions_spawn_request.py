@@ -705,18 +705,27 @@ class SpawnRequestKernel:
         """
         从 receipt 构建 sessions_spawn 参数。
         
+        P0-3 Batch 5: 支持 owner/executor 解耦，包含 executor 信息。
+        
         这是通用构建逻辑，不绑定特定场景。
         """
         # 从 receipt metadata 中提取场景信息
         scenario = receipt.metadata.get("scenario", "generic")
         owner = receipt.metadata.get("owner", "")
+        executor = receipt.metadata.get("executor", "subagent")
+        execution_profile = receipt.metadata.get("execution_profile", "generic_subagent")
         
         # 构建 task preview
         task_preview = f"Orchestration continuation for task {receipt.source_task_id}"
         
+        # P0-3 Batch 5: 根据 executor 决定 runtime
+        # executor=claude_code → runtime=subagent (Claude Code runs in subagent)
+        # executor=subagent → runtime=subagent (role agent)
+        runtime = "subagent"
+        
         # 构建 sessions_spawn 参数
         params = {
-            "runtime": "subagent",
+            "runtime": runtime,
             "cwd": "",  # 由上游 adapter 填充
             "task": task_preview,
             "label": f"orch-{receipt.source_task_id[:8]}",
@@ -728,6 +737,8 @@ class SpawnRequestKernel:
                 "receipt_id": receipt.receipt_id,
                 "scenario": scenario,
                 "owner": owner,
+                "executor": executor,
+                "execution_profile": execution_profile,
                 "orchestration_continuation": True,
             },
         }

@@ -201,6 +201,8 @@ class DispatchPlan:
         """
         P0-2 Batch 1: 将 DispatchPlan 转换为 PlanningHandoff。
         
+        P0-3 Batch 5: 支持 owner/executor 解耦，自动推导 execution_profile 和 executor。
+        
         这是 handoff schema 的统一出口，用于连接到 task registration / execution。
         
         返回：PlanningHandoff
@@ -222,6 +224,9 @@ class DispatchPlan:
             "manual"
         )
         
+        # P0-3 Batch 5: 从 metadata 提取 executor_preference (如果存在)
+        executor_preference = self.orchestration_contract.get("executor_preference")
+        
         return build_planning_handoff(
             source_type="dispatch_plan",
             source_id=self.dispatch_id,
@@ -230,6 +235,7 @@ class DispatchPlan:
             adapter=self.adapter,
             owner=self.orchestration_contract.get("owner", "main"),
             backend_preference=backend_pref,  # type: ignore
+            executor_preference=executor_preference,
             task_preview=task_preview,
             safety_gates=self.safety_gates,
             metadata={
