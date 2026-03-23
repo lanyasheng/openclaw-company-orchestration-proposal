@@ -67,6 +67,78 @@ It is a working repository for:
 
 ---
 
+## What problem this repository actually solves
+
+This repository solves a very specific class of problems:
+
+> **What should happen after one task finishes, when the real work is still not done?**
+
+In real multi-agent systems, the failure mode is rarely “the model cannot answer.”
+The real failure mode is usually one of these:
+- a task completes but nobody knows who owns the next step,
+- multiple child tasks return but there is no clean fan-in point,
+- the system can generate a plan but cannot safely dispatch the next action,
+- a callback is emitted but never reaches the right parent or user-visible channel,
+- business ownership and execution ownership are mixed together,
+- or the system keeps adding more scripts without a stable control plane.
+
+This repository is trying to make those transitions explicit.
+
+It focuses on:
+- **how work continues**,
+- **how it is registered**,
+- **how it is dispatched**,
+- **how it is acknowledged**,
+- **how it is gated**,
+- and **how the next step is decided without losing truth**.
+
+That is why the core objects here are not just prompts or runners, but things like:
+- continuation contracts,
+- handoff schemas,
+- registration and readiness tracking,
+- dispatch plans,
+- bridge consumption,
+- execution requests,
+- receipts,
+- and callback/ack separation.
+
+---
+
+## Why this is more than harness engineering
+
+Harness engineering is an important part of this repo, but it is **not the whole repo**.
+
+### Harness engineering is the execution layer
+That includes things like:
+- how Claude Code is invoked,
+- how subagents are launched,
+- how tmux stays usable as a compatibility path,
+- how execution artifacts are captured,
+- and how long-running tasks stay observable.
+
+### This repository goes one layer above that
+This repo is also building a **workflow control plane**.
+That means it defines:
+- how work is modeled before execution,
+- how ownership is tracked,
+- how owner and executor are decoupled,
+- how fan-out / fan-in is represented,
+- how continuation is gated,
+- how receipts and acknowledgements are separated,
+- and how the next dispatch is triggered after earlier work returns.
+
+A short way to say it is:
+
+> **Harness engineering answers “how do we run this task?”**
+>
+> **This repository also answers “how do we keep the workflow moving correctly after tasks begin to branch, return, and hand off?”**
+
+That is why this repo should be read as:
+- **control-plane engineering first**,
+- with **harness engineering inside the execution layer**.
+
+---
+
 ## What we are doing
 
 At a high level, this repo is building a company-grade workflow layer for AI agents.
