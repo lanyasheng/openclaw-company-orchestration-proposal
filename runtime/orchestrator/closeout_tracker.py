@@ -34,6 +34,15 @@ __all__ = [
     "CLOSEOUT_TRACKER_VERSION",
     "CloseoutGateResult",
     "check_closeout_gate",
+    # P0-4 Final Mile: Push Consumer / Status Backfill
+    "PushStatus",
+    "PushActionStatus",
+    "PushAction",
+    "emit_push_action",
+    "consume_push_action",
+    "update_push_status",
+    "simulate_push_success",
+    "get_push_action",
 ]
 
 CLOSEOUT_TRACKER_VERSION = "closeout_tracker_v1"
@@ -51,6 +60,15 @@ CloseoutStatus = Literal[
     "incomplete",         # closeout 未完成（仍有 remaining work）
     "blocked",            # closeout 被 blocker 阻止
     "stale",              # closeout 状态落后于最新 batch
+]
+
+# P0-4 Final Mile: Push Action Status
+PushActionStatus = Literal[
+    "emitted",            # push action 已生成，等待消费
+    "consumed",           # push action 已消费（intent 记录），等待执行
+    "executed",           # push 已执行（本地 commit 完成）
+    "failed",             # push 执行失败
+    "blocked",            # push 被阻止
 ]
 
 
@@ -75,6 +93,61 @@ def _atomic_json_write(file_path: Path, payload: Dict[str, Any]) -> None:
 
 
 @dataclass
+class PushAction:
+    """
+    P0-4 Final Mile: Push Action — 标准化的 push action 记录。
+    
+    用于跟踪 push 动作的生命周期：
+    1. emitted: push action 已生成，等待消费
+    2. consumed: push action 已消费（intent 记录），等待执行
+    3. executed: push 已执行（本地 commit 完成）
+    4. failed: push 执行失败
+    5. blocked: push 被阻止
+    
+    核心设计：
+    - 不真实 push 远端（除非显式调用真实 push 函数）
+    - 受控模拟 push 成功用于测试闭环
+    - 状态必须诚实，不能伪造"已 push"
+    """
+    action_id: str
+    batch_id: str
+    closeout_id: str
+    status: PushActionStatus
+    intent: str  # push 意图描述
+    executed_at: Optional[str] = None
+    error: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=lambda: _iso_now())
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "action_id": self.action_id,
+            "batch_id": self.batch_id,
+            "closeout_id": self.closeout_id,
+            "status": self.status,
+            "intent": self.intent,
+            "executed_at": self.executed_at,
+            "error": self.error,
+            "metadata": self.metadata,
+            "created_at": self.created_at,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PushAction":
+        return cls(
+            action_id=data.get("action_id", ""),
+            batch_id=data.get("batch_id", ""),
+            closeout_id=data.get("closeout_id", ""),
+            status=data.get("status", "emitted"),
+            intent=data.get("intent", ""),
+            executed_at=data.get("executed_at"),
+            error=data.get("error"),
+            metadata=data.get("metadata", {}),
+            created_at=data.get("created_at", _iso_now()),
+        )
+
+
+@dataclass
 class CloseoutArtifact:
     """
     Closeout artifact — 记录 batch 完成后的 closeout 状态。
@@ -87,6 +160,7 @@ class CloseoutArtifact:
     - push_required: 是否需要 push
     - continuation_contract: 统一的 continuation 语义
     - artifacts: 相关 artifact 路径（summary/decision/dispatch）
+    - push_action: push action 记录（P0-4 Final Mile）
     - metadata: 额外元数据
     """
     closeout_id: str
@@ -96,6 +170,7 @@ class CloseoutArtifact:
     push_required: bool
     continuation_contract: ContinuationContract
     artifacts: Dict[str, str] = field(default_factory=dict)
+    push_action: Optional[PushAction] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: _iso_now())
     
@@ -109,12 +184,16 @@ class CloseoutArtifact:
             "push_required": self.push_required,
             "continuation_contract": self.continuation_contract.to_dict(),
             "artifacts": self.artifacts,
+            "push_action": self.push_action.to_dict() if self.push_action else None,
             "metadata": self.metadata,
             "created_at": self.created_at,
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CloseoutArtifact":
+        push_action_data = data.get("push_action")
+        push_action = PushAction.from_dict(push_action_data) if push_action_data else None
+        
         return cls(
             closeout_id=data.get("closeout_id", ""),
             batch_id=data.get("batch_id", ""),
@@ -123,6 +202,7 @@ class CloseoutArtifact:
             push_required=data.get("push_required", False),
             continuation_contract=ContinuationContract.from_dict(data.get("continuation_contract", {})),
             artifacts=data.get("artifacts", {}),
+            push_action=push_action,
             metadata=data.get("metadata", {}),
             created_at=data.get("created_at", _iso_now()),
         )
@@ -567,6 +647,337 @@ def check_closeout_gate(
 # ========== End P0-4 Batch 2 ==========
 
 
+# ========== P0-4 Final Mile: Push Consumer / Status Backfill ==========
+# 补上 push consumer 和 push_status 自动回填机制
+
+def _push_action_file(batch_id: str) -> Path:
+    """返回 push action 文件路径"""
+    safe_batch_id = batch_id.replace("/", "_").replace(" ", "_")
+    return CLOSEOUT_DIR / f"push-action-{safe_batch_id}.json"
+
+
+def emit_push_action(
+    batch_id: str,
+    closeout_id: str,
+    intent: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> PushAction:
+    """
+    P0-4 Final Mile: Emit Push Action
+    
+    当 closeout_status=complete 且 push_required=true 时，生成标准化的 push action。
+    
+    Args:
+        batch_id: 批次 ID
+        closeout_id: closeout ID
+        intent: push 意图描述（默认根据场景生成）
+        metadata: 额外元数据
+    
+    Returns:
+        PushAction（已写入文件）
+    
+    状态流转：
+    - emitted: push action 已生成，等待消费
+    - 此时 closeout.push_status 仍为 "pending"
+    
+    注意：
+    - 这只是生成 push action 记录，不执行真实 push
+    - 真实 push 由上层 consumer 调用 execute_push 或 simulate_push_success
+    """
+    _ensure_closeout_dir()
+    
+    # 生成 action ID
+    import uuid
+    action_id = f"push_{uuid.uuid4().hex[:12]}"
+    
+    # 默认 intent
+    if not intent:
+        intent = f"Git push for batch {batch_id} closeout"
+    
+    # 创建 push action
+    push_action = PushAction(
+        action_id=action_id,
+        batch_id=batch_id,
+        closeout_id=closeout_id,
+        status="emitted",
+        intent=intent,
+        metadata=metadata or {},
+    )
+    
+    # 写入文件
+    action_path = _push_action_file(batch_id)
+    _atomic_json_write(action_path, push_action.to_dict())
+    
+    # 更新 closeout artifact 中的 push_action 引用
+    closeout = get_closeout(batch_id)
+    if closeout:
+        closeout.push_action = push_action
+        closeout.write()
+    
+    return push_action
+
+
+def consume_push_action(
+    batch_id: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> PushAction:
+    """
+    P0-4 Final Mile: Consume Push Action
+    
+    消费 push action，记录 intent（表示已准备执行，但尚未执行）。
+    
+    Args:
+        batch_id: 批次 ID
+        metadata: 额外元数据
+    
+    Returns:
+        PushAction（已更新状态）
+    
+    状态流转：
+    - emitted -> consumed: push action 已消费，intent 已记录
+    - 此时 closeout.push_status 仍为 "pending"
+    
+    注意：
+    - 这只是记录消费 intent，不执行真实 push
+    - 真实 push 需要调用 execute_push 或 simulate_push_success
+    """
+    # 读取 push action
+    action_path = _push_action_file(batch_id)
+    if not action_path.exists():
+        raise ValueError(f"Push action for batch {batch_id} not found")
+    
+    with open(action_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    push_action = PushAction.from_dict(data)
+    
+    # 检查状态
+    if push_action.status != "emitted":
+        raise ValueError(f"Push action status is {push_action.status}, expected 'emitted'")
+    
+    # 更新状态为 consumed
+    push_action.status = "consumed"
+    push_action.metadata = {**push_action.metadata, **(metadata or {})}
+    
+    # 写入文件
+    _atomic_json_write(action_path, push_action.to_dict())
+    
+    # 更新 closeout artifact
+    closeout = get_closeout(batch_id)
+    if closeout:
+        closeout.push_action = push_action
+        closeout.write()
+    
+    return push_action
+
+
+def update_push_status(
+    batch_id: str,
+    new_status: PushStatus,
+    push_action_status: Optional[PushActionStatus] = None,
+    error: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> CloseoutArtifact:
+    """
+    P0-4 Final Mile: Update Push Status
+    
+    更新 closeout 的 push_status（回填机制）。
+    
+    Args:
+        batch_id: 批次 ID
+        new_status: 新的 push status
+        push_action_status: 同时更新 push action 状态（可选）
+        error: 错误信息（如果失败）
+        metadata: 额外元数据
+    
+    Returns:
+        CloseoutArtifact（已更新）
+    
+    状态流转：
+    - pending -> pushed: push 成功，状态回填
+    - pending -> blocked: push 被阻止
+    - pending -> failed: push 失败
+    
+    注意：
+    - 这是受控回填函数，不执行真实 push
+    - 真实 push 成功后调用此函数回填状态
+    - 也可以用于模拟 push 成功（测试用）
+    """
+    # 读取 closeout
+    closeout = get_closeout(batch_id)
+    if not closeout:
+        raise ValueError(f"Closeout for batch {batch_id} not found")
+    
+    # 更新 push status
+    old_status = closeout.push_status
+    closeout.push_status = new_status
+    
+    # 更新 push action（如果有）
+    if closeout.push_action:
+        if push_action_status:
+            closeout.push_action.status = push_action_status
+        if error:
+            closeout.push_action.error = error
+        if new_status == "pushed":
+            closeout.push_action.executed_at = _iso_now()
+        closeout.push_action.metadata = {**closeout.push_action.metadata, **(metadata or {})}
+    
+    # 更新 metadata
+    closeout.metadata["push_status_updated_at"] = _iso_now()
+    closeout.metadata["push_status_old"] = old_status
+    closeout.metadata["push_status_new"] = new_status
+    if error:
+        closeout.metadata["push_error"] = error
+    if metadata:
+        closeout.metadata.update(metadata)
+    
+    # 写入文件
+    closeout.write()
+    
+    # 更新 push action 文件（如果有）
+    if closeout.push_action:
+        action_path = _push_action_file(batch_id)
+        _atomic_json_write(action_path, closeout.push_action.to_dict())
+    
+    return closeout
+
+
+def simulate_push_success(
+    batch_id: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> CloseoutArtifact:
+    """
+    P0-4 Final Mile: Simulate Push Success
+    
+    受控模拟 push 成功，用于测试闭环（不真实 push 远端）。
+    
+    Args:
+        batch_id: 批次 ID
+        metadata: 额外元数据
+    
+    Returns:
+        CloseoutArtifact（已更新为 pushed 状态）
+    
+    状态流转：
+    - push_status: pending -> pushed
+    - push_action: emitted/consumed -> executed
+    
+    注意：
+    - 这只是模拟 push 成功，不执行真实 git push
+    - 用于测试内部自动推进闭环
+    - 状态必须诚实：metadata 中会标记 "simulated": true
+    """
+    # 读取 closeout
+    closeout = get_closeout(batch_id)
+    if not closeout:
+        raise ValueError(f"Closeout for batch {batch_id} not found")
+    
+    # 检查是否允许模拟（只有 pending 状态才能模拟）
+    if closeout.push_status not in ("pending", "consumed"):
+        raise ValueError(f"Cannot simulate push: current status is {closeout.push_status}")
+    
+    # 准备 metadata（标记为模拟）
+    sim_metadata = metadata or {}
+    sim_metadata["simulated"] = True
+    sim_metadata["simulated_at"] = _iso_now()
+    sim_metadata["simulation_note"] = "This is a simulated push success for testing; no real git push was performed"
+    
+    # 更新状态
+    return update_push_status(
+        batch_id=batch_id,
+        new_status="pushed",
+        push_action_status="executed",
+        metadata=sim_metadata,
+    )
+
+
+def get_push_action(batch_id: str) -> Optional[PushAction]:
+    """
+    P0-4 Final Mile: Get Push Action
+    
+    获取 batch 的 push action 记录。
+    
+    Args:
+        batch_id: 批次 ID
+    
+    Returns:
+        PushAction，不存在则返回 None
+    """
+    action_path = _push_action_file(batch_id)
+    if not action_path.exists():
+        return None
+    
+    with open(action_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    return PushAction.from_dict(data)
+
+
+def check_push_consumer_status(batch_id: str) -> Dict[str, Any]:
+    """
+    P0-4 Final Mile: Check Push Consumer Status
+    
+    检查 push consumer 的完整状态（closeout + push action）。
+    
+    Args:
+        batch_id: 批次 ID
+    
+    Returns:
+        {
+            "closeout_status": CloseoutStatus,
+            "push_status": PushStatus,
+            "push_required": bool,
+            "push_action_status": PushActionStatus | None,
+            "push_action_exists": bool,
+            "can_auto_continue": bool,  # 是否允许自动继续
+            "blocker": str | None,
+        }
+    """
+    closeout = get_closeout(batch_id)
+    
+    if not closeout:
+        return {
+            "closeout_status": "incomplete",
+            "push_status": "not_required",
+            "push_required": False,
+            "push_action_status": None,
+            "push_action_exists": False,
+            "can_auto_continue": True,  # 没有 closeout 视为首次运行
+            "blocker": None,
+        }
+    
+    push_action = closeout.push_action
+    push_action_status = push_action.status if push_action else None
+    
+    # 判断是否允许自动继续
+    can_auto_continue = False
+    blocker = None
+    
+    if closeout.closeout_status == "blocked":
+        blocker = f"Closeout blocked: {closeout.metadata.get('closeout_reason', 'unknown')}"
+    elif closeout.closeout_status == "incomplete":
+        blocker = f"Closeout incomplete: {closeout.metadata.get('closeout_reason', 'unknown')}"
+    elif closeout.push_required and closeout.push_status != "pushed":
+        blocker = f"Push required but status={closeout.push_status}"
+    else:
+        can_auto_continue = True
+    
+    return {
+        "closeout_status": closeout.closeout_status,
+        "push_status": closeout.push_status,
+        "push_required": closeout.push_required,
+        "push_action_status": push_action_status,
+        "push_action_exists": push_action is not None,
+        "can_auto_continue": can_auto_continue,
+        "blocker": blocker,
+        "closeout_id": closeout.closeout_id,
+        "push_action_id": push_action.action_id if push_action else None,
+    }
+
+
+# ========== End P0-4 Final Mile ==========
+
+
 # CLI 入口
 if __name__ == "__main__":
     import sys
@@ -575,6 +986,10 @@ if __name__ == "__main__":
         print("Usage:")
         print("  python closeout_tracker.py get <batch_id>")
         print("  python closeout_tracker.py check-push <batch_id>")
+        print("  python closeout_tracker.py check-consumer <batch_id>")
+        print("  python closeout_tracker.py emit-push <batch_id>")
+        print("  python closeout_tracker.py consume-push <batch_id>")
+        print("  python closeout_tracker.py simulate-push <batch_id>")
         print("  python closeout_tracker.py list")
         sys.exit(1)
     
@@ -601,6 +1016,59 @@ if __name__ == "__main__":
         batch_id = sys.argv[2]
         result = check_push_required(batch_id)
         print(json.dumps(result, indent=2))
+    
+    elif cmd == "check-consumer":
+        # P0-4 Final Mile: Check push consumer status
+        if len(sys.argv) < 3:
+            print("Error: missing batch_id")
+            sys.exit(1)
+        
+        batch_id = sys.argv[2]
+        result = check_push_consumer_status(batch_id)
+        print(json.dumps(result, indent=2))
+    
+    elif cmd == "emit-push":
+        # P0-4 Final Mile: Emit push action
+        if len(sys.argv) < 3:
+            print("Error: missing batch_id")
+            sys.exit(1)
+        
+        batch_id = sys.argv[2]
+        closeout = get_closeout(batch_id)
+        if not closeout:
+            print(f"Closeout for batch {batch_id} not found")
+            sys.exit(1)
+        
+        action = emit_push_action(batch_id, closeout.closeout_id)
+        print(json.dumps(action.to_dict(), indent=2))
+    
+    elif cmd == "consume-push":
+        # P0-4 Final Mile: Consume push action
+        if len(sys.argv) < 3:
+            print("Error: missing batch_id")
+            sys.exit(1)
+        
+        batch_id = sys.argv[2]
+        try:
+            action = consume_push_action(batch_id)
+            print(json.dumps(action.to_dict(), indent=2))
+        except ValueError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+    
+    elif cmd == "simulate-push":
+        # P0-4 Final Mile: Simulate push success (for testing)
+        if len(sys.argv) < 3:
+            print("Error: missing batch_id")
+            sys.exit(1)
+        
+        batch_id = sys.argv[2]
+        try:
+            closeout = simulate_push_success(batch_id)
+            print(json.dumps(closeout.to_dict(), indent=2))
+        except ValueError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
     
     elif cmd == "list":
         _ensure_closeout_dir()
