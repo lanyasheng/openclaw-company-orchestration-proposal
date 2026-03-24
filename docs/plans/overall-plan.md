@@ -69,11 +69,24 @@
 
 ## 2. 整体计划
 
-### P0：默认 planning + continuation contract + issue lane baseline + heartbeat boundary freeze
+### P0：默认 planning + continuation contract + issue lane baseline + heartbeat boundary freeze + completion validator design
 
 **目标**：先把"为什么停、停在哪、下一步怎么接"这件事讲清并定成默认。
 
 **本阶段必交付：**
+1. **Subtask Completion Validator 设计** ✅
+   - 设计文档：`plans/subtask-completion-validator-design-2026-03-25.md`
+   - 明确 completion 链路图 (terminal vs done 区别)
+   - 真实 hook 点候选 (基于现有代码路径)
+   - validator through/block/gate 规则
+   - 输出状态建议 (accepted/blocked/gate_required)
+   - 与 closeout guarantee / ack guard 集成边界
+   - 最小实施方案 (v1 audit_only → enforce)
+   - 风险、误杀场景、回退方案
+   - 验收标准
+   - **状态**: 设计锚定完成 (2026-03-25)，待实现
+
+2. **gstack-style planning default** ✅
 1. **gstack-style planning default** ✅
    - 非 trivial feature / bugfix / workflow 设计先产出 planning artifact；
    - 下游执行、review、QA 默认消费该 artifact。

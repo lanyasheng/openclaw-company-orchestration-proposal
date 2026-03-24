@@ -13,6 +13,8 @@
 >
 > **更新**: 2026-03-25 - P0 Batch 5: Subagent Session Cleanup 已实现 (process group kill / cleanup status / UI cleanup unknown 显式建模)
 
+**更新**: 2026-03-25 - **Subtask Completion Validator 设计锚定**: 完成设计文档，明确 completion 链路/hook 点/through-block 规则/集成边界 (待实现)
+
 **更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
 
 **更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
@@ -47,6 +49,7 @@
 2. **当前真值** → 本页(`CURRENT_TRUTH.md`)
 3. **设计背景** → [`executive-summary.md`](executive-summary.md)(5 分钟方案总览)
 4. **其他频道** → [`quickstart/quickstart-other-channels.md`](quickstart/quickstart-other-channels.md)(非 trading 场景)
+5. **Completion Validator 设计** → [`plans/subtask-completion-validator-design-2026-03-25.md`](plans/subtask-completion-validator-design-2026-03-25.md)(设计锚点)
 
 ### Runtime 入口
 ```bash
