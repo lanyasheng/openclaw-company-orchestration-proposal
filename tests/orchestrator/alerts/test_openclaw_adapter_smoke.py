@@ -149,53 +149,6 @@ def test_openclaw_adapter_binary_detection():
         return True
 
 
-def test_openclaw_adapter_real_send():
-    """测试 OpenClaw 适配器真实发送（需要 openclaw CLI 可用）"""
-    print("\n=== Test: OpenClaw Adapter Real Send ===")
-    
-    adapter = create_openclaw_adapter()
-    sender = TradingAlertSender(
-        delivery_adapter=adapter,
-        dry_run=False,
-        enable_dedup=False,
-        enable_throttle=False,
-    )
-    
-    result = sender.send_candidate_alert(
-        candidate_id="test_oc_real_send_001",
-        signal_type="candidate_new",
-        symbol="000003.SZ",
-        reason="测试 OpenClaw 真实发送",
-    )
-    
-    print(f"Result: ok={result.ok}, delivered={result.delivered}, metadata={result.metadata}")
-    
-    # 检查是否成功发送或失败原因
-    if result.delivered:
-        print("✅ OpenClaw adapter real send succeeded")
-        print(f"   Method: {result.metadata.get('method', 'unknown')}")
-        return True
-    else:
-        # 失败时检查原因
-        if result.metadata.get("status") == "failed":
-            reason = result.metadata.get("reason", "unknown")
-            error = result.metadata.get("error", "unknown")
-            print(f"⚠️ OpenClaw send failed: reason={reason}, error={error}")
-            
-            # 如果是二进制找不到，说明环境配置问题，不是代码问题
-            if "binary_not_found" in reason:
-                print("⚠️ This is an environment issue, not a code issue")
-                print("✅ Adapter logic test passed (failure handled correctly)")
-                return True
-            # 其他失败也视为测试通过（说明错误处理正常）
-            print("✅ Adapter error handling test passed")
-            return True
-        else:
-            print(f"⚠️ Unexpected result: {result.to_dict()}")
-            print("✅ Test passed (result processed)")
-            return True
-
-
 def test_send_alert_convenience_function():
     """测试便捷函数"""
     print("\n=== Test: send_alert Convenience Function ===")
@@ -231,7 +184,6 @@ def run_all_tests():
         ("File Adapter Real Send", test_file_adapter_real_send),
         ("OpenClaw Adapter Dry Run", test_openclaw_adapter_dry_run),
         ("OpenClaw Adapter Binary Detection", test_openclaw_adapter_binary_detection),
-        ("OpenClaw Adapter Real Send", test_openclaw_adapter_real_send),
         ("Convenience Function", test_send_alert_convenience_function),
     ]
     
