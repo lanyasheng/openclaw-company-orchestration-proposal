@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Minimal completion acknowledgement guard for roundtable callbacks."""
+"""Minimal completion acknowledgement guard for roundtable callbacks.
+
+P0-4 Final Mile: User-Visible Closeout Guarantee integration.
+- Emits closeout_guarantee artifact on every completion
+- Distinguishes internal_completed vs user_visible_closeout
+- Provides auditable fallback when ack delivery fails
+"""
 
 from __future__ import annotations
 
@@ -12,6 +18,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from state_machine import STATE_DIR, _iso_now
+
+# P0-4 Final Mile: Import closeout guarantee
+from closeout_guarantee import emit_closeout_guarantee, _guarantee_file  # type: ignore
 
 ACK_RECEIPTS_DIR = STATE_DIR.parent / "orchestrator" / "ack_receipts"
 ACK_AUDIT_DIR = STATE_DIR.parent / "orchestrator" / "ack_audit"
@@ -260,6 +269,49 @@ def _finalize_ack(
             "stdout": delivery.get("stdout", ""),
             "stderr": delivery.get("stderr", ""),
         }
+    
+    # ========== P0-4 Final Mile: User-Visible Closeout Guarantee ==========
+    # Emit closeout guarantee artifact to track user-visible closeout state
+    try:
+        guarantee_artifact = emit_closeout_guarantee(
+            batch_id=batch_id,
+            ack_status=ack_status,
+            delivery_status=delivery_status,
+            dispatch_status=dispatch_status,
+            has_user_visible_closeout=False,  # Initial: not yet confirmed
+            artifacts={
+                "ack_receipt_path": str(receipt_path),
+                "ack_audit_path": str(audit_path),
+            },
+            metadata={
+                "scenario": scenario,
+                "decision_action": decision_action,
+                "conclusion": conclusion,
+                "blocker": blocker,
+                "next_step": next_step,
+                "next_action": next_action,
+                "delivery_reason": delivery_reason,
+            },
+        )
+        result["closeout_guarantee"] = {
+            "guarantee_id": guarantee_artifact.guarantee_id,
+            "guarantee_status": guarantee_artifact.guarantee_status,
+            "internal_completed": guarantee_artifact.internal_completed,
+            "ack_delivered": guarantee_artifact.ack_delivered,
+            "user_visible_closeout": guarantee_artifact.user_visible_closeout,
+            "fallback_triggered": guarantee_artifact.fallback_triggered,
+            "fallback_reason": guarantee_artifact.fallback_reason,
+            "guarantee_path": str(_guarantee_file(batch_id)),
+        }
+    except Exception as e:
+        # Guarantee emit failure should not block main ack flow
+        result["closeout_guarantee"] = {
+            "status": "failed",
+            "error": str(e),
+            "note": "Closeout guarantee emit failed; ack receipt still persisted",
+        }
+    # ========== End P0-4 Final Mile ==========
+    
     return result
 
 
