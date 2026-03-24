@@ -435,7 +435,7 @@ class SubagentExecutor:
     
     def get_result(self, task_id: str) -> Optional[SubagentResult]:
         """
-        获取任务结果。
+        获取任务结果（带超时自动检查）。
         
         Args:
             task_id: 任务 ID
@@ -443,7 +443,41 @@ class SubagentExecutor:
         Returns:
             SubagentResult，如果任务不存在则返回 None
         """
-        return _get_task(task_id)
+        result = _get_task(task_id)
+        if not result:
+            return None
+        
+        # 超时自动检查（Batch F 增强）
+        if result.status == "running" and result.started_at:
+            if self._is_timed_out(result):
+                _update_task_status(
+                    task_id,
+                    "timed_out",
+                    error=f"Task timed out after {self.config.timeout_seconds} seconds",
+                )
+                result = _get_task(task_id)
+        
+        return result
+    
+    def _is_timed_out(self, result: SubagentResult) -> bool:
+        """
+        检查任务是否超时。
+        
+        Args:
+            result: 任务结果
+        
+        Returns:
+            True 如果任务已超时
+        """
+        if not result.started_at:
+            return False
+        
+        try:
+            started = datetime.fromisoformat(result.started_at)
+            elapsed = (datetime.now() - started).total_seconds()
+            return elapsed > self.config.timeout_seconds
+        except (ValueError, TypeError):
+            return False
     
     def is_completed(self, task_id: str) -> bool:
         """
