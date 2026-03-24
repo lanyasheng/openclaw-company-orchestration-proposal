@@ -13,6 +13,7 @@ test_callback_bridge_strict_validation.py — C2 Callback Bridge Strict Validati
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -33,23 +34,45 @@ from adapters.trading import TradingAdapter  # type: ignore
 from trading_roundtable import process_trading_roundtable_callback  # type: ignore
 
 
-@pytest.fixture()
-def isolated_state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    state_dir = tmp_path / "shared-context" / "job-status"
-    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
-    monkeypatch.setenv("OPENCLAW_ACK_GUARD_DISABLE_DELIVERY", "1")
-    return state_dir
-
-
 @pytest.fixture(autouse=True)
-def reload_modules(isolated_state_dir: Path):
+def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """隔离的测试环境 - 同时隔离 state 和 closeout 目录
+    
+    使用 autouse=True 确保每个测试都自动使用隔离环境。
+    """
+    state_dir = tmp_path / "shared-context" / "job-status"
+    closeout_dir = tmp_path / "closeouts"
+    closeout_dir.mkdir(parents=True, exist_ok=True)
+    
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("OPENCLAW_CLOSEOUT_DIR", str(closeout_dir))
+    monkeypatch.setenv("OPENCLAW_ACK_GUARD_DISABLE_DELIVERY", "1")
+    
+    # 重新加载模块以使用新的环境变量
     import importlib
-
-    for module_name in ["state_machine", "batch_aggregator", "orchestrator", "trading_roundtable", "adapters.trading"]:
+    
+    # 先更新 closeout_tracker.CLOSEOUT_DIR（如果已加载）
+    if "closeout_tracker" in sys.modules:
+        import closeout_tracker  # type: ignore
+        closeout_tracker.CLOSEOUT_DIR = closeout_dir
+    
+    # 重新加载关键模块
+    for module_name in ["state_machine", "batch_aggregator", "orchestrator", "trading_roundtable", "adapters.trading", "closeout_tracker"]:
         if module_name in sys.modules:
-            importlib.reload(sys.modules[module_name])
-
-    yield
+            try:
+                importlib.reload(sys.modules[module_name])
+            except Exception:
+                pass
+    
+    # 再次确保 CLOSEOUT_DIR 正确设置（reload 后）
+    if "closeout_tracker" in sys.modules:
+        import closeout_tracker  # type: ignore
+        closeout_tracker.CLOSEOUT_DIR = closeout_dir
+    
+    yield {
+        "state_dir": state_dir,
+        "closeout_dir": closeout_dir,
+    }
 
 
 def _clean_packet() -> Dict[str, Any]:
@@ -184,7 +207,7 @@ def _clean_result() -> Dict[str, Any]:
 class TestCallbackBridgeStrictValidation:
     """C2 Callback Bridge Strict Validation 测试"""
     
-    def test_empty_result_blocked(self, isolated_state_dir: Path):
+    def test_empty_result_blocked(self, isolated_environment):
         """测试：empty-result 被硬拦截"""
         batch_id = "batch_empty_result_blocked"
         task_id = "tsk_empty_result_001"
@@ -210,7 +233,7 @@ class TestCallbackBridgeStrictValidation:
         skip_codes = [sr.get("code", "") for sr in skip_reasons]
         assert "empty_result_blocked" in skip_codes
     
-    def test_missing_artifact_truth_blocked(self, isolated_state_dir: Path):
+    def test_missing_artifact_truth_blocked(self, isolated_environment):
         """测试：缺失 artifact truth 被硬拦截"""
         batch_id = "batch_missing_artifact_truth"
         task_id = "tsk_missing_artifact_001"
@@ -232,7 +255,7 @@ class TestCallbackBridgeStrictValidation:
         # 缺失 artifact truth 被检测为 empty result
         assert "empty_result_blocked" in skip_codes
     
-    def test_missing_packet_fields_blocked(self, isolated_state_dir: Path):
+    def test_missing_packet_fields_blocked(self, isolated_environment):
         """测试：缺失 packet 关键字段被硬拦截"""
         batch_id = "batch_missing_packet_fields"
         task_id = "tsk_missing_packet_001"
@@ -254,7 +277,7 @@ class TestCallbackBridgeStrictValidation:
         assert "dispatch_plan" in result
         assert result["dispatch_plan"]["status"] == "skipped"
     
-    def test_missing_roundtable_fields_blocked(self, isolated_state_dir: Path):
+    def test_missing_roundtable_fields_blocked(self, isolated_environment):
         """测试：缺失 roundtable 关键字段被硬拦截"""
         batch_id = "batch_missing_roundtable_fields"
         task_id = "tsk_missing_roundtable_001"
@@ -276,7 +299,7 @@ class TestCallbackBridgeStrictValidation:
         assert "dispatch_plan" in result
         assert result["dispatch_plan"]["status"] == "skipped"
     
-    def test_clean_callback_passes(self, isolated_state_dir: Path):
+    def test_clean_callback_passes(self, isolated_environment):
         """测试：合法 callback 仍通过"""
         batch_id = "batch_clean_callback_passes"
         task_id = "tsk_clean_callback_001"
@@ -309,7 +332,7 @@ class TestCallbackBridgeStrictValidation:
         summary_path = Path(result["summary_path"])
         assert summary_path.exists()
     
-    def test_blocked_status_not_hard_fail(self, isolated_state_dir: Path):
+    def test_blocked_status_not_hard_fail(self, isolated_environment):
         """测试：blocked 状态不是硬 FAIL，尊重 blocked/conditional 语义"""
         batch_id = "batch_blocked_not_fail"
         task_id = "tsk_blocked_not_fail_001"
@@ -348,7 +371,7 @@ class TestCallbackBridgeStrictValidation:
 class TestCallbackValidationEdgeCases:
     """边界情况测试"""
     
-    def test_partial_artifact_truth_blocked(self, isolated_state_dir: Path):
+    def test_partial_artifact_truth_blocked(self, isolated_environment):
         """测试：部分 artifact truth 缺失被拦截"""
         batch_id = "batch_partial_artifact"
         task_id = "tsk_partial_artifact_001"
@@ -374,7 +397,7 @@ class TestCallbackValidationEdgeCases:
         assert "dispatch_plan" in result
         assert result["dispatch_plan"]["status"] == "skipped"
     
-    def test_exists_false_blocked(self, isolated_state_dir: Path):
+    def test_exists_false_blocked(self, isolated_environment):
         """测试：artifact exists=false 被拦截"""
         batch_id = "batch_exists_false"
         task_id = "tsk_exists_false_001"
@@ -400,7 +423,7 @@ class TestCallbackValidationEdgeCases:
         assert "dispatch_plan" in result
         assert result["dispatch_plan"]["status"] == "skipped"
     
-    def test_test_summary_empty_blocked(self, isolated_state_dir: Path):
+    def test_test_summary_empty_blocked(self, isolated_environment):
         """测试：test summary 为空被拦截"""
         batch_id = "batch_test_empty"
         task_id = "tsk_test_empty_001"

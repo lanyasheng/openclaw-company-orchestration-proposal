@@ -22,19 +22,32 @@ from channel_roundtable import process_channel_roundtable_callback  # type: igno
 
 @pytest.fixture()
 def isolated_state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """隔离的测试环境 - 同时隔离 state 和 closeout 目录"""
     state_dir = tmp_path / "shared-context" / "job-status"
+    closeout_dir = tmp_path / "closeouts"
+    closeout_dir.mkdir(parents=True, exist_ok=True)
+    
     monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("OPENCLAW_CLOSEOUT_DIR", str(closeout_dir))
     monkeypatch.setenv("OPENCLAW_ACK_GUARD_DISABLE_DELIVERY", "1")
     return state_dir
 
 
 @pytest.fixture(autouse=True)
 def reload_modules(isolated_state_dir: Path):
+    """重新加载模块以使用隔离的环境变量"""
     import importlib
+    import closeout_tracker  # type: ignore
 
     for module_name in ["state_machine", "batch_aggregator", "orchestrator", "continuation_backends", "trading_roundtable", "channel_roundtable"]:
         if module_name in sys.modules:
             importlib.reload(sys.modules[module_name])
+    
+    # 重新加载 closeout_tracker 以使用新的 CLOSEOUT_DIR
+    if "closeout_tracker" in sys.modules:
+        importlib.reload(sys.modules["closeout_tracker"])
+        # 更新全局变量
+        closeout_tracker.CLOSEOUT_DIR = Path(os.environ.get("OPENCLAW_CLOSEOUT_DIR", closeout_tracker.CLOSEOUT_DIR))
 
     yield
 

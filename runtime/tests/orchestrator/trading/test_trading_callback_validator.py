@@ -20,31 +20,21 @@ from pathlib import Path
 from typing import Any, Dict
 
 # Add orchestrator/trading to path
-TRADING_DIR = Path(__file__).resolve().parents[2] / "orchestrator" / "trading"
-ORCHESTRATOR_DIR = Path(__file__).resolve().parents[2] / "orchestrator"
-if str(TRADING_DIR) not in sys.path:
-    sys.path.insert(0, str(TRADING_DIR))
-if str(ORCHESTRATOR_DIR) not in sys.path:
-    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+ROOT_DIR = Path(__file__).resolve().parents[3]  # runtime/
+ORCHESTRATOR_DIR = ROOT_DIR / "orchestrator"
+TRADING_DIR = ORCHESTRATOR_DIR / "trading"
 
-# Import validator directly
-try:
-    from callback_validator import (
-        validate_trading_callback,
-        validate_callback_file,
-        ValidationResult,
-    )
-except ImportError:
-    # Fallback: import via runtime.orchestrator.trading
-    import sys
-    ROOT_DIR = Path(__file__).resolve().parents[3]
-    if str(ROOT_DIR) not in sys.path:
-        sys.path.insert(0, str(ROOT_DIR))
-    from runtime.orchestrator.trading.callback_validator import (
-        validate_trading_callback,
-        validate_callback_file,
-        ValidationResult,
-    )
+# Insert paths in correct order (most specific first)
+for path in [str(TRADING_DIR), str(ORCHESTRATOR_DIR), str(ROOT_DIR)]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+# Import validator
+from callback_validator import (
+    validate_trading_callback,
+    validate_callback_file,
+    ValidationResult,
+)
 
 
 def build_minimal_valid_callback() -> Dict[str, Any]:

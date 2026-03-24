@@ -54,26 +54,36 @@ from trading_roundtable import process_trading_roundtable_callback  # type: igno
 
 @pytest.fixture(autouse=True)
 def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """隔离的测试环境"""
+    """隔离的测试环境
+    
+    确保每个测试使用独立的状态目录和 closeout 目录，避免测试间污染。
+    """
     state_dir = tmp_path / "state"
     closeout_dir = tmp_path / "closeouts"
-    
-    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
     state_dir.mkdir(parents=True, exist_ok=True)
     closeout_dir.mkdir(parents=True, exist_ok=True)
     
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    
     # 重新加载模块以使用新的目录
     import importlib
+    
+    # 先导入再 reload（确保模块已加载）
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+    
     import closeout_tracker
     import state_machine
-    import trading_roundtable
     
-    importlib.reload(closeout_tracker)
     importlib.reload(state_machine)
-    importlib.reload(trading_roundtable)
+    importlib.reload(closeout_tracker)
     
     # 更新全局变量
     closeout_tracker.CLOSEOUT_DIR = closeout_dir
+    
+    # 如果 trading_roundtable 已加载，也重新加载
+    if "trading_roundtable" in sys.modules:
+        import trading_roundtable
+        importlib.reload(trading_roundtable)
     
     yield {
         "state_dir": state_dir,
