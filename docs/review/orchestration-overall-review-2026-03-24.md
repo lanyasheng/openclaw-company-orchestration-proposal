@@ -128,7 +128,7 @@ Gate 输出：previous_batch=batch_mainline_001, previous_push_status=pushed
 | **Closeout Tracker** | `runtime/orchestrator/closeout_tracker.py` | Closeout 状态跟踪 + push consumer |
 | **Trading Roundtable** | `runtime/orchestrator/trading_roundtable.py` | Trading 主入口 |
 | **Protocol Doc** | `docs/protocols/trading_roundtable_auto_execution_protocol_v1.md` | 完整协议规范 |
-| **Validation Report** | `MAINLINE_VALIDATION_REPORT.md` | 主线验证报告 |
+| **Validation Report** | [`../reports/MAINLINE_VALIDATION_REPORT.md`](../reports/MAINLINE_VALIDATION_REPORT.md) | 主线验证报告 |
 
 ### 3.4 测试隔离修复
 

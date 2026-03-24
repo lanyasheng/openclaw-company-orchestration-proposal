@@ -225,7 +225,7 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 ### 7.3 当前成熟度边界(2026-03-23 V10 更新)
 
 - ✅ Trading + Channel 两个场景已接入
-- ✅ **434 个测试全部通过**
+- ✅ **468 个测试全部通过** (2026-03-24)
 - ✅ **v5 完整闭环已实现**: spawn closure -> spawn execution artifact -> completion receipt artifact
 - ✅ **v6 通用层已实现**: sessions_spawn request interface + callback auto-close bridge
 - ✅ **v7 bridge consumption 已实现**: bridge consumer / execution envelope / consumed artifact
@@ -241,6 +241,8 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - ✅ **技术债务收口**: `docs/technical-debt-2026-03-22.md` 已创建
 - ✅ **P0-3 Batches 1-6**: Legacy cleanup completed (2026-03-23)
 - ✅ **P0-3 Final**: **Dual-track backend strategy** (subagent + tmux) - both backends retained indefinitely (2026-03-23)
+- ✅ **仓库收敛改造**: README/README.zh 重写为单入口；根目录报告/测试文件归位 (2026-03-24)
+- ✅ **架构健康度审查**: [`reports/ARCHITECTURE_HEALTH_REPORT_2026-03-24.md`](reports/ARCHITECTURE_HEALTH_REPORT_2026-03-24.md) (95/100 健康)
 - ⚠️ **CLI Integration**: 当前优先 mock Python API call,OpenClaw CLI 集成需确认 `openclaw sessions_spawn` 命令
 - ⚠️ **Auto-trigger 配置**: 使用本地 JSON 文件,缺少版本控制(见 technical debt D5)
 - ❌ 不等于"全域全自动无人续跑"

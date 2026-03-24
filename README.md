@@ -1,14 +1,22 @@
 # OpenClaw Orchestration Control Plane
 
-> A thin control-plane for multi-agent workflows on top of OpenClaw.
-> **Default backend:** subagent | **Compat backend:** tmux | **First validation:** trading continuation
-> **Current maturity:** safe semi-auto / thin bridge / production-validated on one scenario
+> **Single entry point for multi-agent workflow orchestration on OpenClaw.**
+>
+> **Default backend:** subagent | **Compat backend:** tmux | **First validated scenario:** trading continuation
+>
+> **Maturity:** safe semi-auto / thin bridge / production-validated
 
 ---
 
 ## Quick Start (30 seconds)
 
-**Single entry point:** `python3 ~/.openclaw/scripts/orch_command.py`
+**Unified entry command:**
+
+```bash
+python3 ~/.openclaw/scripts/orch_command.py
+```
+
+**Common scenarios:**
 
 ```bash
 # Default: use current channel context
@@ -23,11 +31,8 @@ python3 ~/.openclaw/scripts/orch_command.py \
 # Trading scenario
 python3 ~/.openclaw/scripts/orch_command.py --context trading_roundtable
 
-# Save contract to file
-python3 ~/.openclaw/scripts/orch_command.py \
-  --channel-id "discord:channel:YOUR_ID" \
-  --topic "Architecture Review" \
-  --output tmp/orch-contract.json
+# First-time users: verify stability before auto-execution
+python3 ~/.openclaw/scripts/orch_command.py --auto-execute false
 ```
 
 **Default behavior:**
@@ -35,22 +40,17 @@ python3 ~/.openclaw/scripts/orch_command.py \
 - ✅ non-coding lane → subagent
 - ✅ auto_execute=true (auto-register/dispatch/callback/continue)
 - ✅ gate_policy=stop_on_gate (stops normally at gates)
-- ✅ First-time users: use `--auto-execute false` to verify stability first
 
 **Documentation:**
-- **Skill entry:** `runtime/skills/orchestration-entry/SKILL.md`
-- **Other channels:** `docs/quickstart/quickstart-other-channels.md`
-- **Current truth:** `docs/CURRENT_TRUTH.md`
+- **Skill entry:** [`runtime/skills/orchestration-entry/SKILL.md`](runtime/skills/orchestration-entry/SKILL.md)
+- **Other channels:** [`docs/quickstart/quickstart-other-channels.md`](docs/quickstart/quickstart-other-channels.md)
+- **Current truth:** [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md)
 
 ---
 
-## What This Is
+## What Problem This Solves
 
-**This repository builds a practical orchestration control-plane for OpenClaw.**
-
-It answers a specific question:
-
-> **After one task completes, how does the system know what to do next—and keep moving safely?**
+**Core question:** After one task completes, how does the system know what to do next—and keep moving safely?
 
 Real multi-agent systems rarely fail because "the model cannot answer." They fail because:
 - A task completes but nobody owns the next step
@@ -59,7 +59,7 @@ Real multi-agent systems rarely fail because "the model cannot answer." They fai
 - A callback is emitted but never reaches the right parent or channel
 - Business ownership and execution ownership are mixed together
 
-This repository makes those transitions **explicit** through:
+**This repository makes those transitions explicit** through:
 - Continuation contracts
 - Handoff schemas
 - Registration and readiness tracking
@@ -70,15 +70,23 @@ This repository makes those transitions **explicit** through:
 
 ---
 
-## What This Is Not
+## Why This Exists (and Why Not Temporal/LangGraph)
 
-- ❌ Not a generic DAG platform
-- ❌ Not an OpenClaw replacement
-- ❌ Not a LangGraph/Temporal/DeepAgents wrapper
-- ❌ Not just a trading bot repo
-- ❌ Not "fully automatic with no human oversight"
+Many teams jump too early into Temporal-style complexity, or stay stuck in script spaghetti. This repo explores the **middle path**:
+- Enough structure to be reliable
+- Not so much machinery that iteration stops
 
-**Current scope:** thin bridge / allowlist / safe semi-auto / validated on trading continuation
+**Why not Temporal as backbone?**
+- Temporal is durable workflow infrastructure—heavy on worker management, determinism guarantees, versioning
+- Our current need: thin control plane for agent handoffs, not enterprise workflow engine
+- Decision: Use OpenClaw as runtime foundation; keep control plane thin and explicit
+
+**Why not LangGraph as backbone?**
+- LangGraph excels at agent-internal reasoning graphs
+- Our need: company-wide orchestration across multiple agents and scenarios
+- Decision: Keep control plane in OpenClaw; use LangGraph only for local analysis graphs if needed
+
+**Design principle:** External frameworks enter only at leaf execution layer, not as control plane replacement.
 
 ---
 
@@ -92,7 +100,7 @@ This repository makes those transitions **explicit** through:
                         │
                         ▼
 ┌─────────────────────────────────────────────────────┐
-│ Control Plane                                       │
+│ Control Plane (THIS REPO)                           │
 │ contracts / planning / registration / readiness     │
 │ callbacks / receipts / dispatch / continuation      │
 └─────────────────────────────────────────────────────┘
@@ -112,45 +120,20 @@ This repository makes those transitions **explicit** through:
 
 **Key boundary:** Control plane decides **what happens next**; execution layer **runs the step**; OpenClaw provides primitives.
 
-### Main Flow: Request → Callback → Closeout → Next Batch
+### Main Flow
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant ControlPlane
-    participant Executor
-    participant StateStore
-
-    User->>ControlPlane: Request / Trigger
-    ControlPlane->>ControlPlane: Planning Artifact
-    ControlPlane->>StateStore: Register Task
-    ControlPlane->>ControlPlane: Readiness + Gates Check
-    
-    alt Dispatch Approved
-        ControlPlane->>Executor: Execution Request
-        Executor->>Executor: Run (subagent/Claude Code/tmux)
-        Executor->>StateStore: Completion Receipt
-        StateStore->>ControlPlane: Callback
-        ControlPlane->>ControlPlane: Next-Step Decision
-        
-        alt Has Next Step
-            ControlPlane->>StateStore: Register Next Batch
-            ControlPlane->>User: Progress Update
-        else Terminal
-            ControlPlane->>User: Final Closeout
-        end
-    else Blocked at Gate
-        ControlPlane->>StateStore: Mark Blocked
-        ControlPlane->>User: Wait for Decision
-    end
+```
+Request → Planning → Registration → Readiness Check → Dispatch
+       → Execution → Receipt → Callback → Next-Step Decision
+       → (repeat or closeout)
 ```
 
 **Core principle:** A task is not finished when execution stops—it is finished when **the next-step state is made explicit**.
 
-### Owner vs Executor Decoupling
+### Owner vs Executor Contract
 
 ```text
-owner    = who owns the business judgment
+owner    = who owns the business judgment (acceptance / decision)
 executor = who actually performs the work
 
 Examples:
@@ -165,29 +148,30 @@ This decoupling allows coding lanes to default to Claude Code without requiring 
 
 ---
 
-## Current Status
+## What This Is NOT (Boundaries)
 
-### Backend Strategy
-| Backend | Status | Use Case |
-|---------|--------|----------|
-| **subagent** | ✅ DEFAULT | Automated execution, CI/CD, new development |
-| **tmux** | ✅ SUPPORTED | Interactive sessions, manual observation |
+- ❌ Not a generic DAG platform
+- ❌ Not an OpenClaw replacement
+- ❌ Not a LangGraph/Temporal/DeepAgents wrapper
+- ❌ Not just a trading bot repo
+- ❌ Not "fully automatic with no human oversight"
 
-### Maturity
-> **thin bridge / explicit contracts / safe semi-auto / production-validated on one real scenario**
+**Current scope:** thin bridge / allowlist / safe semi-auto / validated on trading continuation
 
-This repo is further along than a proposal, but still intentionally earlier than a fully general-purpose workflow platform.
+---
 
-### What's Real
-- ✅ Trading continuation has entered **real execution path**
-- ✅ Control-plane main chain is in place
-- ✅ Dual-track backend (subagent + tmux) both supported
-- ✅ 434 tests passing
-- ✅ Real artifact-backed continuation (registration → dispatch → execution → receipt → callback)
+## Current Maturity
 
-### What's Not Yet Fully Closed
-- ⚠️ Git push auto-continue is **not yet fully automatic**
-- ⚠️ Overall maturity remains **safe semi-auto**, not "fully automatic无人续跑"
+| Aspect | Status | Notes |
+|--------|--------|-------|
+| **Backend strategy** | ✅ Dual-track | subagent (default) + tmux (compat) |
+| **Trading continuation** | ✅ Production-validated | Real execution path verified |
+| **Control plane** | ✅ Main chain in place | Registration → dispatch → execution → receipt → callback |
+| **Tests** | ✅ 468 passing | 100% pass rate |
+| **Auto-continue** | ⚠️ Safe semi-auto | Allowlist-based, condition-triggered, reversible |
+| **Git push auto-continue** | ⚠️ Not fully automatic | Internal simulation closed; real push executor pending |
+
+**Honest summary:** Further along than a proposal, but intentionally earlier than a fully general-purpose workflow platform.
 
 ---
 
@@ -195,21 +179,26 @@ This repo is further along than a proposal, but still intentionally earlier than
 
 ```text
 openclaw-company-orchestration-proposal/
-├── README.md / README.zh.md
+├── README.md / README.zh.md          # Single entry point (this file)
 ├── docs/
-│   ├── architecture/        # Architecture diagrams & overviews
-│   ├── diagrams/            # Mermaid/flow diagrams
-│   ├── quickstart/          # Channel-specific quickstart guides
-│   ├── configuration/       # Auto-trigger config & troubleshooting
-│   ├── CURRENT_TRUTH.md     # Current truth entry point
-│   └── ...                  # Other documentation
+│   ├── CURRENT_TRUTH.md              # Current truth entry point
+│   ├── executive-summary.md          # 5-minute overview
+│   ├── architecture/                 # Architecture diagrams & overviews
+│   ├── quickstart/                   # Channel-specific quickstart guides
+│   ├── configuration/                # Auto-trigger config & troubleshooting
+│   ├── plans/                        # Current plans & roadmaps
+│   ├── reports/                      # Validation & health reports
+│   ├── review/                       # Architecture reviews
+│   ├── technical-debt/               # Technical debt backlog
+│   └── ...                           # Other documentation
 ├── runtime/
-│   ├── orchestrator/        # Core orchestration logic
-│   ├── skills/              # OpenClaw skill integrations
-│   └── scripts/             # Entry commands & utilities
-├── tests/                   # Behavioral tests (source of truth)
-├── archive/                 # Historical material (reference only)
-└── scripts/                 # Utility scripts
+│   ├── orchestrator/                 # Core orchestration logic
+│   ├── skills/                       # OpenClaw skill integrations
+│   └── scripts/                      # Entry commands & utilities
+├── tests/
+│   └── orchestrator/                 # Behavioral tests (source of truth)
+├── archive/                          # Historical material (reference only)
+└── scripts/                          # Utility scripts
 ```
 
 | Directory | Purpose |
@@ -221,36 +210,63 @@ openclaw-company-orchestration-proposal/
 
 ---
 
-## Where to Start
+## Documentation Navigation
 
 | Goal | Entry Point |
 |------|-------------|
-| **Quick overview** | [`docs/executive-summary.md`](docs/executive-summary.md) |
-| **Current truth** | [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md) |
-| **Architecture** | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
-| **Other channels** | [`docs/quickstart/quickstart-other-channels.md`](docs/quickstart/quickstart-other-channels.md) |
+| **First-time overview** | [`docs/executive-summary.md`](docs/executive-summary.md) |
+| **Current truth (latest)** | [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md) |
+| **Architecture deep dive** | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
+| **Other channels setup** | [`docs/quickstart/quickstart-other-channels.md`](docs/quickstart/quickstart-other-channels.md) |
 | **Auto-trigger config** | [`docs/configuration/auto-trigger-config-guide.md`](docs/configuration/auto-trigger-config-guide.md) |
 | **Validation status** | [`docs/validation-status.md`](docs/validation-status.md) |
+| **Current plans** | [`docs/plans/overall-plan.md`](docs/plans/overall-plan.md) |
 | **Technical debt** | [`docs/technical-debt/technical-debt-2026-03-22.md`](docs/technical-debt/technical-debt-2026-03-22.md) |
+| **Recent reports** | [`docs/reports/`](docs/reports/) |
+| **Architecture reviews** | [`docs/review/`](docs/review/) |
+
+### Document Roles
+
+- **`docs/CURRENT_TRUTH.md`**: Single source of truth for current iteration state (v10, dual-track backend)
+- **`docs/executive-summary.md`**: Historical batch-1 plan; read for context but defer to README/CURRENT_TRUTH
+- **`docs/plans/overall-plan.md`**: Current true plan with P0/P1/P2 priorities and boundaries
+- **`docs/validation-status.md`**: What's validated vs. what's not; why this direction was chosen
+- **`docs/technical-debt/technical-debt-2026-03-22.md`**: Known optimization points and backlog
 
 ---
 
-## Why This Exists
+## Testing
 
-Many teams jump too early into Temporal-style complexity, or stay stuck in script spaghetti. This repo explores the **middle path**:
-- Enough structure to be reliable
-- Not so much machinery that iteration stops
+**Run all tests:**
 
-It borrows from Temporal (durable workflow thinking), LangGraph (graph transitions), and DeepAgents (execution profiles)—but treats them as **leaf-layer techniques**, not as the company-wide control plane.
+```bash
+cd openclaw-company-orchestration-proposal
+python3 -m pytest tests/orchestrator/ -v
+```
 
-**The practical decision:**
-- Use **OpenClaw** as the runtime foundation
-- Keep a thin but explicit **control plane** in this repo
-- Let **subagent / Claude Code / tmux** stay execution choices
-- Only adopt heavier frameworks in narrow places where they actually help
+**Current status:** 468 tests passing (100% pass rate)
+
+**Key test files:**
+- `test_v8_execute_mode.py` — V8 execute mode + auto-trigger validation
+- `test_v9_sessions_spawn_api.py` — V9 real sessions_spawn API integration (run directly)
+- `test_mainline_auto_continue.py` — Trading mainline auto-continue validation
+- `test_sessions_spawn_bridge.py` — Sessions spawn bridge validation
+- `test_continuation_backends_lifecycle.py` — Generic lifecycle kernel tests
 
 ---
 
 ## One-Sentence Summary
 
-> **This repository is building a practical orchestration control-plane for OpenClaw, with subagent as the default execution path, tmux as a compatibility path, and trading as the first real proving ground.**
+> **This repository builds a practical orchestration control-plane for OpenClaw: subagent as default execution path, tmux as compatibility path, trading as first real proving ground, external frameworks at leaf layer only.**
+
+---
+
+## Owner & Maintenance
+
+**Owner:** Zoe (CTO & Chief Orchestrator)
+
+**Last updated:** 2026-03-24 (Repository consolidation)
+
+**Related repositories:**
+- OpenClaw core: `~/.openclaw/`
+- Workspace: `~/.openclaw/workspace/`

@@ -118,7 +118,7 @@ python3 -m pytest tests/orchestrator/test_continuation_backends_lifecycle.py -v
 - `trading_roundtable.py`: 20 tests
 - `channel_roundtable.py`: 集成测试覆盖
 
-**详细报告**: `../ARCHITECTURE_HEALTH_REPORT_2026-03-24.md`
+**详细报告**: [`../reports/ARCHITECTURE_HEALTH_REPORT_2026-03-24.md`](../reports/ARCHITECTURE_HEALTH_REPORT_2026-03-24.md)
 ```
 
 **执行方法**:
@@ -316,3 +316,4 @@ docs: 更新 README.md 和 migration-retirement-plan.md (架构健康度)
 **清单生成时间**: 2026-03-24 01:15 GMT+8  
 **来源**: ARCHITECTURE_HEALTH_REPORT_2026-03-24.md 第 7 节  
 **维护者**: Zoe (CTO & Chief Orchestrator)
+tor)

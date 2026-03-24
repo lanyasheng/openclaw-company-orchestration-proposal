@@ -16,8 +16,11 @@ import tempfile
 import shutil
 from pathlib import Path
 
-# 添加 runtime/orchestrator 到路径
-sys.path.insert(0, str(Path(__file__).parent / "runtime" / "orchestrator"))
+# Add orchestrator directory to path (same pattern as other tests)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ORCHESTRATOR_DIR = REPO_ROOT / "runtime" / "orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from sessions_spawn_request import (
     SessionsSpawnRequest,
