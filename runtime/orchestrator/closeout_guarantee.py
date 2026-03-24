@@ -127,6 +127,13 @@ class CloseoutGuaranteeArtifact:
     - fallback_reason: 兜底触发原因
     - artifacts: 相关 artifact 路径（ack_receipt/closeout_artifact 等）
     - metadata: 额外元数据
+    
+    P0-4 Batch 4: Failure Closeout Guarantee 新增字段（通过 metadata 传递）：
+    - failure_summary: 失败摘要（人类可读）
+    - failure_stage: 失败阶段（planning | execution | closeout | callback）
+    - truth_anchor: 真值锚点（机器可读的状态证据）
+    - fallback_action: 兜底行动建议
+    - user_visible_failure_closeout: 用户是否已感知失败（区分于成功场景的 user_visible_closeout）
     """
     guarantee_id: str
     batch_id: str
@@ -139,6 +146,32 @@ class CloseoutGuaranteeArtifact:
     artifacts: Dict[str, str] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: _iso_now())
+    
+    # ========== P0-4 Batch 4: Failure Closeout Fields (via metadata) ==========
+    @property
+    def failure_summary(self) -> Optional[str]:
+        """失败摘要（人类可读）"""
+        return self.metadata.get("failure_summary")
+    
+    @property
+    def failure_stage(self) -> Optional[str]:
+        """失败阶段（planning | execution | closeout | callback）"""
+        return self.metadata.get("failure_stage")
+    
+    @property
+    def truth_anchor(self) -> Optional[str]:
+        """真值锚点（机器可读的状态证据）"""
+        return self.metadata.get("truth_anchor")
+    
+    @property
+    def fallback_action(self) -> Optional[str]:
+        """兜底行动建议"""
+        return self.metadata.get("fallback_action")
+    
+    @property
+    def user_visible_failure_closeout(self) -> bool:
+        """用户是否已感知失败（区分于成功场景的 user_visible_closeout）"""
+        return self.metadata.get("user_visible_failure_closeout", False)
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -205,6 +238,7 @@ class CloseoutGuaranteeKernel:
         delivery_status: str,
         dispatch_status: str,
         has_user_visible_closeout: bool,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> tuple[CloseoutGuaranteeStatus, str]:
         """
         根据 ack/delivery/dispatch 状态决定 guarantee status。
@@ -215,27 +249,47 @@ class CloseoutGuaranteeKernel:
         3. 如果 ack_status!="sent" 且 dispatch_status!="triggered"，返回 "fallback_needed"
         4. 其他情况返回 "pending"
         
+        P0-4 Batch 4: Failure Closeout Guarantee 增强：
+        - 区分"任务失败已知"与"用户已感知失败"
+        - 支持 failure_summary / failure_stage / truth_anchor / fallback_action 字段
+        
         Returns:
             (guarantee_status, guarantee_reason)
         """
-        # 用户可见闭环已形成
+        metadata = metadata or {}
+        
+        # 用户可见闭环已形成（成功或失败场景都适用）
         if has_user_visible_closeout:
+            # 检查是否是失败场景
+            if metadata.get("failure_summary") or ack_status in ("fallback_recorded", "failed", "timeout"):
+                return "guaranteed", "User-visible failure closeout confirmed"
             return "guaranteed", "User-visible closeout confirmed"
         
         # ack 已成功发送
         if ack_status == "sent" and delivery_status == "sent":
             return "pending", "Ack delivered; awaiting user confirmation"
         
-        # 需要兜底：ack 未发送 且 dispatch 未触发
-        if ack_status != "sent" and dispatch_status != "triggered":
-            return "fallback_needed", f"Ack not delivered (ack_status={ack_status}, dispatch_status={dispatch_status})"
-        
-        # dispatch 已触发，等待 continuation
+        # dispatch 已触发，等待 continuation（不误报）
         if dispatch_status == "triggered":
             return "pending", "Dispatch triggered; awaiting continuation callback"
         
+        # ========== P0-4 Batch 4: Failure Closeout Guarantee ==========
+        # 需要兜底：ack 未发送 且 dispatch 未触发
+        # 这包括：任务失败但用户未收到通知、subagent 崩溃、超时等场景
+        if ack_status != "sent" and dispatch_status != "triggered":
+            # 构建详细的 failure summary
+            failure_summary = metadata.get("failure_summary")
+            if failure_summary:
+                return "fallback_needed", f"Failure closeout needed: {failure_summary}"
+            
+            # 默认 fallback reason
+            return "fallback_needed", f"Ack not delivered (ack_status={ack_status}, dispatch_status={dispatch_status})"
+        
         # 其他情况：ack 可能 fallback_recorded
         if ack_status == "fallback_recorded":
+            failure_summary = metadata.get("failure_summary")
+            if failure_summary:
+                return "fallback_needed", f"Failure closeout needed: {failure_summary}"
             return "fallback_needed", "Ack fallback recorded; user-visible closeout not confirmed"
         
         # 默认 pending
@@ -248,6 +302,7 @@ class CloseoutGuaranteeKernel:
         delivery_status: Optional[str] = None,
         dispatch_status: Optional[str] = None,
         has_user_visible_closeout: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> CloseoutGuaranteeArtifact:
         """
         检查 guarantee 状态。
@@ -258,10 +313,13 @@ class CloseoutGuaranteeKernel:
             delivery_status: delivery 状态（可选）
             dispatch_status: dispatch 状态（可选）
             has_user_visible_closeout: 是否已有用户可见闭环
+            metadata: 额外元数据（P0-4 Batch 4: 支持 failure_summary / failure_stage / truth_anchor / fallback_action）
         
         Returns:
             CloseoutGuaranteeArtifact
         """
+        metadata = metadata or {}
+        
         # 检查是否已存在 guarantee
         existing = self.get_guarantee(batch_id)
         
@@ -275,19 +333,31 @@ class CloseoutGuaranteeKernel:
                 existing.guarantee_status = "guaranteed"
                 existing.user_visible_closeout = True
                 existing.metadata["guaranteed_at"] = _iso_now()
+                # 合并新 metadata
+                existing.metadata.update(metadata)
                 existing.write()
                 return existing
         
-        # 决定 guarantee status
+        # 决定 guarantee status（传入 metadata）
         guarantee_status, guarantee_reason = self._determine_guarantee_status(
             ack_status=ack_status or "unknown",
             delivery_status=delivery_status or "unknown",
             dispatch_status=dispatch_status or "unknown",
             has_user_visible_closeout=has_user_visible_closeout,
+            metadata=metadata,
         )
         
         # 创建新的 guarantee artifact
         guarantee_id = _generate_guarantee_id()
+        
+        # 构建完整的 metadata
+        full_metadata = {
+            "ack_status": ack_status,
+            "delivery_status": delivery_status,
+            "dispatch_status": dispatch_status,
+            "guarantee_reason": guarantee_reason,
+            **metadata,
+        }
         
         artifact = CloseoutGuaranteeArtifact(
             guarantee_id=guarantee_id,
@@ -298,12 +368,7 @@ class CloseoutGuaranteeKernel:
             user_visible_closeout=has_user_visible_closeout,
             fallback_triggered=(guarantee_status == "fallback_needed"),
             fallback_reason=guarantee_reason if guarantee_status == "fallback_needed" else None,
-            metadata={
-                "ack_status": ack_status,
-                "delivery_status": delivery_status,
-                "dispatch_status": dispatch_status,
-                "guarantee_reason": guarantee_reason,
-            },
+            metadata=full_metadata,
         )
         
         return artifact
@@ -328,7 +393,7 @@ class CloseoutGuaranteeKernel:
             dispatch_status: dispatch 状态
             has_user_visible_closeout: 是否已有用户可见闭环
             artifacts: artifact 路径字典
-            metadata: 额外元数据
+            metadata: 额外元数据（P0-4 Batch 4: 支持 failure_summary / failure_stage / truth_anchor / fallback_action）
         
         Returns:
             CloseoutGuaranteeArtifact（已写入文件）
@@ -339,13 +404,12 @@ class CloseoutGuaranteeKernel:
             delivery_status=delivery_status,
             dispatch_status=dispatch_status,
             has_user_visible_closeout=has_user_visible_closeout,
+            metadata=metadata,
         )
         
-        # 更新 artifacts 和 metadata
+        # 更新 artifacts 和 metadata（check_guarantee 已经合并了 metadata）
         if artifacts:
             artifact.artifacts = {**artifact.artifacts, **artifacts}
-        if metadata:
-            artifact.metadata = {**artifact.metadata, **metadata}
         
         # 写入文件
         artifact.write()
@@ -413,6 +477,7 @@ def check_closeout_guarantee(
     delivery_status: Optional[str] = None,
     dispatch_status: Optional[str] = None,
     has_user_visible_closeout: bool = False,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> CloseoutGuaranteeArtifact:
     """
     Convenience function: 检查 guarantee 状态。
@@ -423,6 +488,7 @@ def check_closeout_guarantee(
         delivery_status: delivery 状态
         dispatch_status: dispatch 状态
         has_user_visible_closeout: 是否已有用户可见闭环
+        metadata: 额外元数据（P0-4 Batch 4: 支持 failure_summary / failure_stage / truth_anchor / fallback_action）
     
     Returns:
         CloseoutGuaranteeArtifact
@@ -434,6 +500,7 @@ def check_closeout_guarantee(
         delivery_status=delivery_status,
         dispatch_status=dispatch_status,
         has_user_visible_closeout=has_user_visible_closeout,
+        metadata=metadata,
     )
 
 

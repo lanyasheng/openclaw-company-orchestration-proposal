@@ -3,13 +3,15 @@
 > **角色**: 📍 **当前真值唯一入口** - 了解"今天系统实际如何工作"从这里开始
 >
 > **何时阅读**:
-> - 首次接触本仓，想快速了解当前状态
+> - 首次接触本仓,想快速了解当前状态
 > - 不确定某个文档是否仍是最新口径
-> - 准备修改实现/文档前，确认真值边界
+> - 准备修改实现/文档前,确认真值边界
 >
 > **真值边界**: 本文档 + `runtime/` 实现 + `tests/` 验收 = 当前唯一可信源;`archive/`、`docs/plans/` 历史计划文档仅供参考
 >
-> **更新**: 2026-03-24 — P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
+> **更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
+
+**更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
 >
 > **更新**: 2026-03-23 - Owner/Executor 解耦 + Coding Lane 默认 Claude Code 已实现
 >
@@ -114,7 +116,47 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 ### 2.2.1 coding issue lane baseline 已实现 (2026-03-24)
 
-**P0 Batch 3: Coding Issue Lane Baseline** 已完成,冻结了 issue lane 的最小输入输出契约。
+**P0 Batch 3: Coding Issue Lane Baseline** 已完成，冻结了 issue lane 的最小输入输出契约。
+
+### 2.2.2 failure closeout guarantee 已实现 (2026-03-24)
+
+**P0 Batch 4: Failure Closeout Guarantee** 已完成，解决了"系统内部知道失败，但老板没及时收到标准化失败回报"的问题。
+
+**核心设计** (`runtime/orchestrator/closeout_guarantee.py`):
+- 区分"任务失败已知" (`internal_completed=True`) 与"用户已感知失败" (`user_visible_closeout=True`)
+- 为失败路径定义最小 guarantee 字段（通过 `metadata` 传递）：
+  - `failure_summary`: 失败摘要（人类可读）
+  - `failure_stage`: 失败阶段（planning | execution | closeout | callback）
+  - `truth_anchor`: 真值锚点（机器可读的状态证据，如 `status.json:state=failed|exit_code=1`）
+  - `fallback_action`: 兜底行动建议
+  - `user_visible_failure_closeout`: 用户是否已感知失败
+- 状态机：`pending | guaranteed | fallback_needed | blocked`
+- 兜底规则：如果 `ack_status!="sent"` 且 `dispatch_status!="triggered"`，生成 `fallback_needed` guarantee
+
+**薄层接入**：
+- 在 `completion_ack_guard.py` 中，每个 completion ack 自动 emit guarantee artifact
+- 失败场景不阻塞主 ack 流程，guarantee emit 失败不影响 ack receipt 落盘
+- guarantee artifact 落盘到 `~/.openclaw/shared-context/orchestrator/closeout_guarantees/`
+
+**测试覆盖** (`tests/orchestrator/test_failure_closeout_guarantee.py`):
+- ✅ 覆盖：任务失败但未形成用户可见失败回报时，产生 `fallback_needed` guarantee
+- ✅ 覆盖：失败回报已送达时，不误报（`fallback_triggered=False`）
+- ✅ 覆盖：成功路径不被回归破坏（15 个新测试 + 17 个现有测试全部通过）
+
+**验证命令**:
+```bash
+cd <repo-root>
+python3 -m pytest tests/orchestrator/test_failure_closeout_guarantee.py -v
+# 输出：15 passed
+python3 -m pytest tests/orchestrator/test_closeout_guarantee.py -v
+# 输出：17 passed
+```
+
+**设计原则**:
+1. 薄层扩展，不重构现有架构
+2. 失败场景与成功路径共享同一套 guarantee 状态机
+3. guarantee 是兜底机制，不影响主流程
+4. 元数据通过 `metadata` 字典传递，保持向后兼容
 
 **核心 schema** (`runtime/orchestrator/issue_lane_schemas.py`):
 - `IssueInput`: 支持 GitHub issue URL / 标准化 payload 两种输入
