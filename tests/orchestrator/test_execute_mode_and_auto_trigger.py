@@ -59,7 +59,6 @@ def test_execution_result():
     assert result2.executed == result.executed
     
     print("✓ ExecutionResult 数据结构正常")
-    return True
 
 
 def test_execute_mode_policy():
@@ -81,7 +80,6 @@ def test_execute_mode_policy():
     assert policy2.is_execute_mode() is False
     
     print("✓ Execute mode policy 正常")
-    return True
 
 
 def test_auto_trigger_config():
@@ -107,7 +105,6 @@ def test_auto_trigger_config():
     assert "triggered_count" in status
     
     print(f"✓ Auto-trigger 配置正常 (triggered_count={status['triggered_count']})")
-    return True
 
 
 def test_backward_compatibility():
@@ -124,7 +121,6 @@ def test_backward_compatibility():
     assert policy.execute_mode == "simulate"  # v8 新增，但有默认值
     
     print("✓ 向后兼容性正常")
-    return True
 
 
 def main():

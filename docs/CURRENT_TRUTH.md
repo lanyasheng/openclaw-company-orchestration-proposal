@@ -16,16 +16,27 @@
 > **用途**: 给这个 proposal repo 一个**当前真值入口**,避免旧计划、旧评审、旧 POC 被继续误读成"今天的默认口径"。
 >
 > **注意**: 这个 repo 现在已升级为**单仓分层 monorepo**:`docs/` 持阅读入口，`runtime/` 持实现真值，`tests/` 持验收。历史上 runtime 曾散落在 OpenClaw workspace 本地;从 2026-03-22 起，本仓开始承担 orchestration runtime 的统一收口。
+
+---
+
+
+
+### 分支策略
+- **`main` 是唯一 canonical branch** — 所有开发、发布、文档更新均针对 `main`
+- 历史 integration 分支（如 `integration/monorepo-runtime-import-20260322`）已全部合并并删除
+- 备份 tag：`backup/integration-monorepo-runtime-import-20260324`
+- 无长期特性分支；使用短期 topic 分支通过 PR 合并
+
+
 ---
 
 ## 0. 入口指引(从哪里开始)
 
-### 阅读入口
-1. **首次了解** → `../README.md`(仓库总览 + 快速开始)
-2. **5 分钟版本** → `executive-summary.md`
-3. **当前真值** → 本页(`CURRENT_TRUTH.md`)
-4. **其他频道 quickstart** → [`quickstart/quickstart-other-channels.md`](quickstart/quickstart-other-channels.md)(非 trading 场景)
-5. **完整方案** → `executive-summary.md`
+### 阅读入口（推荐顺序）
+1. **首次了解** → [`../README.md`](../README.md)（仓库总览 + 快速开始）
+2. **当前真值** → 本页（`CURRENT_TRUTH.md`）
+3. **设计背景** → [`executive-summary.md`](executive-summary.md)（5 分钟方案总览）
+4. **其他频道** → [`quickstart/quickstart-other-channels.md`](quickstart/quickstart-other-channels.md)（非 trading 场景）
 
 ### Runtime 入口
 ```bash
@@ -74,7 +85,9 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - **规则**:禁止双写,新改动必须提交到本仓 monorepo
 
 
+
 ---
+
 
 ## 2. 本轮已经定下来的真值
 
@@ -142,7 +155,9 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 正式约束入口:`waiting-integrity-hard-close-policy-2026-03-21.md`
 
+
 ---
+
 
 ## 3. 为什么 agent 做完就停,以及接下来怎么修
 
@@ -167,7 +182,9 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 3. **再自动推进**:只有 contract 足够清楚时,才讨论自动 dispatch;
 4. **heartbeat 继续待在外环**:它负责提醒和重查,不负责代替主链做状态推进。
 
+
 ---
+
 
 ## 4. 当前计划入口
 
@@ -183,7 +200,9 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 > **下一阶段不是"上更多循环",而是"先把 planning、continuation contract、issue lane baseline、heartbeat boundary 定成默认",然后再用 DeepAgents / SWE-agent 做叶子层 pilot。**
 
+
 ---
+
 
 ## 5. historical / superseded 入口
 
@@ -196,13 +215,17 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 | `validation-status.md` | historical pre-live design note | `validation-status.md` + 本页 |
 | (已删除) | historical review snapshot | 本页 + `overall-plan.md` |
 
+
 ---
+
 
 ## 6. 一句话总口径
 
 **proposal repo 现在的真值是:它是 OpenClaw 公司级 orchestration 方案仓与统一阅读入口;gstack-style planning 已成为默认方法,TEAM_RULES 已 codify planning default 与 heartbeat boundary;OpenClaw 继续持有 control plane,外部框架只进叶子层/benchmark/局部方法层;下一阶段重点是先规划、先 contract、再自动推进,而不是盲目加循环。**
 
+
 ---
+
 
 ## 7. Continuation Kernel 当前状态总结
 
@@ -403,7 +426,9 @@ V8 Execute Mode + Auto-Trigger 功能验证
 - `archive/old-docs/partial-continuation-kernel-v8.md`(已归档,历史参考)
 - [`technical-debt/technical-debt-2026-03-22.md`](technical-debt/technical-debt-2026-03-22.md)
 
+
 ---
+
 
 > **详细演进历史**:各版本 kernel 的详细设计文档见各模块源码的 docstring。
 的 docstring。

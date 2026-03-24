@@ -8,6 +8,16 @@
 
 ---
 
+## Repository Governance
+
+**Branch Policy:**
+- **`main` is the only canonical branch** — all development, releases, and documentation target `main`
+- Historical integration branches (e.g., `integration/monorepo-runtime-import-20260322`) have been merged and deleted
+- Backup tags preserved: `backup/integration-monorepo-runtime-import-20260322-20260324`
+- No long-lived feature branches; use short-lived topic branches merged via PR
+
+---
+
 ## Quick Start (30 seconds)
 
 **Unified entry command:**
@@ -212,26 +222,25 @@ openclaw-company-orchestration-proposal/
 
 ## Documentation Navigation
 
-| Goal | Entry Point |
-|------|-------------|
-| **First-time overview** | [`docs/executive-summary.md`](docs/executive-summary.md) |
-| **Current truth (latest)** | [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md) |
-| **Architecture deep dive** | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
-| **Other channels setup** | [`docs/quickstart/quickstart-other-channels.md`](docs/quickstart/quickstart-other-channels.md) |
-| **Auto-trigger config** | [`docs/configuration/auto-trigger-config-guide.md`](docs/configuration/auto-trigger-config-guide.md) |
-| **Validation status** | [`docs/validation-status.md`](docs/validation-status.md) |
-| **Current plans** | [`docs/plans/overall-plan.md`](docs/plans/overall-plan.md) |
-| **Technical debt** | [`docs/technical-debt/technical-debt-2026-03-22.md`](docs/technical-debt/technical-debt-2026-03-22.md) |
-| **Recent reports** | [`docs/reports/`](docs/reports/) |
-| **Architecture reviews** | [`docs/review/`](docs/review/) |
+### Core Reading Order (Recommended)
 
-### Document Roles
+| Order | Document | Purpose |
+|-------|----------|---------|
+| 1 | [`README.md`](README.md) | Quick start + architecture overview (you are here) |
+| 2 | [`docs/CURRENT_TRUTH.md`](docs/CURRENT_TRUTH.md) | **Single source of truth** — what actually works today |
+| 3 | [`docs/executive-summary.md`](docs/executive-summary.md) | 5-min design rationale — why this direction |
+| 4 | [`docs/quickstart/quickstart-other-channels.md`](docs/quickstart/quickstart-other-channels.md) | Setup guide for non-trading scenarios |
 
-- **`docs/CURRENT_TRUTH.md`**: Single source of truth for current iteration state (v10, dual-track backend)
-- **`docs/executive-summary.md`**: Historical batch-1 plan; read for context but defer to README/CURRENT_TRUTH
-- **`docs/plans/overall-plan.md`**: Current true plan with P0/P1/P2 priorities and boundaries
-- **`docs/validation-status.md`**: What's validated vs. what's not; why this direction was chosen
-- **`docs/technical-debt/technical-debt-2026-03-22.md`**: Known optimization points and backlog
+### Reference Documents (On-Demand)
+
+| Topic | Document |
+|-------|----------|
+| Architecture deep dive | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
+| Plans & roadmap | [`docs/plans/overall-plan.md`](docs/plans/overall-plan.md) |
+| Validation evidence | [`docs/validation-status.md`](docs/validation-status.md) |
+| Technical debt | [`docs/technical-debt/technical-debt-2026-03-22.md`](docs/technical-debt/technical-debt-2026-03-22.md) |
+| Batch summaries | [`docs/batch-summaries/`](docs/batch-summaries/) |
+| Reports & reviews | [`docs/reports/`](docs/reports/), [`docs/review/`](docs/review/) |
 
 ---
 
