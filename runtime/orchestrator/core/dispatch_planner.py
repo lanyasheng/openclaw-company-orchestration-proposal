@@ -455,6 +455,17 @@ class DispatchPlanner:
             "callback_envelope_schema": CANONICAL_CALLBACK_ENVELOPE_VERSION,
             "backend_terminal_role": "diagnostic_only",
             "report_role": "evidence_only_until_callback",
+            # P0-3 Batch C3: Operator runbook reference and closeout chain requirements
+            "operator_runbook": "examples/trading_roundtable_operator_runbook_v1.md",
+            "closeout_chain_required": True,
+            "closeout_chain_steps": [
+                "acceptance_check",
+                "runtime_closeout",
+                "git_closeout",
+                "git_push",
+                "next_batch_dispatch"
+            ],
+            "push_required_before_next_batch": True,
         }
         
         self.plans[dispatch_id] = plan
@@ -528,11 +539,26 @@ class DispatchPlanner:
         roundtable: Optional[Dict[str, Any]],
         packet: Optional[Dict[str, Any]],
     ) -> List[SkipReason]:
-        """评估跳过条件"""
+        """
+        评估跳过条件
+        
+        C2: 强校验逻辑
+        - 缺关键 packet/roundtable 字段时，硬拦截
+        - empty-result 时硬拦截
+        - 输出明确 blocked/error 状态
+        """
         skip_reasons = []
         
         def skip(code: str, message: str):
             skip_reasons.append(SkipReason(code=code, message=message))
+        
+        # ========== C2: Empty-Result Hard Block ==========
+        if validation and validation.get("empty_result_blocked"):
+            skip(
+                "empty_result_blocked",
+                f"Empty result detected: {validation.get('empty_result_reason', 'empty result')} - cannot proceed without artifact/report/test truth",
+            )
+        # ========== End C2 ==========
         
         # 检查 explicit false
         if not allow_auto_dispatch:
@@ -547,12 +573,18 @@ class DispatchPlanner:
                     "Manual confirmation is required before continuation",
                 )
         
-        # 检查 packet 完整性
+        # 检查 packet 完整性（C2: 包括 missing fields 和 empty result）
         if validation and not validation.get("complete"):
-            skip(
-                "phase1_packet_incomplete",
-                "Phase1 packet or roundtable closure is incomplete",
-            )
+            # C2: 区分 empty result 和普通 missing fields
+            if validation.get("empty_result_blocked"):
+                # 已经在上面处理了
+                pass
+            else:
+                missing_fields = validation.get("missing_fields", [])
+                skip(
+                    "phase1_packet_incomplete",
+                    f"Phase1 packet or roundtable closure is incomplete. Missing fields: {', '.join(missing_fields[:5])}{'...' if len(missing_fields) > 5 else ''}",
+                )
         
         # 检查 timeout 任务
         analysis = analysis or {}
