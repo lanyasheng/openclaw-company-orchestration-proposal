@@ -47,8 +47,8 @@ __all__ = [
 
 CLOSEOUT_TRACKER_VERSION = "closeout_tracker_v1"
 
-# Closeout 存储目录
-CLOSEOUT_DIR = STATE_DIR.parent / "orchestrator" / "closeouts"
+# Closeout 存储目录（支持 OPENCLAW_CLOSEOUT_DIR 环境变量用于测试隔离）
+CLOSEOUT_DIR = Path(os.environ.get("OPENCLAW_CLOSEOUT_DIR", str(STATE_DIR.parent / "orchestrator" / "closeouts")))
 
 # Push status
 PushStatus = Literal["pending", "pushed", "not_required", "blocked"]

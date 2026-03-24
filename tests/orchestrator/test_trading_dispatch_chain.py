@@ -51,14 +51,23 @@ def isolated_state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def reload_modules(isolated_state_dir: Path):
-    """重新加载模块以使用隔离的目录"""
+def reload_modules(isolated_state_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """重新加载模块以使用隔离的目录
+    
+    P0-4 Final Mile: 添加 closeout_tracker 隔离，避免 closeout gate 污染
+    """
     import importlib
+    
+    # 设置隔离的 closeout 目录
+    closeout_dir = tmp_path / "closeouts"
+    closeout_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("OPENCLAW_CLOSEOUT_DIR", str(closeout_dir))
 
     for module_name in [
         "state_machine", "batch_aggregator", "orchestrator",
         "continuation_backends", "trading_roundtable",
-        "task_registration", "sessions_spawn_request", "bridge_consumer"
+        "task_registration", "sessions_spawn_request", "bridge_consumer",
+        "closeout_tracker",  # P0-4 Final Mile: closeout isolation
     ]:
         if module_name in sys.modules:
             importlib.reload(sys.modules[module_name])
