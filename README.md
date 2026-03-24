@@ -247,8 +247,8 @@ python3 -m pytest tests/orchestrator/ -v
 **Current status:** 468 tests passing (100% pass rate)
 
 **Key test files:**
-- `test_v8_execute_mode.py` — V8 execute mode + auto-trigger validation
-- `test_v9_sessions_spawn_api.py` — V9 real sessions_spawn API integration (run directly)
+- `test_execute_mode_and_auto_trigger.py` — Execute mode + auto-trigger validation (formerly test_v8_execute_mode.py)
+- `test_sessions_spawn_api_execution.py` — Real sessions_spawn API integration (formerly test_v9_sessions_spawn_api.py)
 - `test_mainline_auto_continue.py` — Trading mainline auto-continue validation
 - `test_sessions_spawn_bridge.py` — Sessions spawn bridge validation
 - `test_continuation_backends_lifecycle.py` — Generic lifecycle kernel tests

@@ -1,12 +1,21 @@
 # CURRENT_TRUTH(2026-03-23)
 
-> **更新**: 2026-03-23 — Owner/Executor 解耦 + Coding Lane 默认 Claude Code 已实现
-
-> **更新**: 2026-03-22 — V8 Real Execute Mode + Auto-Trigger Consumption 已实现
-
-> 用途：给这个 proposal repo 一个**当前真值入口**,避免旧计划、旧评审、旧 POC 被继续误读成"今天的默认口径"。
+> **角色**: 📍 **当前真值唯一入口** — 了解"今天系统实际如何工作"从这里开始
 >
-> 注意：这个 repo 现在已升级为**单仓分层 monorepo**:`docs/` 持阅读入口，`runtime/` 持实现真值，`tests/` 持验收。历史上 runtime 曾散落在 OpenClaw workspace 本地;从 2026-03-22 起，本仓开始承担 orchestration runtime 的统一收口。
+> **何时阅读**: 
+> - 首次接触本仓，想快速了解当前状态
+> - 不确定某个文档是否仍是最新口径
+> - 准备修改实现/文档前，确认真值边界
+>
+> **真值边界**: 本文档 + `runtime/` 实现 + `tests/` 验收 = 当前唯一可信源；`archive/`、`docs/plans/` 历史计划文档仅供参考
+>
+> **更新**: 2026-03-23 — Owner/Executor 解耦 + Coding Lane 默认 Claude Code 已实现
+>
+> **更新**: 2026-03-22 — V8 Real Execute Mode + Auto-Trigger Consumption 已实现
+>
+> **用途**: 给这个 proposal repo 一个**当前真值入口**,避免旧计划、旧评审、旧 POC 被继续误读成"今天的默认口径"。
+>
+> **注意**: 这个 repo 现在已升级为**单仓分层 monorepo**:`docs/` 持阅读入口，`runtime/` 持实现真值，`tests/` 持验收。历史上 runtime 曾散落在 OpenClaw workspace 本地;从 2026-03-22 起，本仓开始承担 orchestration runtime 的统一收口。
 ---
 
 ## 0. 入口指引(从哪里开始)

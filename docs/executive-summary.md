@@ -1,7 +1,16 @@
 # 执行摘要：OpenClaw Workflow Engine 总方案
 
-> 日期：2026-03-20  
-> 口径：v3.1，补入 live continuation / whitelist / tmux backend 真值
+> **角色**: 📘 **5 分钟方案总览** — 理解"为什么选这个方向"和"五层架构"
+>
+> **何时阅读**:
+> - 想快速理解整体架构设计思路
+> - 需要了解决策背景和排除的方向
+> - 向新成员解释仓库定位
+>
+> **与 CURRENT_TRUTH 关系**: 本文档讲"为什么这样设计"；`CURRENT_TRUTH.md` 讲"今天实际如何工作"；两者配合阅读
+>
+> **日期**: 2026-03-20  
+> **口径**: v3.1，补入 live continuation / whitelist / tmux backend 真值
 
 ## 一句话结论
 

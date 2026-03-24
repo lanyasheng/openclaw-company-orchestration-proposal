@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-test_v9_real_sessions_spawn.py — V9 功能验证脚本
+test_sessions_spawn_api_execution.py — Real sessions_spawn API 集成验证
 
-快速验证 V9 Real OpenClaw sessions_spawn Integration 功能。
+验证 sessions_spawn API 执行、auto-trigger 配置、链路追踪等功能。
+
+使用方式:
+    python3 -m pytest tests/orchestrator/test_sessions_spawn_api_execution.py -v
 """
 
 import json

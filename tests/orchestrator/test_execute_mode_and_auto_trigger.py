@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-test_v8_execute_and_auto_trigger.py — V8 功能验证脚本
+test_execute_mode_and_auto_trigger.py — Execute Mode + Auto-Trigger 功能验证
 
 验证:
 1. Execute mode happy path
 2. Auto-trigger 配置和状态查询
-3. 向后兼容性（v7 测试通过）
+3. 向后兼容性
 
 使用方式:
-    python3 test_v8_execute_and_auto_trigger.py
+    python3 -m pytest tests/orchestrator/test_execute_mode_and_auto_trigger.py -v
 """
 
 import sys

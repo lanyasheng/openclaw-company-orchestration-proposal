@@ -247,8 +247,8 @@ python3 -m pytest tests/orchestrator/ -v
 **当前状态：** 468 个测试通过（100% 通过率）
 
 **关键测试文件：**
-- `test_v8_execute_mode.py` — V8 execute mode + auto-trigger 验证
-- `test_v9_sessions_spawn_api.py` — V9 真实 sessions_spawn API 集成（直接运行）
+- `test_execute_mode_and_auto_trigger.py` — Execute mode + auto-trigger 验证（原名 test_v8_execute_mode.py）
+- `test_sessions_spawn_api_execution.py` — 真实 sessions_spawn API 集成（原名 test_v9_sessions_spawn_api.py）
 - `test_mainline_auto_continue.py` — Trading 主线自动续推验证
 - `test_sessions_spawn_bridge.py` — Sessions spawn bridge 验证
 - `test_continuation_backends_lifecycle.py` — 通用 lifecycle kernel 测试
