@@ -77,8 +77,41 @@ TRADABILITY_REQUIRED_FIELDS = [
     ("tradability", "summary"),
 ]
 
+# ============== Auto-Dispatch Allowlist (P0-3 Batch 10: Low-Risk Continuation) ==============
+
+# 默认允许的 continuation modes（窄白名单，仅适用于最安全的 handoff）
 DEFAULT_AUTO_DISPATCH_ALLOWED_CONTINUATION_MODES = {
     "advance_phase_handoff",
+}
+
+# 低风险 continuation allowlist（P0-3 Batch 10 新增）
+# 这些 continuation 可以由 runtime 自动推进，无需主会话手工续批
+# 注意：这不代表"完全无人工 gate"，而是"gate 保留，但低风险修复判断与续推由 runtime 自动做"
+LOW_RISK_CONTINUATION_ALLOWLIST = {
+    # Preheat 系列：预热/预验证任务
+    "preheat100",
+    "preheat250", 
+    "preheat500",
+    # Synthetic cleanup：数据清理/整理
+    "synthetic_cleanup",
+    # Rerun validation：重跑验证
+    "artifact_rerun",
+    "rerun_validation",
+    # Selector fullrun：选择器全量运行
+    "selector_fullrun",
+    # Runtime closeout：运行时闭环
+    "runtime_closeout",
+    # Advance phase handoff：阶段移交（原有）
+    "advance_phase_handoff",
+}
+
+# 高风险动作（必须保留人工 gate，不能 auto-dispatch）
+HIGH_RISK_ACTIONS = {
+    "push_merge",        # push/merge 代码
+    "production_alert",  # 生产告警正式上线
+    "live_trading",      # 实盘/交易执行
+    "packet_freeze",     # 真值不完整的放行
+    "gate_review",       # gate 审议（需要人工判断）
 }
 
 # 文档路径
@@ -156,6 +189,57 @@ class TradingAdapter(BaseAdapter):
             "missing_roundtable_fields": missing_roundtable_fields,
             "missing_artifact_fields": missing_artifact_fields,
             "missing_tradability_fields": missing_tradability_fields,
+        }
+    
+    def validate_packet_preflight(
+        self,
+        packet: Dict[str, Any],
+        roundtable: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        P0-1: Packet Schema 前置校验
+        
+        在 callback 处理的最早阶段进行 schema presence validation，
+        显式标记 incomplete 状态，避免等 closeout 才发现缺失。
+        
+        与 validate_packet() 的区别：
+        - 前置校验只做最基础的字段存在性检查（top-level + roundtable）
+        - 返回明确的 preflight_status: "pass" | "incomplete" | "missing_fields"
+        - 用于在 decision 构建之前就标记问题
+        
+        Returns:
+            {
+                "preflight_status": "pass" | "incomplete",
+                "complete": bool,
+                "missing_fields": [...],
+                "missing_packet_fields": [...],
+                "missing_roundtable_fields": [...],
+                "checked_at": "preflight",
+            }
+        """
+        missing_packet_fields = self._missing_top_level_fields(
+            packet,
+            TOP_LEVEL_PACKET_REQUIRED_FIELDS,
+        )
+        missing_roundtable_fields = self._missing_top_level_fields(
+            roundtable,
+            ROUNDTABLE_REQUIRED_FIELDS,
+        )
+        
+        all_missing = [
+            *missing_packet_fields,
+            *missing_roundtable_fields,
+        ]
+        
+        is_complete = len(all_missing) == 0
+        
+        return {
+            "preflight_status": "pass" if is_complete else "incomplete",
+            "complete": is_complete,
+            "missing_fields": all_missing,
+            "missing_packet_fields": missing_packet_fields,
+            "missing_roundtable_fields": missing_roundtable_fields,
+            "checked_at": "preflight",
         }
     
     def build_summary(

@@ -144,14 +144,29 @@ def _extract_payloads(batch_id: str) -> Dict[str, Any]:
     }
 
 
-def _decision_from_payload(batch_id: str, analysis: Dict[str, Any]) -> Decision:
-    """从 payload 构建 decision"""
+def _decision_from_payload(
+    batch_id: str,
+    analysis: Dict[str, Any],
+    preflight_validation: Optional[Dict[str, Any]] = None,
+) -> Decision:
+    """
+    从 payload 构建 decision
+    
+    Args:
+        batch_id: 批次 ID
+        analysis: batch 分析结果
+        preflight_validation: P0-1 前置校验结果（可选）
+    """
     payloads = _extract_payloads(batch_id)
     packet = payloads["packet"]
     roundtable = payloads["roundtable"]
     
-    # 使用适配器验证 packet
+    # 使用适配器验证 packet（完整验证）
     validation = _adapter.validate_packet(packet, roundtable)
+    
+    # P0-1: 如果有 preflight validation，合并到 validation metadata 中
+    if preflight_validation:
+        validation["preflight"] = preflight_validation
     
     # 确定 action
     conclusion = str(roundtable.get("conclusion") or packet.get("overall_gate") or "FAIL").upper()
@@ -418,6 +433,10 @@ def process_trading_roundtable_callback(
     处理 trading roundtable callback（Phase Engine 架构）
     
     主入口函数，使用 TradingAdapter 和 DispatchPlanner。
+    
+    P0-1: Packet Schema 前置校验
+    - 在 callback 处理的最早阶段进行 schema presence validation
+    - 显式标记 incomplete 状态，避免等 closeout 才发现缺失
     """
     _ensure_runtime_dirs()
     mark_callback_received(task_id, result)
@@ -444,12 +463,26 @@ def process_trading_roundtable_callback(
             "reconciled_waiting_anomalies": reconciled_waiting_anomalies,
         }
     
+    # ========== P0-1: Packet Schema Preflight Validation ==========
+    # 在 batch complete 之后、decision 构建之前，进行前置校验
+    # 提取 packet 和 roundtable 进行校验
+    packet = result.get("trading_roundtable", {}).get("packet", {}) if isinstance(result.get("trading_roundtable"), dict) else {}
+    roundtable = result.get("trading_roundtable", {}).get("roundtable", {}) if isinstance(result.get("trading_roundtable"), dict) else {}
+    
+    # 执行前置校验
+    preflight_validation = _adapter.validate_packet_preflight(packet, roundtable)
+    
+    # 如果前置校验失败，显式标记 incomplete 状态
+    # 注意：不阻断流程，但确保校验结果进入所有 downstream artifacts
+    preflight_incomplete = not preflight_validation.get("complete", True)
+    # ========== End P0-1 ==========
+    
     # 分析 batch 结果
     check_and_summarize_batch(batch_id)
     analysis = analyze_batch_results(batch_id)
     
-    # 构建 decision
-    decision = _decision_from_payload(batch_id, analysis)
+    # 构建 decision（传入 preflight validation 结果）
+    decision = _decision_from_payload(batch_id, analysis, preflight_validation=preflight_validation)
     normalized_backend = normalize_dispatch_backend(backend)
     
     # 解析编排契约
@@ -650,6 +683,16 @@ def process_trading_roundtable_callback(
     }
     # ========== End P0-4 Batch 1 ==========
     
+    # ========== P0-1: Packet Schema Preflight Validation Output ==========
+    # 在返回结果中包含 preflight validation 状态
+    preflight_output = {
+        "preflight_status": preflight_validation.get("preflight_status", "unknown"),
+        "preflight_complete": preflight_validation.get("complete", False),
+        "preflight_missing_fields": preflight_validation.get("missing_fields", []),
+        "checked_at": "callback_entry",
+    }
+    # ========== End P0-1 ==========
+    
     return {
         "status": "processed",
         "batch_id": batch_id,
@@ -667,4 +710,6 @@ def process_trading_roundtable_callback(
         "registration": registration_info,
         # P0-4 Batch 1: Closeout chain fix output
         "closeout": closeout_status_output,
+        # P0-1: Packet Schema Preflight Validation output
+        "preflight_validation": preflight_output,
     }
