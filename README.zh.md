@@ -4,7 +4,7 @@
 >
 > **一句话定位：** 当一个任务完成后，系统如何知道下一步该做什么——并且安全地继续推进？这个仓库让这些过渡变得显式。
 >
-> **默认后端：** `subagent` | **兼容后端：** `tmux` | **首个验证场景：** `trading_roundtable` continuation
+> **默认后端：** `subagent` | **兼容后端：** `tmux` | **首个验证场景：** `trading_roundtable` continuatio
 >
 > **当前成熟度：** safe semi-auto / thin bridge / trading continuation 生产验证
 
@@ -51,8 +51,8 @@
 - Continuation contract
 - Handoff schema
 - Registration / readiness 追踪
-- Dispatch plan
-- Bridge consumption
+- Dispatch pla
+- Bridge consumptio
 - Execution request / receipt
 - Callback/ack 分离
 
@@ -210,7 +210,7 @@ executor = 真正执行的人或执行器
 
 **为什么重要：** 这个解耦让 coding lane 可以默认走 Claude Code，而不要求业务角色 agent 自己扛执行。
 
-### Continuation
+### Continuatio
 
 **Continuation** 是任务完成后"下一步怎么走"的显式 contract：
 
@@ -321,7 +321,7 @@ graph TB
     end
 
     Business --> Control
-    Control --> Execution
+    Control --> Executio
     Execution --> Runtime
 ```
 
@@ -334,28 +334,28 @@ graph TB
 | **执行** | 任务执行后端 | subagent（默认）、Claude Code、tmux（兼容）、SubagentExecutor（Deer-Flow 借鉴） |
 | **Runtime** | OpenClaw 原语 | sessions、tools、hooks、channels、messaging |
 
-### Control Plane vs. Execution Substrate: 什么变了n
-n
-**Control Plane (保留的)**:n
-- ✅ OpenClaw 持有控制面：入口、sessions_spawn、launch/completion hook、callback bridge、scenario adaptern
-- ✅ Continuation contracts: `stopped_because / next_step / next_owner` 显式收口n
-- ✅ Registration + readiness + safety gatesn
-- ✅ Dispatch planning + auto-trigger guardsn
-- ✅ Completion receipts + callback/ack separationn
-- ✅ Truth anchor + artifact linkage chainn
-n
-**Execution Substrate (替换/增强的)**:n
-- ✅ **SubagentExecutor 封装** (2026-03-24): 统一 task_id / timeout / status / result handle / tool allowlistn
-- ✅ **热状态存储** (2026-03-24): 内存缓存 + 文件持久化混合，重启后可恢复终态n
-- ✅ **工具权限隔离**: allowed_tools / disallowed_tools 过滤到 subagent 级n
-- ✅ **双轨后端**: subagent (DEFAULT) + tmux (SUPPORTED) 共存n
-n
-**Deer-Flow 明确没借的**:n
-- ❌ **双线程池架构**: Python GIL 限制，收益有限；现有 subagent 天然隔离n
-- ❌ **全局内存字典**: 重启就丢；shared-context 文件系统更可靠n
-- ❌ **task_tool 轮询**: 已有 callback bridge / watcher / ack-final 协议更成熟n
-- ❌ **不替换 control plane**: Deer-Flow 只进 execution layer，不碰编排主链n
-n
+### Control Plane vs. Execution Substrate: 什么变了
+
+**Control Plane (保留的)**:
+- ✅ OpenClaw 持有控制面：入口、sessions_spawn、launch/completion hook、callback bridge、scenario adapter
+- ✅ Continuation contracts: `stopped_because / next_step / next_owner` 显式收口
+- ✅ Registration + readiness + safety gates
+- ✅ Dispatch planning + auto-trigger guards
+- ✅ Completion receipts + callback/ack separation
+- ✅ Truth anchor + artifact linkage chain
+
+**Execution Substrate (替换/增强的)**:
+- ✅ **SubagentExecutor 封装** (2026-03-24): 统一 task_id / timeout / status / result handle / tool allowlist
+- ✅ **热状态存储** (2026-03-24): 内存缓存 + 文件持久化混合，重启后可恢复终态
+- ✅ **工具权限隔离**: allowed_tools / disallowed_tools 过滤到 subagent 级
+- ✅ **双轨后端**: subagent (DEFAULT) + tmux (SUPPORTED) 共存
+
+**Deer-Flow 明确没借的**:
+- ❌ **双线程池架构**: Python GIL 限制，收益有限；现有 subagent 天然隔离
+- ❌ **全局内存字典**: 重启就丢；shared-context 文件系统更可靠
+- ❌ **task_tool 轮询**: 已有 callback bridge / watcher / ack-final 协议更成熟
+- ❌ **不替换 control plane**: Deer-Flow 只进 execution layer，不碰编排主链
+
 ### 主流程
 
 ```mermaid
@@ -372,7 +372,7 @@ sequenceDiagram
     CP->>SS: 检查 Readiness + 安全门
     
     alt 门通过
-        CP->>CP: 创建 Dispatch Plan
+        CP->>CP: 创建 Dispatch Pla
         CP->>SS: 写入 Dispatch (dispatch_id)
         CP->>CP: 生成 Execution Request
         CP->>SS: 写入 Request (request_id)
@@ -513,12 +513,12 @@ api_execution_id (childSessionKey / runId)
 
 ## 典型场景
 
-### 场景 1：Trading Continuation
+### 场景 1：Trading Continuatio
 
 **上下文：** Trading 分析完成；系统必须决定是否自动续推到下一批分析。
 
 ```
-用户请求 → trading_roundtable → Planning → Registration
+用户请求 → trading_roundtable → Planning → Registratio
                                            ↓
                               Readiness Check + 安全门
                                            ↓
@@ -536,7 +536,7 @@ api_execution_id (childSessionKey / runId)
 **上下文：** Discord 频道中的多 Agent 讨论；需要协调响应并追踪决策。
 
 ```
-频道消息 → channel_roundtable → Planning → Registration
+频道消息 → channel_roundtable → Planning → Registratio
                                               ↓
                                  派发到 coding lane (Claude Code)
                                               ↓

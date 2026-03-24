@@ -98,6 +98,7 @@
 - 主链知道下一步该由谁接；
 - coding continuation 至少有一条窄 lane 可标准化；
 - heartbeat 不再被误当 workflow owner。
+- **Deer-Flow 借鉴线 Batch A/B/D 完成**: SubagentExecutor / SubagentStateManager / IssueLaneExecutor 全部落地，测试 48/48 通过
 
 ### P1:DeepAgents / SWE-agent 叶子 pilot + planning->execution handoff 标准化 + stopped_because/next_step contract
 

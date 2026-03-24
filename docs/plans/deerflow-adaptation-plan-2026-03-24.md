@@ -306,15 +306,33 @@ Batch C + D 是**可选项**：
 
 ---
 
-### Batch D: 最小集成到现有执行路径 ⏸️ 暂缓
+### Batch D: 最小集成到现有执行路径 ✅ 完成 (2026-03-24)
 
-**决策**: 暂缓（不破坏现有主链）
-**原因**:
-1. Batch A/B 已提供独立封装层
-2. 现有执行路径稳定，不需要立即集成
-3. 可等待实际使用场景驱动集成
+**决策**: 已完成最小集成到 coding issue lane
 
-**后续**: 当有明确使用场景时，再考虑集成
+**实施状态**: 已完成
+**测试**: 16/16 通过
+**文件**:
+- `runtime/orchestrator/issue_lane_executor.py` (新增，20KB)
+- `tests/orchestrator/test_issue_lane_executor.py` (新增，16KB)
+
+**核心能力**:
+- IssueLaneExecutionConfig / IssueLaneExecutionResult / IssueLaneExecutor 类
+- 基于 SubagentExecutor 封装 issue lane 特定执行逻辑
+- 支持 planning -> execution -> closeout 完整链路
+- 工具权限隔离到 issue lane 级
+- 16 个集成测试覆盖核心路径
+
+**集成方式**:
+- 新增独立执行器文件，不修改现有 issue_lane_schemas.py
+- 保持向后兼容，原有 schema 契约不变
+- 通过 IssueLaneExecutor 封装 SubagentExecutor
+
+**验收标准**:
+- ✅ 集成后测试通过 (16/16)
+- ✅ 工具权限隔离生效
+- ✅ 不破坏现有功能
+- ✅ Contract 完整性验证通过
 
 ---
 
