@@ -285,6 +285,76 @@ def spawn_trading_task(packet_skeleton, contract):
 
 ---
 
+### 4.5.1 Empty-Result 硬拦截规则（P0 强制）
+
+**强制规则**:
+- ✅ `artifact_paths` **不得为空数组**
+- ✅ `artifact_paths` 必须至少包含 `terminal.json`
+- ✅ `artifact_paths` 中所有文件必须存在且可读
+
+**验证时机**: Auto Gate (`artifact_existence`)，在 Callback 被消费前执行
+
+**违反后果**:
+- ❌ **禁止标记** `terminal_status = "completed"`
+- ❌ **禁止进入** Acceptance 阶段
+- ❌ **强制降级为** `terminal_status = "failed"`，原因 `"artifact_paths_empty_or_missing"`
+
+**例外情况**:
+- 无。artifact 缺失不得以任何理由绕过。
+
+**Closeout 动作** (强制格式):
+```python
+closeout_artifact = {
+    "closeout_type": "empty_result_blocked",
+    "stopped_because": "artifact_paths_empty_or_missing",
+    "missing_artifacts": ["terminal.json", ...],
+    "next_step": "require subagent to re-run with artifact generation",
+    "next_owner": "trading",
+    "dispatch_readiness": "blocked",
+    "error_type": "truth_missing",
+    "error_code": "truth_missing_artifact",
+    "retry_count": 0,
+    "retry_exhausted": False
+}
+```
+
+**验证代码示例**:
+```python
+# runtime/orchestrator/gates.py
+def auto_gate_artifact_existence(callback_envelope):
+    artifact_paths = callback_envelope.get("backend_terminal_receipt", {}).get("artifact_paths", [])
+    if not artifact_paths:
+        return GateResult(
+            passed=False,
+            reason="artifact_paths is empty",
+            hard_stop=True,
+            error_code="truth_missing_artifact"
+        )
+    if "terminal.json" not in artifact_paths:
+        return GateResult(
+            passed=False,
+            reason="artifact_paths missing required terminal.json",
+            hard_stop=True,
+            error_code="truth_missing_artifact"
+        )
+    for path in artifact_paths:
+        if not Path(path).exists():
+            return GateResult(
+                passed=False,
+                reason=f"artifact not found: {path}",
+                hard_stop=True,
+                error_code="truth_missing_artifact"
+            )
+    return GateResult(passed=True)
+```
+
+**协议强制项**:
+- ✅ `artifact_paths` 为空时不得进入 Acceptance
+- ✅ Closeout 必须记录 `missing_artifacts` 列表
+- ✅ `dispatch_readiness` 必须为 `blocked`
+
+---
+
 ### 4.6 Acceptance/Tradability 回填
 
 **时机**: Callback 被消费后、Closeout 前  
@@ -555,6 +625,97 @@ def hard_stop_gate_consecutive_failures(batch_id, config):
 
 ---
 
+### 6.3.1 Timeout 检测责任链（P0 强制）
+
+**检测方**: Runtime/Orchestrator (`waiting_guard.py` + `closeout_tracker.py`)
+
+**检测对象与阈值**:
+
+| 检测对象 | 默认阈值 | 配置位置 | 触发后动作 |
+|---------|---------|---------|-----------|
+| 子任务 heartbeat | 600 秒 | `gate_config.json.timeout.heartbeat_stale_seconds` | Hard Close |
+| 批次总时长 | 7200 秒 | `gate_config.json.timeout.batch_total_timeout_seconds` | Hard Close |
+| Callback 等待时长 | 3600 秒 | `gate_config.json.timeout.callback_timeout_seconds` | Hard Close |
+
+**触发条件**:
+- `heartbeat_age_seconds > heartbeat_stale_seconds`
+- `batch_total_duration > batch_total_timeout_seconds`
+- `callback_wait_duration > callback_timeout_seconds`
+
+**Closeout 动作** (强制格式):
+```python
+closeout_artifact = {
+    "closeout_type": "timeout",
+    "timeout_type": "heartbeat|batch_total|callback_wait",
+    "timeout_threshold_seconds": 600,
+    "actual_duration_seconds": 720,
+    "stopped_because": "timeout_exceeded_{timeout_type}",
+    "next_step": "inspect timeout cause, retry or escalate",
+    "next_owner": "main/operator",
+    "dispatch_readiness": "blocked",
+    "error_type": "timeout",
+    "error_code": "timeout_exceeded_{timeout_type}",
+    "retry_count": 0,
+    "retry_exhausted": False
+}
+```
+
+**Retry/Degrade/Block 策略**:
+- ✅ Timeout 后**禁止自动 retry**
+- ✅ 必须人工确认后才能启动下一批或 retry
+- ✅ 连续 2 次 timeout 触发 Hard Stop，必须 operator 决策
+
+**协议强制项**:
+- ✅ Timeout 阈值必须在 `gate_config.json` 中声明，禁止硬编码
+- ✅ Timeout closeout 必须包含 `timeout_type` 和 `actual_duration_seconds`
+- ✅ Timeout 后 `dispatch_readiness` 必须为 `blocked`
+
+---
+
+### 6.3.2 Error 分型与处理策略（P1 建议）
+
+**Error 类型定义**:
+
+| 类型 | 定义 | 示例 | 默认处理 |
+|------|------|------|---------|
+| **Network/Provider** | 外部服务不可用 | API timeout, connection refused | Retry 1 次，失败则 degrade |
+| **Schema/Payload** | 数据结构不符合预期 | envelope 缺少字段，类型错误 | 禁止进入下一阶段，要求修复 |
+| **Truth 缺失** | 必要状态/证据不存在 | packet 槽位为空，artifact 缺失 | Hard Stop，要求补全 |
+| **脚本错误** | 执行脚本失败 | subagent runner 崩溃，exit code != 0 | Retry 1 次，失败则 Hard Stop |
+| **人工 Gate** | 需要人工决策 | Hard Stop Gate 触发，threshold 未达 | 等待人工确认 |
+
+**Error Code 标准化**:
+```json
+{
+    "network_timeout": "网络超时",
+    "schema_missing_field": "Schema 缺少字段",
+    "truth_missing_artifact": "必要 artifact 缺失",
+    "script_exit_nonzero": "脚本非零退出",
+    "gate_manual_required": "需要人工干预",
+    "timeout_exceeded_heartbeat": "heartbeat timeout",
+    "timeout_exceeded_batch_total": "批次总时长 timeout",
+    "timeout_exceeded_callback_wait": "callback 等待 timeout"
+}
+```
+
+**Closeout 记录** (强制):
+所有 error 必须在 closeout_artifact 中记录：
+```json
+{
+    "error_type": "network_timeout|schema_missing_field|truth_missing|script_error|manual_gate|timeout",
+    "error_code": "具体 error code",
+    "error_details": "详细描述",
+    "retry_count": 0,
+    "retry_exhausted": false
+}
+```
+
+**协议强制项**:
+- ✅ P0 强制字段 (`error_type`, `error_code`) 不得缺失
+- ✅ Retry 次数必须记录，超过 1 次必须升级
+
+---
+
 ## 7. 每批完成后的默认动作
 
 ### 7.1 标准流程
@@ -664,6 +825,56 @@ else:
 
 ---
 
+### 7.3.1 "假完成"边界情况处理（P0 强制）
+
+**定义**: 流程在某一步骤显示成功但实际未推进到下一状态。
+
+**场景及处理策略**:
+
+| 场景 | 检测方 | 检测条件 | 处理策略 |
+|------|--------|---------|---------|
+| Callback 已收到但 acceptance 卡住 | Runtime | 超过 300 秒未处理 | 自动触发 acceptance，记录 anomaly |
+| Closeout 写入但 git commit 失败 | Git Closeout 负责人 | commit 返回非零 exit code | 重试 1 次，仍失败则 Hard Stop |
+| Git push 成功但下一批未启动 | Main/Operator | `push_status=pushed` 但 `next_batch_ready=false` 超过 60 秒 | 检查 `next_batch_ready` 字段，手动触发 |
+| Manifest 更新但 far-end 未同步 | Main/Operator | push 成功 60 秒后远端仍无更新 | 等待 60 秒后检查，仍不同步则重新 push |
+| Closeout 成功但状态文件未更新 | Runtime | closeout 写入后 state machine 未前进 | 强制同步状态，记录 inconsistency |
+
+**检测命令**:
+```bash
+# 检查 closeout 状态
+python closeout_tracker.py check-push <batch_id>
+
+# 检查 waiting anomalies
+python waiting_guard.py reconcile <batch_id>
+
+# 查看批次状态
+python state_machine.py get-batch <batch_id>
+```
+
+**Closeout 记录** (强制):
+```python
+closeout_artifact = {
+    "closeout_type": "stuck_detected",
+    "stuck_stage": "acceptance_pending|git_commit_failed|push_success_no_next_batch|manifest_sync_failed",
+    "stuck_duration_seconds": 420,
+    "stopped_because": "stuck_at_{stage}_detected",
+    "next_step": "manual_intervention_required",
+    "next_owner": "main/operator",
+    "dispatch_readiness": "blocked",
+    "error_type": "stuck",
+    "error_code": "stuck_at_{stage}",
+    "auto_recovery_attempted": True,
+    "auto_recovery_success": False
+}
+```
+
+**协议强制项**:
+- ✅ 检测到"假完成"后必须记录 `stuck_stage` 和 `stuck_duration_seconds`
+- ✅ 必须尝试自动恢复（如适用）并记录结果
+- ✅ 无法自动恢复时必须升级给 main/operator
+
+---
+
 ## 8. 最小落地清单
 
 ### 8.1 已有实现
@@ -685,7 +896,10 @@ else:
 |------|--------|------|---------|
 | Git Closeout 自动化脚本 | P0 | `runtime/scripts/update_manifest.py` 需完善 | 2026-03-25 |
 | Push 成功回调 | P0 | Push 成功后自动回填 `push_timestamp` | 2026-03-25 |
+| Timeout 检测配置化 | P0 | 将 `HEARTBEAT_STALE_SECONDS` 移入 `gate_config.json` | 2026-03-25 |
+| Empty-Result 硬拦截实现 | P0 | 在 `gates.py` 中实现 `auto_gate_artifact_existence` | 2026-03-25 |
 | 批次间依赖检查 | P1 | 确保前一批 closeout 完成后才启动下一批 | 2026-03-26 |
+| Error Code 标准化 | P1 | 实现统一的 error code 枚举和映射 | 2026-03-26 |
 | Closeout Dashboard | P2 | 可视化展示所有批次 closeout 状态 | 2026-03-28 |
 
 ---
@@ -694,9 +908,39 @@ else:
 
 | 配置项 | 位置 | 状态 |
 |--------|------|------|
-| `gate_config.json` | `~/.openclaw/shared-context/gate_config.json` | ⚠️ 需创建 |
+| `gate_config.json` | `~/.openclaw/shared-context/gate_config.json` | ⚠️ 需创建（含 timeout 阈值） |
 | `closeout_requirements` | Contract 中声明 | ⚠️ 需标准化 |
 | `manifest.json` Schema | `schemas/manifest_v1.json` | ⚠️ 需定义 |
+| `error_codes.json` | `schemas/error_codes_v1.json` | ⚠️ 需定义（P1） |
+
+### 8.4 gate_config.json 模板（P0 强制）
+
+```json
+{
+  "trading_roundtable": {
+    "tradability_threshold": 0.7,
+    "artifact_minimum": 2,
+    "require_terminal_clean": true
+  },
+  "timeout": {
+    "heartbeat_stale_seconds": 600,
+    "batch_total_timeout_seconds": 7200,
+    "callback_timeout_seconds": 3600
+  },
+  "retry": {
+    "max_retries": 1,
+    "retry_interval_seconds": 60
+  },
+  "hard_stop": {
+    "max_consecutive_failures": 2
+  }
+}
+```
+
+**协议强制项**:
+- ✅ `timeout` 配置必须声明，禁止硬编码
+- ✅ `retry.max_retries` 不得超过 1（防止无限重试）
+- ✅ `hard_stop.max_consecutive_failures` 必须声明
 
 ---
 
@@ -773,6 +1017,7 @@ else:
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
+| v1.1 | 2026-03-24 | **Timeout/Error/Fallback 专项补丁**：添加 6.3.1 Timeout 检测责任链、6.3.2 Error 分型、4.5.1 Empty-Result 硬拦截、7.3.1"假完成"边界情况处理、8.4 gate_config.json 模板 |
 | v1.0 | 2026-03-24 | 初始版本，基于 WS3 问题链经验 |
 
 ---
