@@ -13,6 +13,14 @@ closeout_tracker.py — Closeout State Tracker
 - 不自动 push（那是上层 glue 的职责）
 - 但显式输出 push_required 状态信号，让主流程不再无声停住
 - closeout artifact 包含 continuation_contract，统一 continuation 语义
+
+HEARTBEAT BOUNDARY POLICY (P0-2 Batch 2):
+- emit_closeout() and create_closeout() are OWNER-LEVEL operations.
+- Heartbeat paths MUST NOT call these functions directly.
+- Only workflow owners (trading_roundtable, channel_roundtable, etc.) can emit closeout.
+- Heartbeat can only DETECT anomalies and NUDGE owners to emit closeout.
+
+See: docs/policies/heartbeat-boundary-policy.md (Deny List: D5)
 """
 
 from __future__ import annotations
@@ -26,6 +34,71 @@ from typing import Any, Dict, List, Literal, Optional
 
 from state_machine import STATE_DIR, _iso_now, get_batch_tasks, get_state
 from partial_continuation import ContinuationContract, build_continuation_contract
+
+# ========== HEARTBEAT BOUNDARY GUARD (P0-2 Batch 2) ==========
+# This guard prevents heartbeat paths from directly emitting closeout.
+
+_CLOSEOUT_EMIT_CALLER_ALLOWLIST = {
+    "trading_roundtable",
+    "channel_roundtable",
+    "orchestrator",
+    "closeout_generator",
+    "closeout_tracker",  # This module itself
+    "partial_continuation",
+    "test_",  # Test modules are allowed
+}
+"""
+Modules that are allowed to call emit_closeout() and create_closeout().
+Heartbeat paths (waiting_guard, heartbeat, liveness, guardian) are NOT in this list.
+"""
+
+
+def _assert_closeout_emit_allowed(caller_module: str) -> None:
+    """
+    Assert that the caller module is allowed to emit closeout.
+    
+    HEARTBEAT BOUNDARY GUARD (P0-2 Batch 2):
+    - This function checks if the caller is in the allowlist.
+    - Heartbeat paths are NOT allowed to emit closeout directly.
+    
+    Args:
+        caller_module: The name of the calling module
+    
+    Raises:
+        ValueError: If the caller is not in the allowlist
+    
+    Example:
+        >>> _assert_closeout_emit_allowed("trading_roundtable")  # OK
+        >>> _assert_closeout_emit_allowed("waiting_guard")  # Raises ValueError
+    """
+    # Check if caller is in allowlist
+    for allowed in _CLOSEOUT_EMIT_CALLER_ALLOWLIST:
+        if allowed in caller_module:
+            return
+    
+    # Heartbeat path detected - block the call
+    raise ValueError(
+        f"Heartbeat boundary violation: module '{caller_module}' is not allowed to emit closeout. "
+        f"Heartbeat paths can only DETECT anomalies and NUDGE owners to emit closeout. "
+        f"Allowed modules: {_CLOSEOUT_EMIT_CALLER_ALLOWLIST}. "
+        f"See: docs/policies/heartbeat-boundary-policy.md"
+    )
+
+
+def _get_caller_module(level: int = 2) -> str:
+    """
+    Get the name of the calling module.
+    
+    Args:
+        level: Stack level to inspect (default: 2 = direct caller)
+    
+    Returns:
+        Module name of the caller
+    """
+    import inspect
+    frame = inspect.stack()[level]
+    module = inspect.getmodule(frame[0])
+    return module.__name__ if module else "unknown"
 
 __all__ = [
     "CloseoutStatus",
@@ -385,6 +458,11 @@ class CloseoutTracker:
         """
         Emit closeout：创建 artifact -> 写入文件。
         
+        HEARTBEAT BOUNDARY GUARD (P0-2 Batch 2):
+        - This function checks the caller module before emitting closeout.
+        - Heartbeat paths (waiting_guard, heartbeat, liveness, guardian) are NOT allowed.
+        - Only workflow owners (trading_roundtable, channel_roundtable, etc.) can emit.
+        
         Args:
             batch_id: 批次 ID
             scenario: 场景名称
@@ -395,7 +473,14 @@ class CloseoutTracker:
         
         Returns:
             CloseoutArtifact（已写入文件）
+        
+        Raises:
+            ValueError: If called from a heartbeat path (not in allowlist)
         """
+        # HEARTBEAT BOUNDARY GUARD: Check caller module
+        caller_module = _get_caller_module(level=2)
+        _assert_closeout_emit_allowed(caller_module)
+        
         # 创建 artifact
         artifact = self.create_closeout(
             batch_id=batch_id,

@@ -4,6 +4,16 @@
 This helper is intentionally small and local to the workspace-side runtime.
 It does not try to own heartbeat semantics globally; it only prevents callback/
 continuation code from treating obviously dead leaf runs as healthy waiting.
+
+HEARTBEAT BOUNDARY POLICY (P0-2 Batch 2):
+- This module is an OBSERVER / SIGNALER, not an ACTOR / OWNER / DECIDER.
+- It DETECTS anomalies and PREPARES closeout data, but does NOT directly:
+  - Write terminal truth (completed/failed states) without owner context
+  - Dispatch next tasks (that's dispatch_planner's responsibility)
+  - Override gate decisions (that's roundtable/decision maker's responsibility)
+- All state modifications must be initiated by workflow owner, not heartbeat.
+
+See: docs/policies/heartbeat-boundary-policy.md
 """
 
 from __future__ import annotations
@@ -14,6 +24,29 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from state_machine import TaskState, _iso_now, get_batch_tasks, get_state, update_state
+
+# ========== HEARTBEAT BOUNDARY GUARD (P0-2 Batch 2) ==========
+# These flags enforce the heartbeat boundary policy at runtime.
+# They prevent heartbeat paths from directly performing owner-level actions.
+
+_HEARTBEAT_BOUNDARY_ENFORCED = True
+"""If True, heartbeat paths cannot directly call owner-level functions."""
+
+_ALLOWED_HEARTBEAT_ACTIONS = {
+    "detect_anomaly",
+    "probe_evidence",
+    "prepare_closeout_data",
+    "return_anomaly_list",
+}
+"""Actions that heartbeat IS allowed to perform."""
+
+_DENIED_HEARTBEAT_ACTIONS = {
+    "write_terminal_truth_directly",
+    "dispatch_next_task",
+    "override_gate_decision",
+    "write_continuation_contract",
+}
+"""Actions that heartbeat is NOT allowed to perform."""
 
 NON_TERMINAL_TASK_STATES = {
     TaskState.PENDING.value,
@@ -47,12 +80,41 @@ def reconcile_batch_waiting_anomalies(
 ) -> List[Dict[str, Any]]:
     """Hard-close obviously invalid waiting tasks inside a batch.
 
+    HEARTBEAT BOUNDARY GUARD (P0-2 Batch 2):
+    - This function DETECTS anomalies and PREPARES closeout data.
+    - It does NOT directly write terminal truth or dispatch next tasks.
+    - The caller (workflow owner) is responsible for applying the closeout.
+    - next_owner and next_step MUST be provided by the caller, not decided here.
+    
+    See: docs/policies/heartbeat-boundary-policy.md (Allow List: A1-A7, Deny List: D1-D6)
+
     Only tasks that still look non-terminal are considered. When a task has
     bound runtime evidence (status file / run dir) and that evidence shows the
     waiter is gone, stale, terminal, or missing, the task is moved to FAILED
     with explicit closeout fields so the batch can stop pretending it is still
     waiting.
+    
+    Args:
+        batch_id: Batch identifier
+        next_owner: Workflow owner who will apply the closeout (NOT decided by heartbeat)
+        next_step: Next step defined by workflow owner (NOT decided by heartbeat)
+        artifact_hint: Optional artifact path hint for completion check
+    
+    Returns:
+        List of anomaly records. Caller decides whether to apply closeout.
+    
+    Raises:
+        ValueError: If called without proper owner context (heartbeat boundary guard)
     """
+    # HEARTBEAT BOUNDARY GUARD: Ensure owner context is provided
+    if _HEARTBEAT_BOUNDARY_ENFORCED:
+        if not next_owner or not next_step:
+            raise ValueError(
+                "Heartbeat boundary violation: reconcile_batch_waiting_anomalies() "
+                "cannot be called without explicit owner context. "
+                "Heartbeat is an observer, not an owner. "
+                "See: docs/policies/heartbeat-boundary-policy.md"
+            )
 
     anomalies: List[Dict[str, Any]] = []
     for task in get_batch_tasks(batch_id):
@@ -346,3 +408,82 @@ def _has_completion_artifact(
         if path.exists():
             return True
     return False
+
+
+# ========== HEARTBEAT BOUNDARY GUARD HELPERS (P0-2 Batch 2) ==========
+# These helpers enforce the heartbeat boundary policy at runtime.
+# See: docs/policies/heartbeat-boundary-policy.md
+
+
+def assert_heartbeat_boundary(action: str) -> None:
+    """
+    Assert that a heartbeat action is within allowed boundaries.
+    
+    HEARTBEAT BOUNDARY GUARD (P0-2 Batch 2):
+    - This function checks if an action is allowed for heartbeat paths.
+    - If the action is denied, raises ValueError.
+    
+    Args:
+        action: The action being attempted by heartbeat path
+    
+    Raises:
+        ValueError: If the action is denied for heartbeat paths
+    
+    Example:
+        >>> assert_heartbeat_boundary("detect_anomaly")  # OK
+        >>> assert_heartbeat_boundary("write_terminal_truth_directly")  # Raises ValueError
+    """
+    if not _HEARTBEAT_BOUNDARY_ENFORCED:
+        return
+    
+    if action in _DENIED_HEARTBEAT_ACTIONS:
+        raise ValueError(
+            f"Heartbeat boundary violation: action '{action}' is denied for heartbeat paths. "
+            f"Heartbeat is an observer, not an owner/decider. "
+            f"Allowed actions: {_ALLOWED_HEARTBEAT_ACTIONS}. "
+            f"Denied actions: {_DENIED_HEARTBEAT_ACTIONS}. "
+            f"See: docs/policies/heartbeat-boundary-policy.md"
+        )
+    
+    if action not in _ALLOWED_HEARTBEAT_ACTIONS:
+        # Unknown action - warn but don't block (for backward compatibility)
+        import warnings
+        warnings.warn(
+            f"Heartbeat action '{action}' is not in allowed list. "
+            f"Consider adding it to _ALLOWED_HEARTBEAT_ACTIONS or using an existing allowed action. "
+            f"See: docs/policies/heartbeat-boundary-policy.md"
+        )
+
+
+def heartbeat_may_detect_anomaly() -> bool:
+    """
+    Check if heartbeat path is allowed to detect anomalies.
+    
+    Returns:
+        True if heartbeat boundary enforcement is enabled (default)
+    """
+    return _HEARTBEAT_BOUNDARY_ENFORCED
+
+
+def heartbeat_may_prepare_closeout_data() -> bool:
+    """
+    Check if heartbeat path is allowed to prepare closeout data.
+    
+    Returns:
+        True if heartbeat boundary enforcement is enabled (default)
+    """
+    return _HEARTBEAT_BOUNDARY_ENFORCED
+
+
+def set_heartbeat_boundary_enforcement(enabled: bool) -> None:
+    """
+    Enable or disable heartbeat boundary enforcement.
+    
+    WARNING: Only use this for testing or emergency rollback.
+    In production, heartbeat boundary enforcement should always be enabled.
+    
+    Args:
+        enabled: True to enforce boundaries, False to disable (NOT RECOMMENDED)
+    """
+    global _HEARTBEAT_BOUNDARY_ENFORCED
+    _HEARTBEAT_BOUNDARY_ENFORCED = enabled
