@@ -6,7 +6,7 @@
 >
 > **Default backend:** `subagent` | **Compat backend:** `tmux` | **First validated scenario:** `trading_roundtable` continuation
 >
-> **Maturity:** safe semi-auto / thin bridge / production-validated on trading continuation
+> **Maturity:** safe semi-auto / thin bridge / production-validated | **Deer-Flow借鉴:** SubagentExecutor + 热状态存储已落地 (2026-03-24)
 
 ---
 
@@ -66,6 +66,7 @@ Real multi-agent systems rarely fail because "the model cannot answer." They fai
 | **Traceable linkage** | Full artifact chain: registration → dispatch → execution → receipt → callback |
 | **Safe semi-auto** | Allowlist-based, condition-triggered, reversible auto-continuation |
 | **Production-validated** | Real trading continuation path verified in production |
+| **Deer-Flow借鉴落地** | SubagentExecutor 封装 + 热状态存储已实现 (2026-03-24) |
 
 ---
 
@@ -308,6 +309,7 @@ graph TB
         E2[Claude Code]
         E3[tmux - COMPAT]
         E4[Browser / Message / Cron]
+        E5[SubagentExecutor - Deer-Flow 借鉴]
     end
 
     subgraph Runtime["OpenClaw Runtime Foundation"]
@@ -329,8 +331,30 @@ graph TB
 |-------|---------------|-------------|
 | **Business Scenarios** | Domain-specific workflows | `trading_roundtable`, `channel_roundtable`, future adapters |
 | **Control Plane** | Workflow orchestration logic | contracts, registration, dispatch plans, callbacks, receipts |
-| **Execution** | Task execution backends | subagent (default), Claude Code, tmux (compat) |
+| **Execution** | Task execution backends | subagent (default), Claude Code, tmux (compat), SubagentExecutor (Deer-Flow 借鉴) |
 | **Runtime** | OpenClaw primitives | sessions, tools, hooks, channels, messaging |
+
+### Control Plane vs. Execution Substrate: What Changed
+
+**Control Plane (保留的)**:
+- ✅ OpenClaw 持有控制面：入口、sessions_spawn、launch/completion hook、callback bridge、scenario adapter
+- ✅ Continuation contracts: `stopped_because / next_step / next_owner` 显式收口
+- ✅ Registration + readiness + safety gates
+- ✅ Dispatch planning + auto-trigger guards
+- ✅ Completion receipts + callback/ack separation
+- ✅ Truth anchor + artifact linkage chain
+
+**Execution Substrate (替换/增强的)**:
+- ✅ **SubagentExecutor 封装** (2026-03-24): 统一 task_id / timeout / status / result handle / tool allowlist
+- ✅ **热状态存储** (2026-03-24): 内存缓存 + 文件持久化混合，重启后可恢复终态
+- ✅ **工具权限隔离**: allowed_tools / disallowed_tools 过滤到 subagent 级
+- ✅ **双轨后端**: subagent (DEFAULT) + tmux (SUPPORTED) 共存
+
+**Deer-Flow 明确没借的**:
+- ❌ **双线程池架构**: Python GIL 限制，收益有限；现有 subagent 天然隔离
+- ❌ **全局内存字典**: 重启就丢；shared-context 文件系统更可靠
+- ❌ **task_tool 轮询**: 已有 callback bridge / watcher / ack-final 协议更成熟
+- ❌ **不替换 control plane**: Deer-Flow 只进 execution layer，不碰编排主链
 
 ### Main Flow
 
@@ -477,9 +501,13 @@ Many teams ask: "Why not just use Temporal / LangGraph / a DAG engine as the bac
 | Full Git push auto-continue | Internal simulation only | ⚠️ Not fully closed |
 | Generic全自动无人续跑 | Not the design goal | ❌ Out of scope |
 
+| **Deer-Flow: SubagentExecutor** | ✅ Implemented | 16/16 tests passing (2026-03-24) |
+| **Deer-Flow: 热状态存储** | ✅ Implemented | 16/16 tests passing (2026-03-24) |
 ### Honest Summary
 
 > **Further along than a proposal, but intentionally earlier than a fully general-purpose workflow platform.**
+>
+> **New architecture is live, not just planned:** SubagentExecutor + 热状态存储已实现并测试通过 (2026-03-24), but control plane remains OpenClaw-native. Deer-Flow patterns enter only at execution layer.
 
 ---
 
@@ -488,6 +516,8 @@ Many teams ask: "Why not just use Temporal / LangGraph / a DAG engine as the bac
 ### Scenario 1: Trading Continuation
 
 **Context:** Trading analysis completes; system must decide whether to auto-continue to next analysis batch.
+| SubagentExecutor 封装 | `runtime/orchestrator/subagent_executor.py` + 16 tests | ✅ Implemented (2026-03-24) |
+| 热状态存储 | `runtime/orchestrator/subagent_state.py` + 16 tests | ✅ Implemented (2026-03-24) |
 
 ```
 User Request → trading_roundtable → Planning → Registration

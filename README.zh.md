@@ -66,6 +66,7 @@
 | **可追溯链路** | 完整 artifact 链：registration → dispatch → execution → receipt → callback |
 | **安全半自动** | 白名单、条件触发、可回退的自动续推 |
 | **生产验证** | trading continuation 真实执行路径已验证 |
+| **Deer-Flow 借鉴落地** | SubagentExecutor 封装 + 热状态存储已实现 (2026-03-24) |
 
 ---
 
@@ -309,6 +310,7 @@ graph TB
         E3[tmux - 兼容]
         E4[Browser / Message / Cron]
     end
+        E5[SubagentExecutor - Deer-Flow 借鉴]
 
     subgraph Runtime["OpenClaw Runtime 基础层"]
         R1[Sessions]
@@ -329,9 +331,31 @@ graph TB
 |----|------|---------|
 | **业务场景** | 领域特定工作流 | `trading_roundtable`、`channel_roundtable`、未来适配器 |
 | **控制面** | 工作流编排逻辑 | contracts、registration、dispatch plans、callbacks、receipts |
-| **执行** | 任务执行后端 | subagent（默认）、Claude Code、tmux（兼容） |
+| **执行** | 任务执行后端 | subagent（默认）、Claude Code、tmux（兼容）、SubagentExecutor（Deer-Flow 借鉴） |
 | **Runtime** | OpenClaw 原语 | sessions、tools、hooks、channels、messaging |
 
+### Control Plane vs. Execution Substrate: 什么变了n
+n
+**Control Plane (保留的)**:n
+- ✅ OpenClaw 持有控制面：入口、sessions_spawn、launch/completion hook、callback bridge、scenario adaptern
+- ✅ Continuation contracts: `stopped_because / next_step / next_owner` 显式收口n
+- ✅ Registration + readiness + safety gatesn
+- ✅ Dispatch planning + auto-trigger guardsn
+- ✅ Completion receipts + callback/ack separationn
+- ✅ Truth anchor + artifact linkage chainn
+n
+**Execution Substrate (替换/增强的)**:n
+- ✅ **SubagentExecutor 封装** (2026-03-24): 统一 task_id / timeout / status / result handle / tool allowlistn
+- ✅ **热状态存储** (2026-03-24): 内存缓存 + 文件持久化混合，重启后可恢复终态n
+- ✅ **工具权限隔离**: allowed_tools / disallowed_tools 过滤到 subagent 级n
+- ✅ **双轨后端**: subagent (DEFAULT) + tmux (SUPPORTED) 共存n
+n
+**Deer-Flow 明确没借的**:n
+- ❌ **双线程池架构**: Python GIL 限制，收益有限；现有 subagent 天然隔离n
+- ❌ **全局内存字典**: 重启就丢；shared-context 文件系统更可靠n
+- ❌ **task_tool 轮询**: 已有 callback bridge / watcher / ack-final 协议更成熟n
+- ❌ **不替换 control plane**: Deer-Flow 只进 execution layer，不碰编排主链n
+n
 ### 主流程
 
 ```mermaid
@@ -463,6 +487,8 @@ api_execution_id (childSessionKey / runId)
 | **控制面主链** | ✅ 已打通 | 注册 → 派发 → 执行 → receipt → callback |
 | **测试** | ✅ 468 个通过 | 100% 通过率 |
 | **自动续推** | ⚠️ safe semi-auto | 白名单、条件触发、可回退 |
+| **Deer-Flow: SubagentExecutor** | ✅ 已实现 | 16/16 测试通过 (2026-03-24) |
+| **Deer-Flow: 热状态存储** | ✅ 已实现 | 16/16 测试通过 (2026-03-24) |
 | **Git push 自动续推** | ⚠️ 尚未完全自动 | 内部模拟闭环已通；真实 push 执行器待实现 |
 | **CLI 集成** | ⚠️ Mock API call | OpenClaw CLI 集成需确认 |
 | **Auto-trigger 配置** | ⚠️ 本地 JSON | 版本控制待完成（见 technical debt） |
@@ -474,6 +500,8 @@ api_execution_id (childSessionKey / runId)
 | Trading continuation 有效 | `~/.openclaw/shared-context/` 中的真实执行 artifact | ✅ 已验证 |
 | 控制面主链打通 | 468 个测试通过，artifact 生成 | ✅ 已验证 |
 | Auto-trigger consumption | 可配置的 guards、去重机制 | ✅ 已实现 |
+| SubagentExecutor 封装 | `runtime/orchestrator/subagent_executor.py` + 16 测试 | ✅ 已实现 (2026-03-24) |
+| 热状态存储 | `runtime/orchestrator/subagent_state.py` + 16 测试 | ✅ 已实现 (2026-03-24) |
 | 完整 Git push 自动续推 | 仅内部模拟 | ⚠️ 未完全闭环 |
 | 通用全自动无人续跑 | 不是设计目标 | ❌ 范围外 |
 
