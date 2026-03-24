@@ -109,7 +109,6 @@ def test_subagent_executor_integration():
     assert result.metadata.get("executor_version") == EXECUTOR_VERSION, "Executor version missing"
     
     print(f"  ✓ SubagentExecutor integration OK (task_id={task_id}, status={result.status})")
-    return True
 
 
 def test_sessions_spawn_request_creation():
@@ -131,7 +130,6 @@ def test_sessions_spawn_request_creation():
     assert restored.source_task_id == "task_test_123", "Restored source task ID mismatch"
     
     print(f"  ✓ SessionsSpawnRequest creation OK (request_id={request_id})")
-    return True
 
 
 def test_bridge_policy_evaluation():
@@ -159,7 +157,6 @@ def test_bridge_policy_evaluation():
     assert "scenario_allowlist" in check_names, "Missing scenario check"
     
     print(f"  ✓ Bridge Policy evaluation OK (eligible={eval_result['eligible']}, checks={len(eval_result['checks'])})")
-    return True
 
 
 def test_api_execution_artifact_generation():
@@ -187,7 +184,6 @@ def test_api_execution_artifact_generation():
     assert data["api_execution_status"] == "pending", "Serialized status mismatch"
     
     print(f"  ✓ API Execution Artifact generation OK (execution_id={artifact.execution_id}, status={artifact.api_execution_status})")
-    return True
 
 
 def test_linkage_chain_integrity():
@@ -242,7 +238,6 @@ def test_linkage_chain_integrity():
     assert linkage["task_id"] == task_id, f"Task ID mismatch: {linkage['task_id']}"
     
     print(f"  ✓ Linkage chain integrity OK (registration→dispatch→spawn→execution→receipt→request→task)")
-    return True
 
 
 def test_subagent_config_mapping():
@@ -286,7 +281,6 @@ def test_subagent_config_mapping():
     assert data["timeout_seconds"] == 120, "Serialized timeout mismatch"
     
     print(f"  ✓ SubagentConfig mapping OK (label={config.label}, timeout={config.timeout_seconds}s)")
-    return True
 
 
 def run_all_tests():

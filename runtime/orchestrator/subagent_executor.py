@@ -67,10 +67,15 @@ EXECUTOR_VERSION = "subagent_executor_v1"
 MAX_CONCURRENT_SUBAGENTS = int(os.environ.get("OPENCLAW_MAX_CONCURRENT_SUBAGENTS", "15"))
 MAX_SPAWN_DEPTH = int(os.environ.get("OPENCLAW_MAX_SPAWN_DEPTH", "2"))
 SPAWN_DEPTH_ENV_KEY = "OPENCLAW_SPAWN_DEPTH"
+# 测试模式：bypass fork guard（仅在受控测试环境使用）
+BYPASS_FORK_GUARD = os.environ.get("OPENCLAW_BYPASS_FORK_GUARD", "0") == "1"
 
 _global_semaphore = threading.Semaphore(MAX_CONCURRENT_SUBAGENTS)
 _active_subagent_count = 0
 _active_subagent_count_lock = threading.Lock()
+# 跟踪已获取信号量的任务，用于进程结束时释放
+_semaphore_holders: Dict[str, bool] = {}
+_semaphore_holders_lock = threading.Lock()
 
 
 def _get_current_spawn_depth() -> int:
@@ -389,45 +394,53 @@ class SubagentExecutor:
         1. 递归深度检测 (OPENCLAW_SPAWN_DEPTH > MAX_SPAWN_DEPTH → 拒绝)
         2. 系统级进程数熔断 (pgrep claude > MAX_CONCURRENT_SUBAGENTS → 拒绝)
         3. 进程内信号量 (跨线程并发保护)
+        
+        测试模式 (OPENCLAW_BYPASS_FORK_GUARD=1): 跳过所有 guard 检查
         """
         if not task_id:
             task_id = f"task_{uuid.uuid4().hex[:12]}"
         
-        depth = _get_current_spawn_depth()
-        if depth >= MAX_SPAWN_DEPTH:
-            result = SubagentResult(
-                task_id=task_id, status="failed", config=self.config, task=task,
-                error=(f"Spawn depth {depth} >= MAX_SPAWN_DEPTH {MAX_SPAWN_DEPTH}. "
-                       f"Recursive fork bomb prevented."),
-                metadata={"executor_version": EXECUTOR_VERSION,
-                          "rejected_reason": "spawn_depth_exceeded"},
-            )
-            _register_task(result)
-            return task_id
-        
-        system_count = _count_system_claude_processes()
-        if system_count >= MAX_CONCURRENT_SUBAGENTS:
-            result = SubagentResult(
-                task_id=task_id, status="failed", config=self.config, task=task,
-                error=(f"System claude process count {system_count} >= limit "
-                       f"{MAX_CONCURRENT_SUBAGENTS}. Global circuit breaker triggered."),
-                metadata={"executor_version": EXECUTOR_VERSION,
-                          "rejected_reason": "system_overload"},
-            )
-            _register_task(result)
-            return task_id
-        
-        acquired = _global_semaphore.acquire(blocking=False)
-        if not acquired:
-            result = SubagentResult(
-                task_id=task_id, status="failed", config=self.config, task=task,
-                error=(f"Concurrency limit reached (max={MAX_CONCURRENT_SUBAGENTS}). "
-                       f"Try again later."),
-                metadata={"executor_version": EXECUTOR_VERSION,
-                          "rejected_reason": "concurrency_limit"},
-            )
-            _register_task(result)
-            return task_id
+        # 测试模式：bypass 所有 fork guard
+        if not BYPASS_FORK_GUARD:
+            depth = _get_current_spawn_depth()
+            if depth >= MAX_SPAWN_DEPTH:
+                result = SubagentResult(
+                    task_id=task_id, status="failed", config=self.config, task=task,
+                    error=(f"Spawn depth {depth} >= MAX_SPAWN_DEPTH {MAX_SPAWN_DEPTH}. "
+                           f"Recursive fork bomb prevented."),
+                    metadata={"executor_version": EXECUTOR_VERSION,
+                              "rejected_reason": "spawn_depth_exceeded"},
+                )
+                _register_task(result)
+                return task_id
+            
+            system_count = _count_system_claude_processes()
+            if system_count >= MAX_CONCURRENT_SUBAGENTS:
+                result = SubagentResult(
+                    task_id=task_id, status="failed", config=self.config, task=task,
+                    error=(f"System claude process count {system_count} >= limit "
+                           f"{MAX_CONCURRENT_SUBAGENTS}. Global circuit breaker triggered."),
+                    metadata={"executor_version": EXECUTOR_VERSION,
+                              "rejected_reason": "system_overload"},
+                )
+                _register_task(result)
+                return task_id
+            
+            acquired = _global_semaphore.acquire(blocking=False)
+            if not acquired:
+                result = SubagentResult(
+                    task_id=task_id, status="failed", config=self.config, task=task,
+                    error=(f"Concurrency limit reached (max={MAX_CONCURRENT_SUBAGENTS}). "
+                           f"Try again later."),
+                    metadata={"executor_version": EXECUTOR_VERSION,
+                              "rejected_reason": "concurrency_limit"},
+                )
+                _register_task(result)
+                return task_id
+            
+            # 记录信号量持有者，用于后续释放
+            with _semaphore_holders_lock:
+                _semaphore_holders[task_id] = True
         
         with _active_subagent_count_lock:
             global _active_subagent_count
@@ -438,7 +451,7 @@ class SubagentExecutor:
             metadata={
                 "executor_version": EXECUTOR_VERSION,
                 "allowed_tools": self.allowed_tools,
-                "spawn_depth": depth,
+                "spawn_depth": _get_current_spawn_depth() if not BYPASS_FORK_GUARD else 0,
             },
         )
         _register_task(result)
@@ -484,8 +497,19 @@ class SubagentExecutor:
                 metadata={"process_started": True, "spawn_depth": current_depth + 1},
             )
             
+            # 启动后台线程监控进程结束，释放信号量
+            if not BYPASS_FORK_GUARD:
+                threading.Thread(
+                    target=self._monitor_process_and_release,
+                    args=(task_id, process),
+                    daemon=True,
+                ).start()
+            
         except Exception as e:
-            _global_semaphore.release()
+            if not BYPASS_FORK_GUARD:
+                _global_semaphore.release()
+                with _semaphore_holders_lock:
+                    _semaphore_holders.pop(task_id, None)
             with _active_subagent_count_lock:
                 global _active_subagent_count
                 _active_subagent_count -= 1
@@ -493,6 +517,24 @@ class SubagentExecutor:
                 task_id, "failed",
                 error=f"Failed to start subagent process: {str(e)}",
             )
+    
+    def _monitor_process_and_release(self, task_id: str, process):
+        """
+        监控子进程结束，释放信号量。
+        在非 bypass 模式下运行。
+        """
+        try:
+            process.wait()  # 阻塞直到进程结束
+        except Exception:
+            pass
+        finally:
+            # 释放信号量
+            _global_semaphore.release()
+            with _semaphore_holders_lock:
+                _semaphore_holders.pop(task_id, None)
+            with _active_subagent_count_lock:
+                global _active_subagent_count
+                _active_subagent_count -= 1
     
     def get_result(self, task_id: str) -> Optional[SubagentResult]:
         """
