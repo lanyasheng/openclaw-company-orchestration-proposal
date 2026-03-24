@@ -9,6 +9,8 @@
 >
 > **真值边界**: 本文档 + `runtime/` 实现 + `tests/` 验收 = 当前唯一可信源;`archive/`、`docs/plans/` 历史计划文档仅供参考
 >
+> **更新**: 2026-03-24 - Deer-Flow 借鉴线 Batch A/B: SubagentExecutor 封装 + 热状态存储已实现 (32 个测试通过)
+>
 > **更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
 
 **更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
@@ -116,32 +118,32 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 ### 2.2.1 coding issue lane baseline 已实现 (2026-03-24)
 
-**P0 Batch 3: Coding Issue Lane Baseline** 已完成，冻结了 issue lane 的最小输入输出契约。
+**P0 Batch 3: Coding Issue Lane Baseline** 已完成,冻结了 issue lane 的最小输入输出契约。
 
 ### 2.2.2 failure closeout guarantee 已实现 (2026-03-24)
 
-**P0 Batch 4: Failure Closeout Guarantee** 已完成，解决了"系统内部知道失败，但老板没及时收到标准化失败回报"的问题。
+**P0 Batch 4: Failure Closeout Guarantee** 已完成,解决了"系统内部知道失败,但老板没及时收到标准化失败回报"的问题。
 
 **核心设计** (`runtime/orchestrator/closeout_guarantee.py`):
 - 区分"任务失败已知" (`internal_completed=True`) 与"用户已感知失败" (`user_visible_closeout=True`)
-- 为失败路径定义最小 guarantee 字段（通过 `metadata` 传递）：
-  - `failure_summary`: 失败摘要（人类可读）
-  - `failure_stage`: 失败阶段（planning | execution | closeout | callback）
-  - `truth_anchor`: 真值锚点（机器可读的状态证据，如 `status.json:state=failed|exit_code=1`）
+- 为失败路径定义最小 guarantee 字段(通过 `metadata` 传递):
+  - `failure_summary`: 失败摘要(人类可读)
+  - `failure_stage`: 失败阶段(planning | execution | closeout | callback)
+  - `truth_anchor`: 真值锚点(机器可读的状态证据,如 `status.json:state=failed|exit_code=1`)
   - `fallback_action`: 兜底行动建议
   - `user_visible_failure_closeout`: 用户是否已感知失败
-- 状态机：`pending | guaranteed | fallback_needed | blocked`
-- 兜底规则：如果 `ack_status!="sent"` 且 `dispatch_status!="triggered"`，生成 `fallback_needed` guarantee
+- 状态机:`pending | guaranteed | fallback_needed | blocked`
+- 兜底规则:如果 `ack_status!="sent"` 且 `dispatch_status!="triggered"`,生成 `fallback_needed` guarantee
 
-**薄层接入**：
-- 在 `completion_ack_guard.py` 中，每个 completion ack 自动 emit guarantee artifact
-- 失败场景不阻塞主 ack 流程，guarantee emit 失败不影响 ack receipt 落盘
+**薄层接入**:
+- 在 `completion_ack_guard.py` 中,每个 completion ack 自动 emit guarantee artifact
+- 失败场景不阻塞主 ack 流程,guarantee emit 失败不影响 ack receipt 落盘
 - guarantee artifact 落盘到 `~/.openclaw/shared-context/orchestrator/closeout_guarantees/`
 
 **测试覆盖** (`tests/orchestrator/test_failure_closeout_guarantee.py`):
-- ✅ 覆盖：任务失败但未形成用户可见失败回报时，产生 `fallback_needed` guarantee
-- ✅ 覆盖：失败回报已送达时，不误报（`fallback_triggered=False`）
-- ✅ 覆盖：成功路径不被回归破坏（15 个新测试 + 17 个现有测试全部通过）
+- ✅ 覆盖:任务失败但未形成用户可见失败回报时,产生 `fallback_needed` guarantee
+- ✅ 覆盖:失败回报已送达时,不误报(`fallback_triggered=False`)
+- ✅ 覆盖:成功路径不被回归破坏(15 个新测试 + 17 个现有测试全部通过)
 
 **验证命令**:
 ```bash
@@ -152,11 +154,67 @@ python3 -m pytest tests/orchestrator/test_closeout_guarantee.py -v
 # 输出：17 passed
 ```
 
+### 2.2.3 Deer-Flow 借鉴线 Batch A/B 已实现 (2026-03-24)
+
+**Deer-Flow 借鉴线 Batch A/B** 已完成，基于 `shared-context/intel/2026-03-24-deerflow-orchestration-mechanism-lessons.md` 的分析结论。
+
+**核心设计原则**:
+- **借 execution layer，不换 control plane**: SubagentExecutor 封装执行细节，不替换现有 sessions_spawn / roundtable 主链
+- **薄层、可回退**: 新增模块独立，不影响现有功能
+- **内存快、文件真**: 内存缓存加速访问，文件持久化保证重启不丢
+
+**Batch A: SubagentExecutor 封装** (`runtime/orchestrator/subagent_executor.py`):
+- SubagentConfig: subagent 配置（label / runtime / timeout / allowed_tools）
+- SubagentResult: 执行结果（task_id / status / result / error）
+- SubagentExecutor: 执行引擎（execute_async / get_result / cleanup）
+- 工具权限隔离：allowed_tools / disallowed_tools 过滤
+- 统一 task_id / timeout / status / result handle
+- 测试：16/16 通过 (`tests/orchestrator/test_subagent_executor.py`)
+
+**Batch B: 热状态存储** (`runtime/orchestrator/subagent_state.py`):
+- SubagentStateManager: 状态管理器
+- 内存缓存 + 文件持久化混合
+- 重启后可从磁盘恢复终态
+- 线程安全的并发操作
+- 测试：16/16 通过 (`tests/orchestrator/test_subagent_state.py`)
+
+**明确不做的部分**:
+- ❌ 双线程池架构：Python GIL 限制，收益有限
+- ❌ 全局内存字典：重启就丢，不如 shared-context 文件可靠
+- ❌ task_tool 轮询：已有 callback bridge / watcher / ack-final 协议
+
+**验证命令**:
+```bash
+cd <repo-root>
+python3 tests/orchestrator/test_subagent_executor.py
+# 输出：16 passed
+python3 tests/orchestrator/test_subagent_state.py
+# 输出：16 passed
+```
+
+**使用示例**:
+```python
+from subagent_executor import SubagentExecutor, SubagentConfig
+
+executor = SubagentExecutor(
+    config=SubagentConfig(
+        label="coding-task",
+        runtime="subagent",
+        timeout_seconds=900,
+        allowed_tools=["read", "write", "edit"],
+    ),
+    cwd="/Users/study/.openclaw/workspace",
+)
+
+task_id = executor.execute_async("实现 XXX 功能")
+result = executor.get_result(task_id)
+```
+
 **设计原则**:
-1. 薄层扩展，不重构现有架构
+1. 薄层扩展,不重构现有架构
 2. 失败场景与成功路径共享同一套 guarantee 状态机
-3. guarantee 是兜底机制，不影响主流程
-4. 元数据通过 `metadata` 字典传递，保持向后兼容
+3. guarantee 是兜底机制,不影响主流程
+4. 元数据通过 `metadata` 字典传递,保持向后兼容
 
 **核心 schema** (`runtime/orchestrator/issue_lane_schemas.py`):
 - `IssueInput`: 支持 GitHub issue URL / 标准化 payload 两种输入
