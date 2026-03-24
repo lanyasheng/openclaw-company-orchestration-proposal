@@ -2,12 +2,16 @@
 """
 trading_roundtable.py — Trading Roundtable Continuation (Phase Engine Architecture)
 
-重构版本：使用 Phase Engine 架构，从 1324 行精简到 ~500 行。
+重构版本：使用 Phase Engine 架构，从 1324 行精简到 ~350 行。
+第二轮职责拆分：抽离 payload extraction / decision building / closeout generation 到独立模块。
 
 核心变化：
 - 使用 adapters.trading.TradingAdapter 处理 trading 特定逻辑
 - 使用 core.dispatch_planner.DispatchPlanner 生成调度计划
 - 使用 core.quality_gate 预定义检查
+- 使用 payload_extractor.extract_payloads 提取 payloads
+- 使用 decision_builder.build_decision 构建 decision
+- 使用 closeout_generator.CloseoutGenerator 生成 closeout
 - 保持与原有 API 完全兼容
 
 默认策略：safe semi-auto
@@ -21,7 +25,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 # 核心模块
 from adapters.trading import TradingAdapter, ADAPTER_NAME, SCENARIO
@@ -47,11 +51,17 @@ from completion_ack_guard import send_roundtable_completion_ack
 from continuation_backends import normalize_dispatch_backend
 from contracts import CANONICAL_CALLBACK_ENVELOPE_VERSION, resolve_orchestration_contract
 from orchestrator import Decision, DECISIONS_DIR, DISPATCHES_DIR, _ensure_dirs
+
+# 新抽离的模块
+from payload_extractor import extract_payloads
+from decision_builder import build_decision
+from closeout_generator import CloseoutGenerator
+
+# 现有模块（保持不变）
 from partial_continuation import (
     build_partial_closeout,
     adapt_closeout_for_trading,
     generate_registered_registrations_for_closeout,
-    build_continuation_contract,
     ScopeItem,
 )
 from state_machine import (
@@ -82,6 +92,7 @@ from closeout_tracker import (
 _adapter = TradingAdapter()
 _planner = DispatchPlanner()
 _closeout_tracker = CloseoutTracker()
+_closeout_generator = CloseoutGenerator()
 
 
 def _ensure_runtime_dirs() -> None:
@@ -102,333 +113,6 @@ def _atomic_json_write(file_path: Path, payload: Dict[str, Any]) -> None:
     with open(tmp_file, "w") as handle:
         json.dump(payload, handle, indent=2)
     tmp_file.replace(file_path)
-
-
-def _merge_first_non_empty(target: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
-    """合并非空值"""
-    for key, value in patch.items():
-        if isinstance(value, dict):
-            child = target.get(key, {})
-            if not isinstance(child, dict):
-                child = {}
-            target[key] = _merge_first_non_empty(child, value)
-        elif key not in target or target[key] in (None, "", [], {}):
-            target[key] = value
-    return target
-
-
-def _extract_payloads(batch_id: str) -> Dict[str, Any]:
-    """从 batch 任务中提取 payloads"""
-    packet: Dict[str, Any] = {}
-    roundtable: Dict[str, Any] = {}
-    supporting_results: List[Dict[str, Any]] = []
-
-    for task in get_batch_tasks(batch_id):
-        result = task.get("result") or {}
-        scoped = result.get(ADAPTER_NAME) or {}
-        if isinstance(scoped.get("packet"), dict):
-            packet = _merge_first_non_empty(packet, scoped["packet"])
-        if isinstance(scoped.get("roundtable"), dict):
-            roundtable = _merge_first_non_empty(roundtable, scoped["roundtable"])
-        
-        waiting_guard = result.get("waiting_guard") if isinstance(result.get("waiting_guard"), dict) else {}
-        closeout = result.get("closeout") if isinstance(result.get("closeout"), dict) else waiting_guard.get("closeout")
-        
-        supporting_results.append({
-            "task_id": task["task_id"],
-            "state": task.get("state"),
-            "verdict": result.get("verdict"),
-            "summary": result.get("summary") or scoped.get("summary"),
-            "error": result.get("error"),
-            "waiting_guard": waiting_guard or None,
-            "closeout": closeout if isinstance(closeout, dict) else None,
-        })
-
-    return {
-        "packet": packet,
-        "roundtable": roundtable,
-        "supporting_results": supporting_results,
-    }
-
-
-def _decision_from_payload(
-    batch_id: str,
-    analysis: Dict[str, Any],
-    preflight_validation: Optional[Dict[str, Any]] = None,
-) -> Decision:
-    """
-    从 payload 构建 decision
-    
-    Args:
-        batch_id: 批次 ID
-        analysis: batch 分析结果
-        preflight_validation: P0-1 前置校验结果（可选）
-    
-    C2: 强校验逻辑
-    - 缺关键 packet/roundtable 字段时，不允许 completed/PASS 混过去
-    - empty-result（无 artifact/report/test summary）时硬拦截
-    - 输出明确 blocked/error 状态，而不是静默接受
-    """
-    payloads = _extract_payloads(batch_id)
-    packet = payloads["packet"]
-    roundtable = payloads["roundtable"]
-    
-    # 使用适配器验证 packet（完整验证）
-    validation = _adapter.validate_packet(packet, roundtable)
-    
-    # P0-1: 如果有 preflight validation，合并到 validation metadata 中
-    if preflight_validation:
-        validation["preflight"] = preflight_validation
-    
-    # ========== C2: Empty-Result Hard Block ==========
-    # 检查是否为 empty-result（无 artifact/report/test summary）
-    empty_result_blocker = _check_empty_result(packet)
-    if empty_result_blocker:
-        # Empty result 硬拦截：不允许 completed/PASS 混过去
-        validation["complete"] = False
-        validation["empty_result_blocked"] = True
-        validation["empty_result_reason"] = empty_result_blocker
-        if "missing_fields" not in validation:
-            validation["missing_fields"] = []
-        validation["missing_fields"].append(f"empty_result: {empty_result_blocker}")
-    # ========== End C2 ==========
-    
-    # 确定 action
-    conclusion = str(roundtable.get("conclusion") or packet.get("overall_gate") or "FAIL").upper()
-    blocker = str(roundtable.get("blocker") or packet.get("primary_blocker") or "implementation_risk")
-    next_step = str(roundtable.get("next_step") or "")
-    completion_criteria = str(roundtable.get("completion_criteria") or "")
-
-    if not validation["complete"]:
-        # C2: 明确区分 empty-result blocker 和普通 missing fields
-        if validation.get("empty_result_blocked"):
-            action = "fix_blocker"
-            reason = f"EMPTY_RESULT_BLOCKED: {validation.get('empty_result_reason', 'empty result detected')}"
-        else:
-            action = "fix_blocker"
-            reason = "phase1 packet or roundtable closure is incomplete"
-    elif conclusion == "PASS" and blocker == "none":
-        action = "proceed"
-        reason = "roundtable gate is PASS and no blocker remains"
-    elif conclusion == "CONDITIONAL":
-        action = "fix_blocker"
-        reason = f"roundtable gate is CONDITIONAL with blocker={blocker}"
-    elif conclusion == "FAIL":
-        action = "abort"
-        reason = f"roundtable gate is FAIL with blocker={blocker}"
-    else:
-        action = "fix_blocker"
-        reason = f"unrecognized trading roundtable conclusion={conclusion}"
-
-    # 构建 next tasks
-    recommended_next_tasks: List[Dict[str, Any]] = []
-    if action in {"proceed", "fix_blocker"} and next_step:
-        recommended_next_tasks.append({
-            "type": "trading_roundtable_followup",
-            "adapter": ADAPTER_NAME,
-            "scenario": SCENARIO,
-            "next_step": next_step,
-            "completion_criteria": completion_criteria,
-            "blocker": blocker,
-        })
-
-    return Decision(
-        action=action,
-        reason=reason,
-        next_tasks=recommended_next_tasks,
-        metadata={
-            "adapter": ADAPTER_NAME,
-            "scenario": SCENARIO,
-            "packet": packet,
-            "roundtable": roundtable,
-            "packet_validation": validation,
-            "batch_analysis": analysis,
-            "supporting_results": payloads["supporting_results"],
-        },
-    )
-
-
-def _check_empty_result(packet: Dict[str, Any]) -> Optional[str]:
-    """
-    C2: 检查是否为 empty-result
-    
-    Empty result 定义：
-    - 无 artifact path/exists
-    - 无 report path/exists
-    - 无 test commands/summary
-    
-    Returns:
-        如果是 empty result，返回原因字符串；否则返回 None
-    """
-    if not packet:
-        return "packet is empty"
-    
-    # 检查 artifact
-    artifact = packet.get("artifact") if isinstance(packet.get("artifact"), dict) else {}
-    if not artifact.get("path") or not artifact.get("exists"):
-        return "missing artifact truth (path or exists)"
-    
-    # 检查 report
-    report = packet.get("report") if isinstance(packet.get("report"), dict) else {}
-    if not report.get("path") or not report.get("exists"):
-        return "missing report truth (path or exists)"
-    
-    # 检查 test
-    test_info = packet.get("test") if isinstance(packet.get("test"), dict) else {}
-    if not test_info.get("commands") or not test_info.get("summary"):
-        return "missing test truth (commands or summary)"
-    
-    # 检查 repro
-    repro = packet.get("repro") if isinstance(packet.get("repro"), dict) else {}
-    if not repro.get("commands"):
-        return "missing repro truth (commands)"
-    
-    return None
-
-
-def _build_partial_closeout_for_trading(
-    batch_id: str,
-    decision: Decision,
-    analysis: Dict[str, Any],
-) -> Any:
-    """构建 trading partial closeout"""
-    packet = decision.metadata.get("packet", {})
-    roundtable = decision.metadata.get("roundtable", {})
-    validation = decision.metadata.get("packet_validation", {})
-    supporting_results = decision.metadata.get("supporting_results", [])
-    
-    # 构建 completed_scope
-    completed_scope = []
-    for item in supporting_results:
-        if item.get("state") in ("callback_received", "final_closed", "next_task_dispatched"):
-            completed_scope.append(
-                ScopeItem(
-                    item_id=item.get("task_id", ""),
-                    description=f"Task {item.get('task_id', '')}: {item.get('summary') or item.get('verdict') or 'completed'}",
-                    status="completed",
-                    metadata={"state": item.get("state"), "verdict": item.get("verdict")},
-                )
-            )
-    
-    # 构建 remaining_scope
-    remaining_scope = []
-    stop_reason = "completed_all"
-    
-    if decision.action == "proceed":
-        next_step = roundtable.get("next_step", "")
-        if next_step:
-            remaining_scope.append(
-                ScopeItem(
-                    item_id="next_step_1",
-                    description=next_step,
-                    status="not_started",
-                    metadata={
-                        "completion_criteria": roundtable.get("completion_criteria", ""),
-                        "blocker": "none",
-                    },
-                )
-            )
-            stop_reason = "partial_completed"
-    elif decision.action == "fix_blocker":
-        blocker = roundtable.get("blocker") or packet.get("primary_blocker", "unknown")
-        remaining_scope.append(
-            ScopeItem(
-                item_id="fix_blocker_1",
-                description=f"Resolve blocker: {blocker}",
-                status="blocked",
-                metadata={
-                    "blocker_type": blocker,
-                    "completion_criteria": roundtable.get("completion_criteria", ""),
-                },
-            )
-        )
-        stop_reason = "blocked"
-    elif decision.action == "abort":
-        stop_reason = "failed"
-    
-    # 如果 packet incomplete，添加 remaining scope
-    if not validation.get("complete"):
-        missing_fields = validation.get("missing_fields", [])
-        for field in missing_fields[:3]:
-            remaining_scope.append(
-                ScopeItem(
-                    item_id=f"missing_{field.replace('.', '_')}",
-                    description=f"Fill missing field: {field}",
-                    status="not_started",
-                    metadata={"field_type": "packet_completeness"},
-                )
-            )
-        if stop_reason == "completed_all":
-            stop_reason = "partial_completed"
-    
-    # 构建 generic closeout
-    closeout = build_partial_closeout(
-        completed_scope=[item.to_dict() for item in completed_scope],
-        remaining_scope=[item.to_dict() for item in remaining_scope],
-        stop_reason=stop_reason,
-        original_batch_id=batch_id,
-        metadata={
-            "decision_action": decision.action,
-            "decision_reason": decision.reason,
-        },
-    )
-    
-    # 适配 trading 场景
-    adapted = adapt_closeout_for_trading(closeout=closeout, packet=packet, roundtable=roundtable)
-    
-    # P0-1 Batch 3: Inject unified continuation contract into closeout metadata
-    # Derive stopped_because from stop_reason and decision
-    if decision.action == "proceed":
-        stopped_because = "roundtable_gate_pass_continuation_ready"
-    elif decision.action == "fix_blocker":
-        stopped_because = f"roundtable_gate_conditional_blocker_{roundtable.get('blocker', 'unknown')}"
-    elif decision.action == "abort":
-        stopped_because = f"roundtable_gate_fail_blocker_{roundtable.get('blocker', 'unknown')}"
-    else:
-        stopped_because = f"decision_action_{decision.action}"
-    
-    # Derive next_step from roundtable or decision
-    next_step = roundtable.get("next_step", "") or decision.reason
-    
-    # Derive next_owner from roundtable or packet
-    next_owner = roundtable.get("owner", "") or packet.get("owner", "") or "trading"
-    
-    # Build and merge continuation contract
-    continuation = build_continuation_contract(
-        stopped_because=stopped_because,
-        next_step=next_step,
-        next_owner=next_owner,
-        metadata={
-            "decision_action": decision.action,
-            "roundtable_conclusion": roundtable.get("conclusion", ""),
-            "roundtable_blocker": roundtable.get("blocker", ""),
-        },
-    )
-    continuation.merge_into_closeout(adapted)
-    
-    return adapted
-
-
-def _generate_next_registrations_for_trading(closeout: Any, batch_id: str) -> List[Dict[str, Any]]:
-    """为 trading 生成 next task registrations"""
-    if not hasattr(closeout, 'should_generate_next_registration') or not closeout.should_generate_next_registration():
-        return []
-    
-    registrations = generate_registered_registrations_for_closeout(
-        closeout=closeout,
-        adapter=ADAPTER_NAME,
-        scenario=SCENARIO,
-        max_candidates=3,
-        context={
-            "batch_id": batch_id,
-            "generated_by": "trading_roundtable_partial_continuation_v2",
-        },
-        auto_register=True,
-        batch_id=batch_id,
-        owner=closeout.metadata.get("trading_roundtable", {}).get("owner"),
-    )
-    
-    return [reg.to_dict() for reg in registrations]
 
 
 def _resolve_allow_auto_dispatch(
@@ -515,16 +199,14 @@ def process_trading_roundtable_callback(
     _ensure_runtime_dirs()
     
     # ========== P0-4 Batch 2: Closeout Gate Glue ==========
-    # 检查前一批 closeout 状态，决定是否允许当前 batch 继续
     if not skip_closeout_gate:
         gate_result: CloseoutGateResult = check_closeout_gate(
             batch_id=batch_id,
             scenario=SCENARIO,
-            require_push_complete=True,  # trading 场景强制要求 push complete
+            require_push_complete=True,
         )
         
         if not gate_result.allowed:
-            # Closeout gate 检查失败，阻止 batch 继续
             return {
                 "status": "blocked_by_closeout_gate",
                 "batch_id": batch_id,
@@ -533,7 +215,6 @@ def process_trading_roundtable_callback(
                 "closeout_gate": gate_result.to_dict(),
             }
         
-        # Closeout gate 检查通过，记录到返回结果
         closeout_gate_output = gate_result.to_dict()
     else:
         closeout_gate_output = {
@@ -567,16 +248,10 @@ def process_trading_roundtable_callback(
         }
     
     # ========== P0-1: Packet Schema Preflight Validation ==========
-    # 在 batch complete 之后、decision 构建之前，进行前置校验
-    # 提取 packet 和 roundtable 进行校验
     packet = result.get("trading_roundtable", {}).get("packet", {}) if isinstance(result.get("trading_roundtable"), dict) else {}
     roundtable = result.get("trading_roundtable", {}).get("roundtable", {}) if isinstance(result.get("trading_roundtable"), dict) else {}
     
-    # 执行前置校验
     preflight_validation = _adapter.validate_packet_preflight(packet, roundtable)
-    
-    # 如果前置校验失败，显式标记 incomplete 状态
-    # 注意：不阻断流程，但确保校验结果进入所有 downstream artifacts
     preflight_incomplete = not preflight_validation.get("complete", True)
     # ========== End P0-1 ==========
     
@@ -584,8 +259,11 @@ def process_trading_roundtable_callback(
     check_and_summarize_batch(batch_id)
     analysis = analyze_batch_results(batch_id)
     
-    # 构建 decision（传入 preflight validation 结果）
-    decision = _decision_from_payload(batch_id, analysis, preflight_validation=preflight_validation)
+    # ========== 使用新抽离的模块构建 decision ==========
+    payloads = extract_payloads(batch_id)
+    decision = build_decision(batch_id, payloads, analysis, preflight_validation=preflight_validation)
+    # ========== End 新模块调用 ==========
+    
     normalized_backend = normalize_dispatch_backend(backend)
     
     # 解析编排契约
@@ -599,18 +277,14 @@ def process_trading_roundtable_callback(
     )
     
     # P0-3 Batch 5: 注入 executor 信息 (owner/executor 解耦)
-    # 从 roundtable/continuation 推导 execution_profile 和 executor
     roundtable = decision.metadata.get("roundtable", {})
     next_step = roundtable.get("next_step", "") or decision.reason
     
-    # 默认 trading 场景使用 generic_subagent profile
-    # 如果 next_step 包含 coding keywords，使用 coding profile
     execution_profile = "generic_subagent"
     coding_keywords = ["coding", "implementation", "refactor", "fix", "test-fix", "bugfix"]
     if any(kw in next_step.lower() for kw in coding_keywords):
         execution_profile = "coding"
     
-    # 根据 profile 推导 executor
     executor = "claude_code" if execution_profile == "coding" else "subagent"
     
     decision.metadata["orchestration_contract"]["execution_profile"] = execution_profile
@@ -628,13 +302,14 @@ def process_trading_roundtable_callback(
     decision.metadata["default_auto_dispatch_readiness"] = readiness
     decision.metadata["dispatch_backend"] = normalized_backend
     
-    # 构建 partial closeout
-    partial_closeout = _build_partial_closeout_for_trading(batch_id, decision, analysis)
+    # ========== 使用新抽离的模块构建 closeout ==========
+    partial_closeout = _closeout_generator.build_partial_closeout_for_trading(batch_id, decision, analysis)
     decision.metadata["partial_closeout"] = partial_closeout.to_dict()
     
     # 生成 next task registrations
-    next_registrations = _generate_next_registrations_for_trading(partial_closeout, batch_id)
+    next_registrations = _closeout_generator.generate_next_registrations_for_trading(partial_closeout, batch_id)
     decision.metadata["next_task_registrations"] = next_registrations
+    # ========== End 新模块调用 ==========
     
     # 解析 allow_auto_dispatch
     resolved_allow_auto_dispatch, auto_dispatch_source = _resolve_allow_auto_dispatch(
@@ -680,8 +355,8 @@ def process_trading_roundtable_callback(
     registration_handoff = build_registration_handoff(
         planning_handoff,
         batch_id=batch_id,
-        registration_status=None,  # 从 safety_gates 推导
-        ready_for_auto_dispatch=None,  # 从 safety_gates 推导
+        registration_status=None,
+        ready_for_auto_dispatch=None,
     )
     
     # P0-2 Batch 3: 实际注册任务到 task registry
@@ -742,13 +417,8 @@ def process_trading_roundtable_callback(
     }
     
     # ========== P0-4 Batch 1: Closeout Chain Fix ==========
-    # 创建并 emit closeout artifact，显式标记 closeout 状态和 push_required
-    # 这是最小可行修复，解决"batch 完成后 closeout 链路缺失"问题
-    
-    # 从 dispatch_plan 提取 continuation_contract
     continuation_contract = dispatch_plan.continuation_contract
     if not continuation_contract:
-        # fallback: 从 continuation dict 构建
         continuation_contract = ContinuationContract(
             stopped_because=continuation.get("stopped_because", continuation.get("stop_reason", "batch_completed")),
             next_step=continuation.get("next_step", roundtable.get("next_step", "see dispatch plan")),
@@ -756,7 +426,6 @@ def process_trading_roundtable_callback(
             metadata={"source": "trading_roundtable_closeout_fix"},
         )
     
-    # 创建 closeout artifact
     closeout_artifact = create_closeout(
         batch_id=batch_id,
         scenario=SCENARIO,
@@ -775,7 +444,6 @@ def process_trading_roundtable_callback(
         },
     )
     
-    # 在返回结果中包含 closeout 状态
     closeout_status_output = {
         "closeout_id": closeout_artifact.closeout_id,
         "closeout_status": closeout_artifact.closeout_status,
@@ -787,7 +455,6 @@ def process_trading_roundtable_callback(
     # ========== End P0-4 Batch 1 ==========
     
     # ========== P0-1: Packet Schema Preflight Validation Output ==========
-    # 在返回结果中包含 preflight validation 状态
     preflight_output = {
         "preflight_status": preflight_validation.get("preflight_status", "unknown"),
         "preflight_complete": preflight_validation.get("complete", False),
@@ -811,10 +478,7 @@ def process_trading_roundtable_callback(
         "dispatch_plan": dispatch_plan.to_dict(),
         "handoff_schema": handoff_artifacts,
         "registration": registration_info,
-        # P0-4 Batch 1: Closeout chain fix output
         "closeout": closeout_status_output,
-        # P0-4 Batch 2: Closeout gate glue output
         "closeout_gate": closeout_gate_output,
-        # P0-1: Packet Schema Preflight Validation output
         "preflight_validation": preflight_output,
     }
