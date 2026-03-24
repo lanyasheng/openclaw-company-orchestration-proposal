@@ -1,42 +1,44 @@
-# CURRENT_TRUTH(2026-03-23)
+# CURRENT_TRUTH(2026-03-24)
 
-> **角色**: 📍 **当前真值唯一入口** — 了解"今天系统实际如何工作"从这里开始
+> **角色**: 📍 **当前真值唯一入口** - 了解"今天系统实际如何工作"从这里开始
 >
-> **何时阅读**: 
+> **何时阅读**:
 > - 首次接触本仓，想快速了解当前状态
 > - 不确定某个文档是否仍是最新口径
 > - 准备修改实现/文档前，确认真值边界
 >
-> **真值边界**: 本文档 + `runtime/` 实现 + `tests/` 验收 = 当前唯一可信源；`archive/`、`docs/plans/` 历史计划文档仅供参考
+> **真值边界**: 本文档 + `runtime/` 实现 + `tests/` 验收 = 当前唯一可信源;`archive/`、`docs/plans/` 历史计划文档仅供参考
 >
-> **更新**: 2026-03-23 — Owner/Executor 解耦 + Coding Lane 默认 Claude Code 已实现
+> **更新**: 2026-03-24 — P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
 >
-> **更新**: 2026-03-22 — V8 Real Execute Mode + Auto-Trigger Consumption 已实现
+> **更新**: 2026-03-23 - Owner/Executor 解耦 + Coding Lane 默认 Claude Code 已实现
+>
+> **更新**: 2026-03-22 - V8 Real Execute Mode + Auto-Trigger Consumption 已实现
 >
 > **用途**: 给这个 proposal repo 一个**当前真值入口**,避免旧计划、旧评审、旧 POC 被继续误读成"今天的默认口径"。
 >
-> **注意**: 这个 repo 现在已升级为**单仓分层 monorepo**:`docs/` 持阅读入口，`runtime/` 持实现真值，`tests/` 持验收。历史上 runtime 曾散落在 OpenClaw workspace 本地;从 2026-03-22 起，本仓开始承担 orchestration runtime 的统一收口。
+> **注意**: 这个 repo 现在已升级为**单仓分层 monorepo**:`docs/` 持阅读入口,`runtime/` 持实现真值,`tests/` 持验收。历史上 runtime 曾散落在 OpenClaw workspace 本地;从 2026-03-22 起,本仓开始承担 orchestration runtime 的统一收口。
 
 ---
 
 
 
 ### 分支策略
-- **`main` 是唯一 canonical branch** — 所有开发、发布、文档更新均针对 `main`
-- 历史 integration 分支（如 `integration/monorepo-runtime-import-20260322`）已全部合并并删除
-- 备份 tag：`backup/integration-monorepo-runtime-import-20260324`
-- 无长期特性分支；使用短期 topic 分支通过 PR 合并
+- **`main` 是唯一 canonical branch** - 所有开发、发布、文档更新均针对 `main`
+- 历史 integration 分支(如 `integration/monorepo-runtime-import-20260322`)已全部合并并删除
+- 备份 tag:`backup/integration-monorepo-runtime-import-20260324`
+- 无长期特性分支;使用短期 topic 分支通过 PR 合并
 
 
 ---
 
 ## 0. 入口指引(从哪里开始)
 
-### 阅读入口（推荐顺序）
-1. **首次了解** → [`../README.md`](../README.md)（仓库总览 + 快速开始）
-2. **当前真值** → 本页（`CURRENT_TRUTH.md`）
-3. **设计背景** → [`executive-summary.md`](executive-summary.md)（5 分钟方案总览）
-4. **其他频道** → [`quickstart/quickstart-other-channels.md`](quickstart/quickstart-other-channels.md)（非 trading 场景）
+### 阅读入口(推荐顺序)
+1. **首次了解** → [`../README.md`](../README.md)(仓库总览 + 快速开始)
+2. **当前真值** → 本页(`CURRENT_TRUTH.md`)
+3. **设计背景** → [`executive-summary.md`](executive-summary.md)(5 分钟方案总览)
+4. **其他频道** → [`quickstart/quickstart-other-channels.md`](quickstart/quickstart-other-channels.md)(非 trading 场景)
 
 ### Runtime 入口
 ```bash
@@ -109,6 +111,36 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - planning artifact 应成为执行层默认输入;
 - heartbeat 只做 wake / liveness / 巡检 / 催办 / 告警;
 - **heartbeat 不得写 terminal truth,不得直接 dispatch 下一跳,不得接管 gate。**
+
+### 2.2.1 coding issue lane baseline 已实现 (2026-03-24)
+
+**P0 Batch 3: Coding Issue Lane Baseline** 已完成,冻结了 issue lane 的最小输入输出契约。
+
+**核心 schema** (`runtime/orchestrator/issue_lane_schemas.py`):
+- `IssueInput`: 支持 GitHub issue URL / 标准化 payload 两种输入
+- `PlanningOutput`: planning artifact(problem reframing / scope / engineering review / execution plan)
+- `ExecutionOutput`: 执行结果(`PatchArtifact` / `PRDescription` / test results)
+- `CloseoutOutput`: closeout summary(`stopped_because` / `next_step` / `next_owner` / `dispatch_readiness`)
+- `IssueLaneContract`: 统一契约(input -> planning -> execution -> closeout)
+
+**最小链路已打通**:
+- issue input -> planning -> execution handoff -> closeout
+- 12 个测试全部通过(schema 验证 / 序列化 / 端到端链路 / 向后兼容)
+- 测试文件:`runtime/tests/orchestrator/test_issue_lane_schemas.py`
+
+**设计原则**:
+1. 最小通用 schema,不做大而全设计
+2. 向后兼容,保留扩展现有 handoff schema
+3. 支持 GitHub issue URL 和标准化 payload 两种输入
+4. 输出包含 patch artifact / PR description / closeout summary
+5. 默认接 Claude Code / subagent lane
+
+**验证命令**:
+```bash
+cd <repo-root>
+python3 runtime/tests/orchestrator/test_issue_lane_schemas.py
+# 输出:Results: 12 passed, 0 failed
+```
 
 ### 2.3 外部框架策略已经统一
 
@@ -273,7 +305,7 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - ✅ **技术债务收口**: `docs/technical-debt-2026-03-22.md` 已创建
 - ✅ **P0-3 Batches 1-6**: Legacy cleanup completed (2026-03-23)
 - ✅ **P0-3 Final**: **Dual-track backend strategy** (subagent + tmux) - both backends retained indefinitely (2026-03-23)
-- ✅ **仓库收敛改造**: README/README.zh 重写为单入口；根目录报告/测试文件归位 (2026-03-24)
+- ✅ **仓库收敛改造**: README/README.zh 重写为单入口;根目录报告/测试文件归位 (2026-03-24)
 - ✅ **架构健康度审查**: [`reports/ARCHITECTURE_HEALTH_REPORT_2026-03-24.md`](reports/ARCHITECTURE_HEALTH_REPORT_2026-03-24.md) (95/100 健康)
 - ⚠️ **CLI Integration**: 当前优先 mock Python API call,OpenClaw CLI 集成需确认 `openclaw sessions_spawn` 命令
 - ⚠️ **Auto-trigger 配置**: 使用本地 JSON 文件,缺少版本控制(见 technical debt D5)
