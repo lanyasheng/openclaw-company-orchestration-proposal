@@ -15,6 +15,8 @@
 
 **更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
 >
+> **更新**: 2026-03-24 - **Wave 2 Cutover 完成**: SubagentExecutor 执行基板扩展到 sessions_spawn_bridge，统一执行链路 (55 个测试通过)
+>
 > **更新**: 2026-03-23 - Owner/Executor 解耦 + Coding Lane 默认 Claude Code 已实现
 >
 > **更新**: 2026-03-22 - V8 Real Execute Mode + Auto-Trigger Consumption 已实现
@@ -153,6 +155,56 @@ python3 -m pytest tests/orchestrator/test_failure_closeout_guarantee.py -v
 python3 -m pytest tests/orchestrator/test_closeout_guarantee.py -v
 # 输出：17 passed
 ```
+
+### 2.2.4 Wave 2 Cutover 完成 (2026-03-24)
+
+**Wave 2 Cutover: SubagentExecutor 执行基板扩展** 已完成，将 SubagentExecutor 从 coding issue lane 扩展到 sessions_spawn_bridge。
+
+**核心变化** (`runtime/orchestrator/sessions_spawn_bridge.py`):
+- **执行层统一**: `_call_via_python_api()` 现在使用 SubagentExecutor 替代直接调用 runner 脚本
+- **保持 control plane 不变**: policy 评估、artifact 生成、linkage 链保持原样
+- **向后兼容**: auto-trigger 配置、safe_mode、allowlist/denylist 保持不变
+- **新增元数据**: `source=sessions_spawn_bridge`, `wave=wave2_cutover`
+
+**执行路径切换**:
+| 执行路径 | 原实现 | 新实现 | 状态 |
+|---------|--------|--------|------|
+| Issue Lane | SubagentExecutor | SubagentExecutor | ✅ Wave 1 (Batch D) |
+| Sessions Spawn Bridge | Direct runner script | SubagentExecutor | ✅ Wave 2 Cutover |
+| Trading Roundtable | Phase Engine + Bridge | SubagentExecutor (via Bridge) | ✅ Inherited |
+| Channel Roundtable | Phase Engine + Bridge | SubagentExecutor (via Bridge) | ✅ Inherited |
+
+**测试覆盖** (`tests/orchestrator/test_wave2_cutover.py`):
+- ✅ SubagentExecutor 集成正常
+- ✅ SessionsSpawnRequest 创建正常
+- ✅ Bridge Policy 评估不变
+- ✅ API Execution Artifact 生成不变
+- ✅ Linkage 链完整 (registration→dispatch→spawn→execution→receipt→request→task)
+- ✅ SubagentConfig 映射正确
+- 总计：6/6 通过
+
+**回归测试**:
+- ✅ `test_sessions_spawn_bridge.py`: 21/21 通过
+- ✅ `test_subagent_executor.py`: 16/16 通过
+- ✅ `test_subagent_state.py`: 16/16 通过
+- ✅ `test_issue_lane_executor.py`: 16/16 通过
+- ✅ `test_wave2_cutover.py`: 6/6 通过
+- 总计：55/55 通过
+
+**验证命令**:
+```bash
+cd <repo-root>
+python3 tests/orchestrator/test_wave2_cutover.py
+# 输出：6 passed
+python3 -m pytest tests/orchestrator/test_sessions_spawn_bridge.py -v
+# 输出：21 passed
+```
+
+**设计原则**:
+1. 替换 execution substrate，不替换 control plane
+2. 保持 planning / continuation / closeout / failure guarantee / heartbeat boundary 语义不变
+3. 小步可回退，不做大爆炸改写
+4. 没有测试结果不得宣称完成
 
 ### 2.2.3 Deer-Flow 借鉴线 Batch A/B 已实现 (2026-03-24)
 

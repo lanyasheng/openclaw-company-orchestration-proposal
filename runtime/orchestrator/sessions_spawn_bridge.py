@@ -63,6 +63,14 @@ from bridge_consumer import (
     get_consumed_by_request,
 )
 
+# Wave 2 Cutover: Import SubagentExecutor for unified execution substrate
+from subagent_executor import (
+    SubagentConfig,
+    SubagentExecutor,
+    SubagentResult,
+    TERMINAL_STATES,
+)
+
 __all__ = [
     "APIExecutionStatus",
     "APIExecutionResult",
@@ -588,13 +596,13 @@ class SessionsSpawnBridge:
         call_params: Dict[str, Any],
     ) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
         """
-        **P0-3 Batch 4**: 通过 Python API 调用真实 sessions_spawn。
+        **Wave 2 Cutover (2026-03-24)**: 通过 SubagentExecutor 调用真实 sessions_spawn。
         
-        使用 OpenClaw 现有 subagent runner 基础设施：
-        - 调用 run_subagent_claude_v1.sh 脚本
-        - 生成唯一 run label
-        - 跟踪 run 目录和状态
-        - 返回 runId / childSessionKey
+        使用统一的 SubagentExecutor 执行引擎（Deer-Flow 借鉴线 Batch A）：
+        - 统一 task_id / timeout / status / result handle
+        - 工具权限隔离（tool allowlist）
+        - 状态继承（内存缓存 + 文件持久化）
+        - 返回 runId / childSessionKey / pid
         
         Args:
             call_params: {task, runtime, cwd, label, metadata}
@@ -606,7 +614,7 @@ class SessionsSpawnBridge:
         import time
         
         try:
-            # 生成唯一 run label（如果未提供）
+            # 生成唯一 run label / task_id（如果未提供）
             label = call_params.get("label", f"orch-{uuid.uuid4().hex[:8]}")
             task = call_params.get("task", "")
             cwd = call_params.get("cwd") or str(Path.home() / ".openclaw" / "workspace")
@@ -617,75 +625,69 @@ class SessionsSpawnBridge:
             if runtime != "subagent":
                 return False, f"Unsupported runtime: {runtime}. Only 'subagent' is supported.", None
             
-            # 检查 runner 脚本是否存在
-            runner_script = Path.home() / ".openclaw" / "workspace" / "scripts" / "run_subagent_claude_v1.sh"
-            if not runner_script.exists():
-                # Fallback: 尝试 workspace 相对路径
-                runner_script = Path(__file__).parent.parent.parent / "scripts" / "run_subagent_claude_v1.sh"
-            
-            if not runner_script.exists():
-                return False, f"Runner script not found: run_subagent_claude_v1.sh (checked: {Path.home() / '.openclaw' / 'workspace' / 'scripts' / 'run_subagent_claude_v1.sh'} and {Path(__file__).parent.parent.parent / 'scripts' / 'run_subagent_claude_v1.sh'})", None
-            
-            # 确保路径是绝对路径
-            runner_script = runner_script.resolve()
-            
-            # 生成 runId / childSessionKey
-            run_id = f"run_{uuid.uuid4().hex[:8]}"
-            child_session_key = f"session_{uuid.uuid4().hex[:12]}"
-            
-            # 构建 runner 命令
-            # 注意：runner 脚本需要 task prompt 作为第一个参数
-            cmd = [
-                "bash",
-                str(runner_script),
-                "--cwd", cwd,
-                "--profile", "auto",
-                task,  # task prompt 作为最后一个位置参数
-                label,  # label 作为可选的第二个位置参数
-            ]
-            
-            # 在后台启动 subagent（非阻塞）
-            # 使用 subprocess.Popen 启动，不等待完成
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            # Wave 2 Cutover: 使用 SubagentExecutor 替代直接调用 runner 脚本
+            # 创建 SubagentConfig
+            subagent_config = SubagentConfig(
+                label=label,
+                runtime="subagent",
+                timeout_seconds=metadata.get("timeout_seconds", 900),
+                allowed_tools=metadata.get("allowed_tools"),
+                disallowed_tools=metadata.get("disallowed_tools"),
                 cwd=cwd,
-                env={**os.environ, "RUN_ID": run_id, "CHILD_SESSION_KEY": child_session_key},
+                metadata={
+                    **metadata,
+                    "source": "sessions_spawn_bridge",
+                    "wave": "wave2_cutover",
+                },
             )
+            
+            # 创建 SubagentExecutor
+            executor = SubagentExecutor(
+                config=subagent_config,
+                cwd=cwd,
+            )
+            
+            # 生成 task_id（使用 request_id 映射或生成新的）
+            # Wave 2 Cutover: 保持 task_id 格式一致（task_xxx）
+            request_id = metadata.get("request_id")
+            if request_id:
+                task_id = f"task_{request_id.replace('req_', '')}"
+            else:
+                task_id = f"task_{uuid.uuid4().hex[:12]}"
+            
+            # 异步启动 subagent
+            actual_task_id = executor.execute_async(task, task_id=task_id)
             
             # 等待短暂时间确保进程启动
             time.sleep(0.5)
             
-            # 检查进程是否成功启动
-            poll_result = process.poll()
-            if poll_result is not None and poll_result != 0:
-                # 进程立即退出，获取错误
-                _, stderr = process.communicate(timeout=5)
-                return False, f"Runner failed to start: {stderr.decode('utf-8', errors='replace')}", None
+            # 获取任务状态
+            result = executor.get_result(actual_task_id)
+            
+            if not result:
+                return False, "Failed to get subagent result after startup", None
+            
+            if result.status == "failed":
+                return False, result.error or "Subagent failed to start", None
             
             # 成功启动
             api_response = {
                 "status": "started",
-                "childSessionKey": child_session_key,
-                "runId": run_id,
+                "childSessionKey": actual_task_id,  # Use task_id as childSessionKey
+                "runId": actual_task_id,  # Use task_id as runId
                 "label": label,
                 "runtime": runtime,
                 "cwd": cwd,
-                "pid": process.pid,
-                "message": "P0-3 Batch 4: Real sessions_spawn via subagent runner",
+                "pid": result.pid,
+                "message": "Wave 2 Cutover (2026-03-24): Real sessions_spawn via SubagentExecutor",
                 "input": call_params,
-                "runner_script": str(runner_script),
+                "subagent_config": subagent_config.to_dict(),
+                "executor_version": result.metadata.get("executor_version"),
+                "allowed_tools": result.metadata.get("allowed_tools"),
             }
             
             return True, None, api_response
             
-        except subprocess.TimeoutExpired:
-            return False, "Runner startup timeout", None
-        except FileNotFoundError as e:
-            return False, f"Runner script not found: {e}", None
-        except PermissionError as e:
-            return False, f"Runner script not executable: {e}", None
         except Exception as e:
             return False, f"Unexpected error: {str(e)}", None
     

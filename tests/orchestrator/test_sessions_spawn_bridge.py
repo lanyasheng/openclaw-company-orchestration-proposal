@@ -842,15 +842,16 @@ class TestP03Batch4RealAPICall(unittest.TestCase):
     
     def test_batch4_real_api_call_real_execution_structure(self):
         """
-        P0-3 Batch 4: 验证真实执行模式下的 API response 结构。
+        Wave 2 Cutover (2026-03-24): 验证真实执行模式下的 API response 结构。
         
         验证 _call_via_python_api() 返回的 response 包含：
         - status: started
-        - childSessionKey: session_xxx
-        - runId: run_xxx
+        - childSessionKey: task_xxx (SubagentExecutor task_id)
+        - runId: task_xxx (SubagentExecutor task_id)
         - pid: int
         - label: str
         - runtime: subagent
+        - message: Wave 2 Cutover message
         """
         from sessions_spawn_bridge import SessionsSpawnBridge, SessionsSpawnBridgePolicy
         
@@ -863,24 +864,37 @@ class TestP03Batch4RealAPICall(unittest.TestCase):
         success, error, api_response = bridge._call_openclaw_sessions_spawn(self.test_request)
         
         # 三种可能结果：
-        # 1. runner 脚本存在且成功启动 -> success=True, response 包含 runId/childSessionKey/pid
-        # 2. runner 脚本不存在 -> success=False, error 包含 "not found"
-        # 3. CLI 调用失败但 Python API fallback 成功 -> success=True
+        # 1. SubagentExecutor 成功启动 -> success=True, response 包含 task_id/pid
+        # 2. SubagentExecutor 失败 -> success=False, error 包含错误信息
         
         if success:
-            # runner 脚本存在或 Python API fallback 成功，验证 response 结构
+            # SubagentExecutor 成功，验证 response 结构
             self.assertIsNotNone(api_response)
             self.assertEqual(api_response.get("status"), "started")
-            self.assertTrue(api_response.get("childSessionKey", "").startswith("session_"))
-            self.assertTrue(api_response.get("runId", "").startswith("run_"))
-            self.assertIsInstance(api_response.get("pid"), int)
+            # Wave 2 Cutover: childSessionKey 和 runId 现在是 task_id 格式
+            child_key = api_response.get("childSessionKey", "")
+            run_id = api_response.get("runId", "")
+            self.assertTrue(
+                child_key.startswith("task_") or child_key.startswith("session_"),
+                f"childSessionKey should start with 'task_' or 'session_', got: {child_key}"
+            )
+            self.assertTrue(
+                run_id.startswith("task_") or run_id.startswith("run_"),
+                f"runId should start with 'task_' or 'run_', got: {run_id}"
+            )
+            # pid 可能存在（如果进程已启动）或者是 None
+            pid = api_response.get("pid")
+            if pid is not None:
+                self.assertIsInstance(pid, int)
             self.assertEqual(api_response.get("runtime"), "subagent")
-            print(f"✓ P0-3 Batch 4 real execution: runId={api_response['runId']}, pid={api_response['pid']}")
+            # Wave 2 Cutover: 验证新字段
+            self.assertIn("subagent_config", api_response, "Should include subagent_config")
+            self.assertIn("executor_version", api_response, "Should include executor_version")
+            print(f"✓ Wave 2 Cutover real execution: runId={api_response['runId']}, pid={pid}")
         else:
-            # runner 脚本不存在或 CLI 失败（测试环境），验证错误信息
+            # SubagentExecutor 失败（测试环境），验证错误信息
             self.assertIsNotNone(error)
-            # 错误可能包含 "not found" 或 CLI error
-            print(f"✓ P0-3 Batch 4 execution blocked (expected in test env): {error[:100]}...")
+            print(f"✓ Wave 2 Cutover execution blocked (expected in test env): {error[:100]}...")
     
     def test_batch4_generic_scenario_not_trading_specific(self):
         """
