@@ -69,10 +69,12 @@ from state_machine import (
 SUMMARYS_DIR = STATE_DIR.parent / "orchestrator" / "summaries"
 
 from waiting_guard import reconcile_batch_waiting_anomalies
+from closeout_tracker import CloseoutTracker, create_closeout, ContinuationContract, _closeout_file
 
 # 初始化适配器和规划器
 _adapter = TradingAdapter()
 _planner = DispatchPlanner()
+_closeout_tracker = CloseoutTracker()
 
 
 def _ensure_runtime_dirs() -> None:
@@ -603,6 +605,51 @@ def process_trading_roundtable_callback(
         "ready_for_auto_dispatch": registration_record.ready_for_auto_dispatch,
     }
     
+    # ========== P0-4 Batch 1: Closeout Chain Fix ==========
+    # 创建并 emit closeout artifact，显式标记 closeout 状态和 push_required
+    # 这是最小可行修复，解决"batch 完成后 closeout 链路缺失"问题
+    
+    # 从 dispatch_plan 提取 continuation_contract
+    continuation_contract = dispatch_plan.continuation_contract
+    if not continuation_contract:
+        # fallback: 从 continuation dict 构建
+        continuation_contract = ContinuationContract(
+            stopped_because=continuation.get("stopped_because", continuation.get("stop_reason", "batch_completed")),
+            next_step=continuation.get("next_step", roundtable.get("next_step", "see dispatch plan")),
+            next_owner=continuation.get("next_owner", roundtable.get("owner", "trading")),
+            metadata={"source": "trading_roundtable_closeout_fix"},
+        )
+    
+    # 创建 closeout artifact
+    closeout_artifact = create_closeout(
+        batch_id=batch_id,
+        scenario=SCENARIO,
+        continuation=continuation_contract,
+        has_remaining_work=partial_closeout.has_remaining_work(),
+        artifacts={
+            "summary_path": str(summary_path),
+            "decision_path": str(decision_path),
+            "dispatch_path": str(dispatch_path),
+        },
+        metadata={
+            "packet": decision.metadata.get("packet", {}),
+            "roundtable": decision.metadata.get("roundtable", {}),
+            "dispatch_plan_status": dispatch_plan.status.value,
+            "closeout_source": "trading_roundtable_v1_closeout_fix",
+        },
+    )
+    
+    # 在返回结果中包含 closeout 状态
+    closeout_status_output = {
+        "closeout_id": closeout_artifact.closeout_id,
+        "closeout_status": closeout_artifact.closeout_status,
+        "push_required": closeout_artifact.push_required,
+        "push_status": closeout_artifact.push_status,
+        "closeout_path": str(_closeout_file(batch_id)),
+        "continuation_contract": closeout_artifact.continuation_contract.to_dict(),
+    }
+    # ========== End P0-4 Batch 1 ==========
+    
     return {
         "status": "processed",
         "batch_id": batch_id,
@@ -618,4 +665,6 @@ def process_trading_roundtable_callback(
         "dispatch_plan": dispatch_plan.to_dict(),
         "handoff_schema": handoff_artifacts,
         "registration": registration_info,
+        # P0-4 Batch 1: Closeout chain fix output
+        "closeout": closeout_status_output,
     }
