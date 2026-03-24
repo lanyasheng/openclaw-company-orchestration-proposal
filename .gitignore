@@ -3,3 +3,10 @@ __pycache__/
 .pytest_cache/
 poc/official_lobster_bridge/node_modules/
 poc/official_lobster_bridge/runs/
+
+# Runtime artifacts (generated at runtime, not committed)
+runtime/*.db
+runtime/*.sqlite
+runtime/*.sqlite3
+*.pid
+*.lock

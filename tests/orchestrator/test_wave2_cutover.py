@@ -304,8 +304,8 @@ def run_all_tests():
     
     for name, test_func in tests:
         try:
-            if test_func():
-                passed += 1
+            test_func()
+            passed += 1
         except AssertionError as e:
             print(f"  ✗ {name} FAILED: {e}")
             failed += 1
