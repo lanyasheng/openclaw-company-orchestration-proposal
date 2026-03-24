@@ -32,6 +32,8 @@ __all__ = [
     "CloseoutArtifact",
     "CloseoutTracker",
     "CLOSEOUT_TRACKER_VERSION",
+    "CloseoutGateResult",
+    "check_closeout_gate",
 ]
 
 CLOSEOUT_TRACKER_VERSION = "closeout_tracker_v1"
@@ -441,6 +443,128 @@ def check_push_required(batch_id: str) -> Dict[str, Any]:
     """
     tracker = CloseoutTracker()
     return tracker.check_push_required(batch_id)
+
+
+# ========== P0-4 Batch 2: Closeout Gate Glue ==========
+# 最小 closeout gate glue：检查前一批 closeout 状态，决定是否允许下一批继续
+
+@dataclass
+class CloseoutGateResult:
+    """
+    Closeout gate 检查结果
+    
+    用于在 batch 开始前检查前一批的 closeout 状态。
+    """
+    allowed: bool
+    reason: str
+    previous_batch_id: Optional[str] = None
+    previous_closeout_status: Optional[CloseoutStatus] = None
+    previous_push_status: Optional[PushStatus] = None
+    previous_push_required: Optional[bool] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "reason": self.reason,
+            "previous_batch_id": self.previous_batch_id,
+            "previous_closeout_status": self.previous_closeout_status,
+            "previous_push_status": self.previous_push_status,
+            "previous_push_required": self.previous_push_required,
+        }
+
+
+def check_closeout_gate(
+    batch_id: str,
+    scenario: str,
+    require_push_complete: bool = True,
+) -> CloseoutGateResult:
+    """
+    检查 closeout gate：在 batch 开始前检查前一批的 closeout 状态。
+    
+    这是最小 closeout gate glue，用于确保：
+    1. 前一批 closeout 已完成（或至少不是 blocked）
+    2. 如果需要 push，前一批 push 已执行
+    
+    Args:
+        batch_id: 当前批次 ID
+        scenario: 场景名称
+        require_push_complete: 是否要求 push 已完成（trading 场景默认 True）
+    
+    Returns:
+        CloseoutGateResult: 检查结果
+    
+    注意：
+    - 这个函数不会自动阻止 batch 开始，只是返回检查结果
+    - 调用方需要根据结果决定是否阻止 batch 开始
+    - 这是最小 glue，不是强制 gate；强制 gate 需要在 entry point 集成
+    """
+    # 对于 trading 场景，默认要求 push complete
+    if "trading" in scenario.lower():
+        require_push_complete = True
+    
+    # 查找前一批 closeout（通过遍历 closeout 目录）
+    _ensure_closeout_dir()
+    
+    previous_closeout: Optional[CloseoutArtifact] = None
+    previous_batch_id: Optional[str] = None
+    
+    # 简单策略：查找所有 closeout 文件，找到最新的（按 created_at）
+    # 注意：这是简化实现，生产环境可能需要更复杂的逻辑来识别"前一批"
+    for closeout_file in CLOSEOUT_DIR.glob("closeout-*.json"):
+        with open(closeout_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        # 跳过当前 batch
+        if data.get("batch_id") == batch_id:
+            continue
+        
+        artifact = CloseoutArtifact.from_dict(data)
+        
+        # 找到最新的 closeout
+        if previous_closeout is None or artifact.created_at > previous_closeout.created_at:
+            previous_closeout = artifact
+            previous_batch_id = artifact.batch_id
+    
+    # 如果没有前一批 closeout，允许继续（首次运行）
+    if previous_closeout is None:
+        return CloseoutGateResult(
+            allowed=True,
+            reason="No previous closeout found; first run allowed",
+        )
+    
+    # 检查前一批 closeout 状态
+    if previous_closeout.closeout_status == "blocked":
+        return CloseoutGateResult(
+            allowed=False,
+            reason=f"Previous batch {previous_batch_id} closeout is blocked: {previous_closeout.metadata.get('closeout_reason', 'unknown')}",
+            previous_batch_id=previous_batch_id,
+            previous_closeout_status=previous_closeout.closeout_status,
+            previous_push_status=previous_closeout.push_status,
+            previous_push_required=previous_closeout.push_required,
+        )
+    
+    # 如果要求 push complete，检查 push 状态
+    if require_push_complete and previous_closeout.push_required:
+        if previous_closeout.push_status != "pushed":
+            return CloseoutGateResult(
+                allowed=False,
+                reason=f"Previous batch {previous_batch_id} requires push but push_status={previous_closeout.push_status}",
+                previous_batch_id=previous_batch_id,
+                previous_closeout_status=previous_closeout.closeout_status,
+                previous_push_status=previous_closeout.push_status,
+                previous_push_required=previous_closeout.push_required,
+            )
+    
+    # 检查通过，允许继续
+    return CloseoutGateResult(
+        allowed=True,
+        reason=f"Previous batch {previous_batch_id} closeout gate passed",
+        previous_batch_id=previous_batch_id,
+        previous_closeout_status=previous_closeout.closeout_status,
+        previous_push_status=previous_closeout.push_status,
+        previous_push_required=previous_closeout.push_required,
+    )
+# ========== End P0-4 Batch 2 ==========
 
 
 # CLI 入口

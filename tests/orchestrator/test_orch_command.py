@@ -201,6 +201,29 @@ def test_orch_command_uses_ambient_context_for_trading_without_cli_input():
     assert result["seed_payload"]["trading_roundtable"]["roundtable"]["conclusion"] == "PENDING"
 
 
+def test_orch_command_current_trading_channel_defaults_to_trading_roundtable_contract():
+    result = _run_orch_command(
+        "--channel-id",
+        "discord:channel:1483138253539250217",
+        "--channel-name",
+        "交易策略优化圆桌｜续线｜2026-03-17",
+        "--topic",
+        "A 股策略主线修复与盘中监控推进",
+        "--requester-session-key",
+        "agent:main:discord:channel:1483138253539250217",
+    )
+
+    assert result["entry_context"]["resolved_context"] == "trading_roundtable"
+    assert result["entry_context"]["source"] == "channel_id_whitelist"
+    assert result["orchestration"]["adapter"] == "trading_roundtable"
+    assert result["orchestration"]["scenario"] == "trading_roundtable_phase1"
+    assert result["orchestration"]["owner"] == "trading"
+    assert result["orchestration"]["channel"]["channel_id"] == "discord:channel:1483138253539250217"
+    assert result["orchestration"]["session"]["requester_session_key"] == "agent:main:discord:channel:1483138253539250217"
+    assert result["seed_payload"]["trading_roundtable"]["packet"]["owner"] == "trading"
+    assert result["seed_payload"]["trading_roundtable"]["roundtable"]["conclusion"] == "PENDING"
+
+
 def test_orch_command_custom_channel_scenario_exposes_generic_onboarding_seam():
     result = _run_orch_command(
         "--scenario",

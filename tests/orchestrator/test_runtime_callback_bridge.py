@@ -22,6 +22,7 @@ from contracts import (  # type: ignore
     normalize_callback_payload,
     resolve_orchestration_contract,
 )
+from entry_defaults import build_default_entry_contract  # type: ignore
 from state_machine import create_task  # type: ignore
 
 
@@ -331,6 +332,77 @@ def test_runtime_callback_bridge_auto_mode_processes_envelope_only_contract(isol
     assert result["contract_resolution"]["task_tier"] == TASK_TIER_ORCHESTRATED
     assert result["dispatch_plan"]["backend"] == "tmux"
     assert result["ack_guard"]["status"] == "present"
+
+
+def test_runtime_callback_bridge_current_trading_channel_contract_auto_dispatches_when_gate_passes(
+    isolated_state_dir: Path,
+    tmp_path: Path,
+):
+    batch_id = "batch_current_trading_channel_contract_auto"
+    task_id = "tsk_current_trading_channel_contract_auto_001"
+    create_task(task_id, batch_id=batch_id)
+
+    contract = build_default_entry_contract(
+        channel_id="discord:channel:1483138253539250217",
+        channel_name="交易策略优化圆桌｜续线｜2026-03-17",
+        topic="A 股策略主线修复与盘中监控推进",
+        requester_session_key="agent:main:discord:channel:1483138253539250217",
+        batch_key=batch_id,
+        auto_execute=True,
+    )
+    payload = _tracked_result(
+        conclusion="PASS",
+        blocker="none",
+        next_step="freeze intake and open the next minimal wiring task",
+    )
+    payload["orchestration"] = contract["orchestration"]
+
+    payload_path = tmp_path / "payload-current-trading-channel-contract.json"
+    payload_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    registry_dir = tmp_path / "task-registry"
+    env = {
+        **os.environ,
+        "OPENCLAW_STATE_DIR": str(isolated_state_dir),
+        "OPENCLAW_REGISTRY_DIR": str(registry_dir),
+    }
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "complete",
+            "--task-id",
+            task_id,
+            "--payload",
+            str(payload_path),
+            "--runtime",
+            "subagent",
+            "--requester-session-key",
+            "agent:main:discord:channel:1483138253539250217",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    )
+
+    result = json.loads(proc.stdout)
+    assert result["status"] == "processed"
+    assert result["dispatch_plan"]["status"] == "triggered"
+    assert result["contract_resolution"]["adapter"] == "trading_roundtable"
+    assert result["contract_resolution"]["channel"]["channel_id"] == "discord:channel:1483138253539250217"
+    assert Path(result["summary_path"]).exists()
+    assert Path(result["decision_path"]).exists()
+    assert Path(result["dispatch_path"]).exists()
+    assert result["ack_result"]["channel_id"] == "1483138253539250217"
+    assert Path(result["ack_result"]["receipt_path"]).exists()
+
+    registry_path = registry_dir / "registry.jsonl"
+    assert registry_path.exists()
+    registry_lines = [json.loads(line) for line in registry_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    current_entries = [item for item in registry_lines if item.get("batch_id") == batch_id]
+    assert current_entries
+    assert any(item.get("registration_status") == "registered" for item in current_entries)
 
 
 def test_runtime_callback_bridge_auto_mode_rejects_payload_without_enabled_contract(isolated_state_dir: Path, tmp_path: Path):

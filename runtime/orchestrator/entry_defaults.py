@@ -29,6 +29,15 @@ CURRENT_ARCHITECTURE_SUMMARY = (
     "当前频道结论已收口：不把 LangGraph 用作 OpenClaw 公司级编排底座；"
     "当前优先 OpenClaw native + thin orchestration。"
 )
+
+CURRENT_TRADING_CHANNEL_ID = "discord:channel:1483138253539250217"
+CURRENT_TRADING_CHANNEL_NAME = "交易策略优化圆桌｜续线｜2026-03-17"
+CURRENT_TRADING_TOPIC = "A 股策略主线修复与盘中监控推进"
+CURRENT_TRADING_CONTEXT_HINTS = (
+    "交易策略优化圆桌",
+    "a 股策略主线修复",
+    "盘中监控推进",
+)
 GENERIC_CHANNEL_NEXT_STEP = (
     "先回填当前 scenario 的 channel_roundtable/generic_roundtable 最小 closure 字段，"
     "再让 callback bridge 进入 summary / decision / dispatch。"
@@ -396,6 +405,12 @@ def infer_entry_context(
         }
 
     channel_tail = _normalized_channel_tail(channel_id)
+    if channel_tail and channel_tail == _normalized_channel_tail(CURRENT_TRADING_CHANNEL_ID):
+        return {
+            "context": CONTEXT_TRADING_ROUNDTABLE,
+            "source": "channel_id_whitelist",
+            "matched_on": channel_id,
+        }
     if channel_tail and channel_tail == _normalized_channel_tail(CURRENT_ARCHITECTURE_CHANNEL_ID):
         return {
             "context": CONTEXT_CHANNEL_ROUNDTABLE,
@@ -406,7 +421,11 @@ def infer_entry_context(
     topic_value = _clean_str(topic) or ""
     channel_name_value = _clean_str(channel_name) or ""
     joined = f"{topic_value} {channel_name_value}".lower()
-    if "trading roundtable" in joined or "trading-roundtable" in joined:
+    if (
+        "trading roundtable" in joined
+        or "trading-roundtable" in joined
+        or any(hint in joined for hint in CURRENT_TRADING_CONTEXT_HINTS)
+    ):
         return {
             "context": CONTEXT_TRADING_ROUNDTABLE,
             "source": "topic_or_channel_name",

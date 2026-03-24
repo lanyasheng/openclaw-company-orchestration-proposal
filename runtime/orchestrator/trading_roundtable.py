@@ -69,7 +69,14 @@ from state_machine import (
 SUMMARYS_DIR = STATE_DIR.parent / "orchestrator" / "summaries"
 
 from waiting_guard import reconcile_batch_waiting_anomalies
-from closeout_tracker import CloseoutTracker, create_closeout, ContinuationContract, _closeout_file
+from closeout_tracker import (
+    CloseoutTracker,
+    create_closeout,
+    ContinuationContract,
+    _closeout_file,
+    check_closeout_gate,
+    CloseoutGateResult,
+)
 
 # 初始化适配器和规划器
 _adapter = TradingAdapter()
@@ -489,6 +496,7 @@ def process_trading_roundtable_callback(
     runtime: str = "subagent",
     backend: str = "subagent",
     requester_session_key: Optional[str] = None,
+    skip_closeout_gate: bool = False,
 ) -> Dict[str, Any]:
     """
     处理 trading roundtable callback（Phase Engine 架构）
@@ -498,8 +506,42 @@ def process_trading_roundtable_callback(
     P0-1: Packet Schema 前置校验
     - 在 callback 处理的最早阶段进行 schema presence validation
     - 显式标记 incomplete 状态，避免等 closeout 才发现缺失
+    
+    P0-4 Batch 2: Closeout Gate Glue
+    - 在 batch 开始前检查前一批的 closeout 状态
+    - 如果前一批 closeout 未完成或 push 未执行，阻止继续
+    - skip_closeout_gate=True 可跳过检查（用于测试/紧急修复）
     """
     _ensure_runtime_dirs()
+    
+    # ========== P0-4 Batch 2: Closeout Gate Glue ==========
+    # 检查前一批 closeout 状态，决定是否允许当前 batch 继续
+    if not skip_closeout_gate:
+        gate_result: CloseoutGateResult = check_closeout_gate(
+            batch_id=batch_id,
+            scenario=SCENARIO,
+            require_push_complete=True,  # trading 场景强制要求 push complete
+        )
+        
+        if not gate_result.allowed:
+            # Closeout gate 检查失败，阻止 batch 继续
+            return {
+                "status": "blocked_by_closeout_gate",
+                "batch_id": batch_id,
+                "task_id": task_id,
+                "reason": gate_result.reason,
+                "closeout_gate": gate_result.to_dict(),
+            }
+        
+        # Closeout gate 检查通过，记录到返回结果
+        closeout_gate_output = gate_result.to_dict()
+    else:
+        closeout_gate_output = {
+            "allowed": True,
+            "reason": "Closeout gate check skipped (skip_closeout_gate=True)",
+        }
+    # ========== End P0-4 Batch 2 ==========
+    
     mark_callback_received(task_id, result)
     
     # 处理 waiting anomalies
@@ -771,6 +813,8 @@ def process_trading_roundtable_callback(
         "registration": registration_info,
         # P0-4 Batch 1: Closeout chain fix output
         "closeout": closeout_status_output,
+        # P0-4 Batch 2: Closeout gate glue output
+        "closeout_gate": closeout_gate_output,
         # P0-1: Packet Schema Preflight Validation output
         "preflight_validation": preflight_output,
     }
