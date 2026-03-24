@@ -1,38 +1,13 @@
-#!/usr/bin/env python3
 """
-trading/__init__.py — Paper Trading Module
+trading — Trading Roundtable Adapter and Validators
 
-Paper trading 最小业务闭环模块。
+提供 trading roundtable 的 adapter、schema 和 validator。
 """
 
-from .schemas import (
-    ExecutionMode,
-    OrderStatus,
-    Side,
-    Proposal,
-    Confirmation,
-    Execution,
-    Position,
-    JournalEntry,
-    generate_id,
-    iso_now,
-    validate_execution_mode_isolation,
-    PAPER_TRADING_SCHEMA_VERSION,
-)
-from .simulation_adapter import PaperSimulationAdapter
+from .callback_validator import validate_trading_callback, validate_callback_file, ValidationResult
 
 __all__ = [
-    "ExecutionMode",
-    "OrderStatus",
-    "Side",
-    "Proposal",
-    "Confirmation",
-    "Execution",
-    "Position",
-    "JournalEntry",
-    "generate_id",
-    "iso_now",
-    "validate_execution_mode_isolation",
-    "PAPER_TRADING_SCHEMA_VERSION",
-    "PaperSimulationAdapter",
+    "validate_trading_callback",
+    "validate_callback_file",
+    "ValidationResult",
 ]
