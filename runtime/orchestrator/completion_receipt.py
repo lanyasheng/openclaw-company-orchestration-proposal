@@ -35,6 +35,14 @@ from spawn_execution import (
 
 from partial_continuation import ContinuationContract, build_continuation_contract
 
+# Subtask Completion Validator integration (v1 audit-only)
+from completion_validator import (
+    validate_subtask_completion,
+    CompletionValidationResult,
+    VALIDATOR_AUDIT_DIR,
+)
+from pathlib import Path as PathLib
+
 __all__ = [
     "ReceiptStatus",
     "CompletionReceiptArtifact",
@@ -353,6 +361,55 @@ class CompletionReceiptKernel:
         
         return business_result if business_result else None
     
+    def _extract_output_for_validation(
+        self,
+        execution: SpawnExecutionArtifact,
+    ) -> tuple[str, int, list[PathLib.Path], str]:
+        """
+        从 execution 中提取 validator 需要的信息
+        
+        Returns:
+            (output, exit_code, artifacts, label)
+        """
+        output = ""
+        exit_code = 0
+        artifacts = []
+        label = ""
+        
+        # 从 execution_result 中提取 output
+        if execution.execution_result:
+            # 尝试从 result 字段获取
+            output = execution.execution_result.get("result", "") or execution.execution_result.get("output", "") or ""
+            
+            # 尝试从 stdout/stderr 获取
+            if not output:
+                stdout = execution.execution_result.get("stdout", "") or ""
+                stderr = execution.execution_result.get("stderr", "") or ""
+                output = stdout + "\n" + stderr
+            
+            # 获取 exit code
+            exit_code = execution.execution_result.get("exit_code", 0)
+        
+        # 从 metadata 中提取额外信息
+        if execution.metadata:
+            # 尝试从 metadata 获取 output (fallback)
+            if not output:
+                output = execution.metadata.get("output", "") or execution.metadata.get("result", "") or ""
+            
+            # 获取 label
+            label = execution.metadata.get("label", "") or execution.metadata.get("task_label", "") or ""
+            
+            # 获取 artifacts 路径
+            artifacts_str = execution.metadata.get("artifacts", [])
+            if isinstance(artifacts_str, list):
+                artifacts = [PathLib.Path(p) for p in artifacts_str if p]
+        
+        # 从 execution_payload 中提取 label
+        if not label and execution.execution_payload:
+            label = execution.execution_payload.get("label", "") or ""
+        
+        return output, exit_code, artifacts, label
+    
     def create_receipt(
         self,
         execution: SpawnExecutionArtifact,
@@ -378,12 +435,60 @@ class CompletionReceiptKernel:
         # 提取 business result
         business_result = self._extract_business_result(execution)
         
+        # ========== Subtask Completion Validator (v1 audit-only) ==========
+        validation_result: Optional[CompletionValidationResult] = None
+        try:
+            # 提取 output 用于验证
+            output, exit_code, artifacts, label = self._extract_output_for_validation(execution)
+            
+            # 执行验证 (audit-only 模式：只记录不拦截)
+            if output:  # 只有有输出时才验证
+                validation_result = validate_subtask_completion(
+                    output=output,
+                    exit_code=exit_code,
+                    artifacts=artifacts,
+                    label=label,
+                    execution_id=execution.execution_id,
+                    spawn_id=execution.spawn_id,
+                    audit=True,
+                )
+        except Exception as e:
+            # Validator 错误不影响主流程 (fallback 到原逻辑)
+            validation_result = CompletionValidationResult(
+                status="validator_error",
+                reason=str(e),
+                score=0,
+                metadata={"error": True, "error_message": str(e)},
+            )
+        # ========== End Validator ==========
+        
         # Build ContinuationContract (P0-1 Batch 5: unified continuation semantics)
         continuation = build_receipt_continuation_contract(
             execution=execution,
             receipt_status=receipt_status,
             receipt_reason=receipt_reason,
         )
+        
+        # 构建 metadata
+        metadata = {
+            "source_execution_status": execution.spawn_execution_status,
+            "source_execution_time": execution.spawn_execution_time,
+            "source_spawn_status": execution.metadata.get("source_spawn_status"),
+            "source_dispatch_status": execution.metadata.get("source_dispatch_status"),
+            "truth_anchor": execution.metadata.get("truth_anchor"),
+            "scenario": execution.spawn_execution_target.get("scenario", ""),
+            "owner": execution.spawn_execution_target.get("owner", ""),
+            # P0-1 Batch 5: Include ContinuationContract as canonical continuation semantics
+            "continuation_contract": continuation.to_dict(),
+            "stopped_because": continuation.stopped_because,
+            "next_step": continuation.next_step,
+            "next_owner": continuation.next_owner,
+        }
+        
+        # 添加 validator 结果到 metadata (audit-only)
+        if validation_result:
+            metadata["validation_result"] = validation_result.to_dict()
+            metadata["validator_audit_dir"] = str(VALIDATOR_AUDIT_DIR)
         
         artifact = CompletionReceiptArtifact(
             receipt_id=receipt_id,
@@ -398,20 +503,7 @@ class CompletionReceiptKernel:
             result_summary=result_summary,
             dedupe_key=dedupe_key,
             business_result=business_result,
-            metadata={
-                "source_execution_status": execution.spawn_execution_status,
-                "source_execution_time": execution.spawn_execution_time,
-                "source_spawn_status": execution.metadata.get("source_spawn_status"),
-                "source_dispatch_status": execution.metadata.get("source_dispatch_status"),
-                "truth_anchor": execution.metadata.get("truth_anchor"),
-                "scenario": execution.spawn_execution_target.get("scenario", ""),
-                "owner": execution.spawn_execution_target.get("owner", ""),
-                # P0-1 Batch 5: Include ContinuationContract as canonical continuation semantics
-                "continuation_contract": continuation.to_dict(),
-                "stopped_because": continuation.stopped_because,
-                "next_step": continuation.next_step,
-                "next_owner": continuation.next_owner,
-            },
+            metadata=metadata,
         )
         
         return artifact

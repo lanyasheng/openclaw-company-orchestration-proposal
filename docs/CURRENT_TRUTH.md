@@ -13,7 +13,7 @@
 >
 > **更新**: 2026-03-25 - P0 Batch 5: Subagent Session Cleanup 已实现 (process group kill / cleanup status / UI cleanup unknown 显式建模)
 
-**更新**: 2026-03-25 - **Subtask Completion Validator 设计锚定**: 完成设计文档，明确 completion 链路/hook 点/through-block 规则/集成边界 (待实现)
+**更新**: 2026-03-25 - **Subtask Completion Validator v1 已实现 (audit-only)**: 完成 validator 核心模块 (`completion_validator.py` / `completion_validator_rules.py`) + 集成到 `completion_receipt.py` + 20 个测试通过。当前模式：`audit_only` (只记录不拦截)，支持 Through/Block/Gate 规则、白名单机制、audit 日志。
 
 **更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
 
