@@ -42,6 +42,9 @@ from partial_continuation import ContinuationContract, build_continuation_contra
 # P0-2 Batch 1: 导入 handoff schema helper
 from core.handoff_schema import PlanningHandoff, build_planning_handoff
 
+# P0-1 Batch 1: 导入 planning default
+from planning_default import PlanningArtifact, build_planning_artifact, merge_planning_into_dispatch
+
 
 class DispatchBackend(str, Enum):
     """调度后端类型"""
@@ -153,6 +156,9 @@ class DispatchPlan:
     # 统一 Continuation Contract（P0-1 Batch 4 新增）
     continuation_contract: Optional[ContinuationContract] = None
     
+    # Planning Artifact（P0-1 Batch 1 新增）
+    planning_artifact: Optional[PlanningArtifact] = None
+    
     # 编排契约
     orchestration_contract: Dict[str, Any] = field(default_factory=dict)
     
@@ -188,6 +194,8 @@ class DispatchPlan:
             # P0-1 Batch 4: 同时保留原始 continuation dict 和统一的 continuation_contract
             "continuation": self.continuation,
             "continuation_contract": self.continuation_contract.to_dict() if self.continuation_contract else None,
+            # P0-1 Batch 1: Planning artifact
+            "planning_artifact": self.planning_artifact.to_dict() if self.planning_artifact else None,
             "orchestration_contract": self.orchestration_contract,
             "safety_gates": self.safety_gates,
             "recommended_spawn": self.recommended_spawn,
@@ -426,6 +434,37 @@ class DispatchPlanner:
             },
         )
         
+        # P0-1 Batch 1: 构建 Planning Artifact（非 trivial 任务默认生成）
+        # 从 decision 和 roundtable 中提取 planning 信息
+        planning_artifact = None
+        problem_statement = continuation.get("next_step", "") or decision.get("reason", "")
+        in_scope = []
+        
+        # 从 decision 中提取 scope 信息
+        decision_action = decision.get("action", "")
+        if decision_action == "proceed":
+            in_scope.append(f"Continue with: {problem_statement}")
+        elif decision_action == "fix_blocker":
+            blocker = roundtable.get("blocker", "unknown") if roundtable else "unknown"
+            in_scope.append(f"Fix blocker: {blocker}")
+            in_scope.append(f"Complete phase1 packet/roundtable closure")
+        elif decision_action == "abort":
+            in_scope.append(f"Abort and document learnings")
+        
+        if problem_statement and in_scope:
+            owner = continuation.get("next_owner", "main")
+            planning_artifact = build_planning_artifact(
+                problem_statement=problem_statement[:200],  # 限制长度
+                in_scope=in_scope,
+                success_criteria=[f"Decision action '{decision_action}' completed"],
+                owner=owner,
+                metadata={
+                    "decision_action": decision_action,
+                    "batch_id": batch_id,
+                    "scenario": scenario,
+                },
+            )
+        
         # 创建计划
         plan = DispatchPlan(
             dispatch_id=dispatch_id,
@@ -441,6 +480,7 @@ class DispatchPlanner:
             skip_reasons=skip_reasons,
             continuation=continuation,
             continuation_contract=continuation_contract,
+            planning_artifact=planning_artifact,
             recommended_spawn=recommended_spawn,
             parent_message=parent_message,
         )
