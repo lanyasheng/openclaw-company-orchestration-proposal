@@ -54,6 +54,9 @@ __all__ = [
     "SubagentConfig",
     "SubagentResult",
     "SubagentExecutor",
+    "CleanupStatus",
+    "CLEANUP_COMPLETE_STATES",
+    "TERMINAL_STATES",
     "execute_subagent",
     "get_subagent_result",
     "list_subagent_tasks",
@@ -103,6 +106,12 @@ def _count_system_claude_processes() -> int:
 SubagentStatus = Literal["pending", "running", "completed", "failed", "timed_out", "cancelled"]
 
 TERMINAL_STATES = {"completed", "failed", "timed_out", "cancelled"}
+
+# ============ Cleanup 状态定义 ============
+
+CleanupStatus = Literal["pending", "process_killed", "session_cleaned", "ui_cleanup_unknown", "cleanup_failed"]
+
+CLEANUP_COMPLETE_STATES = {"process_killed", "session_cleaned", "ui_cleanup_unknown"}
 
 # ============ 配置定义 ============
 
@@ -171,6 +180,9 @@ class SubagentResult:
     - started_at: 开始时间
     - completed_at: 完成时间
     - pid: 进程 ID（如果已启动）
+    - pgid: 进程组 ID（如果已启动 session）
+    - cleanup_status: 清理状态（pending | process_killed | session_cleaned | ui_cleanup_unknown | cleanup_failed）
+    - cleanup_metadata: 清理元数据（记录清理动作和结果）
     - metadata: 额外元数据
     """
     task_id: str
@@ -182,6 +194,9 @@ class SubagentResult:
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     pid: Optional[int] = None
+    pgid: Optional[int] = None
+    cleanup_status: Optional[CleanupStatus] = None
+    cleanup_metadata: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -196,6 +211,9 @@ class SubagentResult:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "pid": self.pid,
+            "pgid": self.pgid,
+            "cleanup_status": self.cleanup_status,
+            "cleanup_metadata": self.cleanup_metadata,
             "metadata": self.metadata,
         }
     
@@ -212,6 +230,9 @@ class SubagentResult:
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
             pid=data.get("pid"),
+            pgid=data.get("pgid"),
+            cleanup_status=data.get("cleanup_status"),
+            cleanup_metadata=data.get("cleanup_metadata", {}),
             metadata=data.get("metadata", {}),
         )
 
@@ -463,6 +484,8 @@ class SubagentExecutor:
         """
         启动 subagent 进程，注入 OPENCLAW_SPAWN_DEPTH 环境变量。
         失败时释放全局信号量。
+        
+        使用 start_new_session=True 创建新会话，进程组 ID = pid。
         """
         runner_script = Path(self.cwd) / "scripts" / "run_subagent_claude_v1.sh"
         
@@ -488,13 +511,20 @@ class SubagentExecutor:
                 cwd=self.cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                start_new_session=True,
+                start_new_session=True,  # 创建新会话，pgid = pid
                 env=child_env,
             )
             
+            # pgid = pid（因为 start_new_session=True）
+            pgid = process.pid
+            
             _update_task_status(
-                task_id, "running", pid=process.pid,
-                metadata={"process_started": True, "spawn_depth": current_depth + 1},
+                task_id, "running", pid=process.pid, pgid=pgid,
+                metadata={
+                    "process_started": True,
+                    "spawn_depth": current_depth + 1,
+                    "process_group_id": pgid,
+                },
             )
             
             # 启动后台线程监控进程结束，释放信号量
@@ -521,10 +551,27 @@ class SubagentExecutor:
     def _monitor_process_and_release(self, task_id: str, process):
         """
         监控子进程结束，释放信号量。
+        在进程结束时自动标记 cleanup_status。
         在非 bypass 模式下运行。
         """
         try:
-            process.wait()  # 阻塞直到进程结束
+            exit_code = process.wait()  # 阻塞直到进程结束
+            
+            # 进程结束时，标记 cleanup_status（如果还未标记）
+            result = _get_task(task_id)
+            if result and result.cleanup_status is None:
+                # 进程正常结束，标记为 session_cleaned
+                _update_task_status(
+                    task_id,
+                    result.status,
+                    cleanup_status="session_cleaned",
+                    cleanup_metadata={
+                        "action": "process_exited_naturally",
+                        "exit_code": exit_code,
+                        "timestamp": _iso_now(),
+                        "ui_cleanup": "unknown",  # 显式建模：UI 清理状态未知
+                    },
+                )
         except Exception:
             pass
         finally:
@@ -538,7 +585,7 @@ class SubagentExecutor:
     
     def get_result(self, task_id: str) -> Optional[SubagentResult]:
         """
-        获取任务结果（带超时自动检查）。
+        获取任务结果（带超时自动检查 + cleanup）。
         
         Args:
             task_id: 任务 ID
@@ -558,6 +605,9 @@ class SubagentExecutor:
                     "timed_out",
                     error=f"Task timed out after {self.config.timeout_seconds} seconds",
                 )
+                # 超时自动 cleanup（杀死进程组）
+                if result.pid:
+                    self._kill_process_group(result)
                 result = _get_task(task_id)
         
         return result
@@ -595,12 +645,17 @@ class SubagentExecutor:
         result = _get_task(task_id)
         return result is not None and result.status in TERMINAL_STATES
     
-    def cleanup(self, task_id: str) -> bool:
+    def cleanup(self, task_id: str, kill_process: bool = True) -> bool:
         """
         清理已完成任务（从内存缓存移除，保留文件）。
         
+        两层清理：
+        1. execution resource release（已有）：semaphore release / active count / memory cleanup
+        2. session/process cleanup（本批新增）：process group kill / cleanup status tracking
+        
         Args:
             task_id: 任务 ID
+            kill_process: 是否杀死进程组（默认 True）
         
         Returns:
             True 如果清理成功
@@ -609,11 +664,142 @@ class SubagentExecutor:
         if not result or result.status not in TERMINAL_STATES:
             return False
         
+        # Session/process cleanup（本批新增）
+        if kill_process and result.pid:
+            self._kill_process_group(result)
+        
+        # 从内存缓存移除（保留文件持久化）
         with _background_tasks_lock:
             if task_id in _background_tasks:
                 del _background_tasks[task_id]
         
         return True
+    
+    def _kill_process_group(self, result: SubagentResult) -> None:
+        """
+        杀死进程组（timeout / cancel / terminal 时调用）。
+        
+        注意：
+        - 使用 start_new_session=True 启动，进程组 ID = pid
+        - 只杀进程组，不影响其他进程
+        - UI/网页可能残留（显式建模为 ui_cleanup_unknown）
+        """
+        import signal
+        
+        if not result.pid:
+            return
+        
+        pgid = result.pgid or result.pid
+        
+        try:
+            # 先尝试杀死整个进程组
+            os.killpg(pgid, signal.SIGTERM)
+            _update_task_status(
+                result.task_id,
+                result.status,
+                cleanup_status="process_killed",
+                cleanup_metadata={
+                    "action": "kill_process_group",
+                    "pgid": pgid,
+                    "signal": "SIGTERM",
+                    "timestamp": _iso_now(),
+                    "ui_cleanup": "unknown",  # 显式建模：UI 清理状态未知
+                },
+            )
+        except ProcessLookupError:
+            # 进程已结束
+            _update_task_status(
+                result.task_id,
+                result.status,
+                cleanup_status="session_cleaned",
+                cleanup_metadata={
+                    "action": "process_already_exited",
+                    "pgid": pgid,
+                    "timestamp": _iso_now(),
+                },
+            )
+        except Exception as e:
+            _update_task_status(
+                result.task_id,
+                result.status,
+                cleanup_status="cleanup_failed",
+                cleanup_metadata={
+                    "action": "kill_process_group_failed",
+                    "pgid": pgid,
+                    "error": str(e),
+                    "timestamp": _iso_now(),
+                },
+            )
+    
+    def cancel(self, task_id: str) -> bool:
+        """
+        取消运行中的任务（杀死进程组 + 标记为 cancelled）。
+        
+        Args:
+            task_id: 任务 ID
+        
+        Returns:
+            True 如果取消成功
+        """
+        result = _get_task(task_id)
+        if not result or result.status not in ("pending", "running"):
+            return False
+        
+        # 标记为 cancelled
+        _update_task_status(task_id, "cancelled")
+        
+        # 杀死进程组
+        if result.pid:
+            self._kill_process_group(result)
+        
+        return True
+    
+    def force_cleanup(self, task_id: str) -> Dict[str, Any]:
+        """
+        强制清理任务（无论状态如何）。
+        
+        用于异常情况下的 cleanup，例如：
+        - 任务卡住但状态未更新
+        - 需要手动回收资源
+        
+        Args:
+            task_id: 任务 ID
+        
+        Returns:
+            清理结果字典
+        """
+        result = _get_task(task_id)
+        
+        if not result:
+            return {
+                "success": False,
+                "reason": "task_not_found",
+                "task_id": task_id,
+            }
+        
+        # 如果还在运行，先取消
+        if result.status == "running":
+            self.cancel(task_id)
+            result = _get_task(task_id)  # 重新加载
+        
+        # 如果还不是终端状态，标记为 failed
+        if result.status not in TERMINAL_STATES:
+            _update_task_status(
+                task_id, "failed",
+                error="Force cleaned: task was not in terminal state",
+            )
+            result = _get_task(task_id)
+        
+        # 执行 cleanup
+        self.cleanup(task_id, kill_process=True)
+        
+        return {
+            "success": True,
+            "task_id": task_id,
+            "final_status": result.status,
+            "cleanup_status": result.cleanup_status,
+            "cleanup_metadata": result.cleanup_metadata,
+        }
 
 
 # ============ 便捷函数 ============

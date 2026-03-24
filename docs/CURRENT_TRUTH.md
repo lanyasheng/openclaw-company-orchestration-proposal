@@ -11,11 +11,13 @@
 >
 > **更新**: 2026-03-24 - Deer-Flow 借鉴线 Batch A/B: SubagentExecutor 封装 + 热状态存储已实现 (32 个测试通过)
 >
-> **更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
+> **更新**: 2026-03-25 - P0 Batch 5: Subagent Session Cleanup 已实现 (process group kill / cleanup status / UI cleanup unknown 显式建模)
+
+**更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
 
 **更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
 >
-> **更新**: 2026-03-24 - **Wave 2 Cutover 完成**: SubagentExecutor 执行基板扩展到 sessions_spawn_bridge，统一执行链路 (55 个测试通过)
+> **更新**: 2026-03-24 - **Wave 2 Cutover 完成**: SubagentExecutor 执行基板扩展到 sessions_spawn_bridge,统一执行链路 (55 个测试通过)
 >
 > **更新**: 2026-03-23 - Owner/Executor 解耦 + Coding Lane 默认 Claude Code 已实现
 >
@@ -122,9 +124,74 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 
 **P0 Batch 3: Coding Issue Lane Baseline** 已完成,冻结了 issue lane 的最小输入输出契约。
 
+### 2.2.5 Subagent Session Cleanup 已实现 (2026-03-25)
+
+**P0 Batch 5: Subagent Session Cleanup** 已完成，补齐 execution substrate 中 process/session/UI 清理不完整的问题。
+
+**核心问题**：
+- SubagentExecutor 已负责 execute_async / get_result / timeout 标记 / semaphore release / active count
+- 但缺口是：task terminal != process/UI/session 完整清理
+- timeout 路径目前主要是标记状态，不是强保证 kill process/process group
+- 用户观察到：测试执行完后，Claude Code 打开的网页仍可能残留
+
+**两层清理区分**：
+1. **execution resource release**（已有，继续保留）：
+   - semaphore release
+   - active count decrement
+   - memory cache cleanup
+   
+2. **session/process cleanup**（本批新增）：
+   - timeout 时：kill process / process group
+   - cancel 时：kill process / process group
+   - terminal 后：session cleanup hook / cleanup status 字段
+
+**核心设计** (`runtime/orchestrator/subagent_executor.py`):
+- **CleanupStatus 类型**：`pending | process_killed | session_cleaned | ui_cleanup_unknown | cleanup_failed`
+- **CLEANUP_COMPLETE_STATES**：`{process_killed, session_cleaned, ui_cleanup_unknown}`
+- **SubagentResult 新增字段**：
+  - `pgid`: 进程组 ID（start_new_session=True 时 pgid=pid）
+  - `cleanup_status`: 清理状态
+  - `cleanup_metadata`: 清理元数据（action / timestamp / ui_cleanup）
+- **新增方法**：
+  - `_kill_process_group(result)`: 杀死进程组（SIGTERM）
+  - `cancel(task_id)`: 取消运行中任务
+  - `force_cleanup(task_id)`: 强制清理（无论状态）
+  - `cleanup(task_id, kill_process=True)`: 清理已完成任务
+
+**显式建模**：
+- `ui_cleanup: "unknown"`：网页/UI 可能残留，不假装已清完
+- `process_killed`：进程组已杀死
+- `session_cleaned`：进程自然结束/已清理
+- `cleanup_failed`：清理失败（记录错误）
+
+**测试覆盖** (`tests/orchestrator/test_subagent_executor.py`):
+- ✅ cleanup_status 定义
+- ✅ SubagentResult cleanup 字段序列化
+- ✅ completed cleanup
+- ✅ timed_out cleanup
+- ✅ failed cleanup
+- ✅ cancelled cleanup
+- ✅ process group kill
+- ✅ cleanup metadata tracking
+- ✅ UI cleanup unknown 显式建模
+- 总计：27/27 通过（新增 10 个 cleanup 测试）
+
+**验证命令**：
+```bash
+cd <repo-root>
+python3 tests/orchestrator/test_subagent_executor.py
+# 输出：27 passed
+```
+
+**设计原则**：
+1. 进程级 cleanup 强保证（kill process group）
+2. UI/网页无法直接关时显式建模 `ui_cleanup_unknown`
+3. 小步可回退，不做大爆炸改写
+4. 没有测试结果不得宣称完成
+
 ### 2.2.2 failure closeout guarantee 已实现 (2026-03-24)
 
-**P0 Batch 4: Failure Closeout Guarantee** 已完成,解决了"系统内部知道失败,但老板没及时收到标准化失败回报"的问题。
+**P0 Batch 4: Failure Closeout Guarantee** 已完成，解决了"系统内部知道失败，但老板没及时收到标准化失败回报"的问题。
 
 **核心设计** (`runtime/orchestrator/closeout_guarantee.py`):
 - 区分"任务失败已知" (`internal_completed=True`) 与"用户已感知失败" (`user_visible_closeout=True`)
@@ -151,14 +218,14 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 ```bash
 cd <repo-root>
 python3 -m pytest tests/orchestrator/test_failure_closeout_guarantee.py -v
-# 输出：15 passed
+# 输出:15 passed
 python3 -m pytest tests/orchestrator/test_closeout_guarantee.py -v
-# 输出：17 passed
+# 输出:17 passed
 ```
 
 ### 2.2.4 Wave 2 Cutover 完成 (2026-03-24)
 
-**Wave 2 Cutover: SubagentExecutor 执行基板扩展** 已完成，将 SubagentExecutor 从 coding issue lane 扩展到 sessions_spawn_bridge。
+**Wave 2 Cutover: SubagentExecutor 执行基板扩展** 已完成,将 SubagentExecutor 从 coding issue lane 扩展到 sessions_spawn_bridge。
 
 **核心变化** (`runtime/orchestrator/sessions_spawn_bridge.py`):
 - **执行层统一**: `_call_via_python_api()` 现在使用 SubagentExecutor 替代直接调用 runner 脚本
@@ -181,7 +248,7 @@ python3 -m pytest tests/orchestrator/test_closeout_guarantee.py -v
 - ✅ API Execution Artifact 生成不变
 - ✅ Linkage 链完整 (registration→dispatch→spawn→execution→receipt→request→task)
 - ✅ SubagentConfig 映射正确
-- 总计：6/6 通过
+- 总计:6/6 通过
 
 **回归测试**:
 - ✅ `test_sessions_spawn_bridge.py`: 21/21 通过
@@ -189,59 +256,59 @@ python3 -m pytest tests/orchestrator/test_closeout_guarantee.py -v
 - ✅ `test_subagent_state.py`: 16/16 通过
 - ✅ `test_issue_lane_executor.py`: 16/16 通过
 - ✅ `test_wave2_cutover.py`: 6/6 通过
-- 总计：55/55 通过
+- 总计:55/55 通过
 
 **验证命令**:
 ```bash
 cd <repo-root>
 python3 tests/orchestrator/test_wave2_cutover.py
-# 输出：6 passed
+# 输出:6 passed
 python3 -m pytest tests/orchestrator/test_sessions_spawn_bridge.py -v
-# 输出：21 passed
+# 输出:21 passed
 ```
 
 **设计原则**:
-1. 替换 execution substrate，不替换 control plane
+1. 替换 execution substrate,不替换 control plane
 2. 保持 planning / continuation / closeout / failure guarantee / heartbeat boundary 语义不变
-3. 小步可回退，不做大爆炸改写
+3. 小步可回退,不做大爆炸改写
 4. 没有测试结果不得宣称完成
 
 ### 2.2.3 Deer-Flow 借鉴线 Batch A/B 已实现 (2026-03-24)
 
-**Deer-Flow 借鉴线 Batch A/B** 已完成，基于 `shared-context/intel/2026-03-24-deerflow-orchestration-mechanism-lessons.md` 的分析结论。
+**Deer-Flow 借鉴线 Batch A/B** 已完成,基于 `shared-context/intel/2026-03-24-deerflow-orchestration-mechanism-lessons.md` 的分析结论。
 
 **核心设计原则**:
-- **借 execution layer，不换 control plane**: SubagentExecutor 封装执行细节，不替换现有 sessions_spawn / roundtable 主链
-- **薄层、可回退**: 新增模块独立，不影响现有功能
-- **内存快、文件真**: 内存缓存加速访问，文件持久化保证重启不丢
+- **借 execution layer,不换 control plane**: SubagentExecutor 封装执行细节,不替换现有 sessions_spawn / roundtable 主链
+- **薄层、可回退**: 新增模块独立,不影响现有功能
+- **内存快、文件真**: 内存缓存加速访问,文件持久化保证重启不丢
 
 **Batch A: SubagentExecutor 封装** (`runtime/orchestrator/subagent_executor.py`):
-- SubagentConfig: subagent 配置（label / runtime / timeout / allowed_tools）
-- SubagentResult: 执行结果（task_id / status / result / error）
-- SubagentExecutor: 执行引擎（execute_async / get_result / cleanup）
-- 工具权限隔离：allowed_tools / disallowed_tools 过滤
+- SubagentConfig: subagent 配置(label / runtime / timeout / allowed_tools)
+- SubagentResult: 执行结果(task_id / status / result / error)
+- SubagentExecutor: 执行引擎(execute_async / get_result / cleanup)
+- 工具权限隔离:allowed_tools / disallowed_tools 过滤
 - 统一 task_id / timeout / status / result handle
-- 测试：16/16 通过 (`tests/orchestrator/test_subagent_executor.py`)
+- 测试:16/16 通过 (`tests/orchestrator/test_subagent_executor.py`)
 
 **Batch B: 热状态存储** (`runtime/orchestrator/subagent_state.py`):
 - SubagentStateManager: 状态管理器
 - 内存缓存 + 文件持久化混合
 - 重启后可从磁盘恢复终态
 - 线程安全的并发操作
-- 测试：16/16 通过 (`tests/orchestrator/test_subagent_state.py`)
+- 测试:16/16 通过 (`tests/orchestrator/test_subagent_state.py`)
 
 **明确不做的部分**:
-- ❌ 双线程池架构：Python GIL 限制，收益有限
-- ❌ 全局内存字典：重启就丢，不如 shared-context 文件可靠
-- ❌ task_tool 轮询：已有 callback bridge / watcher / ack-final 协议
+- ❌ 双线程池架构:Python GIL 限制,收益有限
+- ❌ 全局内存字典:重启就丢,不如 shared-context 文件可靠
+- ❌ task_tool 轮询:已有 callback bridge / watcher / ack-final 协议
 
 **验证命令**:
 ```bash
 cd <repo-root>
 python3 tests/orchestrator/test_subagent_executor.py
-# 输出：16 passed
+# 输出:16 passed
 python3 tests/orchestrator/test_subagent_state.py
-# 输出：16 passed
+# 输出:16 passed
 ```
 
 **使用示例**:

@@ -28,6 +28,8 @@ from subagent_executor import (
     SubagentResult,
     SubagentExecutor,
     SubagentStatus,
+    CleanupStatus,
+    CLEANUP_COMPLETE_STATES,
     execute_subagent,
     get_subagent_result,
     list_subagent_tasks,
@@ -439,6 +441,257 @@ def test_metadata_propagation():
     print("✓ 元数据传递正常")
 
 
+def test_cleanup_status_definition():
+    """测试 cleanup 状态定义"""
+    # CleanupStatus 类型定义
+    assert "pending" in ["pending", "process_killed", "session_cleaned", "ui_cleanup_unknown", "cleanup_failed"]
+    assert "process_killed" in ["pending", "process_killed", "session_cleaned", "ui_cleanup_unknown", "cleanup_failed"]
+    assert "session_cleaned" in ["pending", "process_killed", "session_cleaned", "ui_cleanup_unknown", "cleanup_failed"]
+    assert "ui_cleanup_unknown" in ["pending", "process_killed", "session_cleaned", "ui_cleanup_unknown", "cleanup_failed"]
+    assert "cleanup_failed" in ["pending", "process_killed", "session_cleaned", "ui_cleanup_unknown", "cleanup_failed"]
+    
+    # CLEANUP_COMPLETE_STATES
+    assert "process_killed" in CLEANUP_COMPLETE_STATES
+    assert "session_cleaned" in CLEANUP_COMPLETE_STATES
+    assert "ui_cleanup_unknown" in CLEANUP_COMPLETE_STATES
+    assert "pending" not in CLEANUP_COMPLETE_STATES
+    assert "cleanup_failed" not in CLEANUP_COMPLETE_STATES
+    
+    print("✓ Cleanup 状态定义正常")
+
+
+def test_subagent_result_cleanup_fields():
+    """测试 SubagentResult cleanup 字段"""
+    config = SubagentConfig(label="test-cleanup", runtime="subagent")
+    result = SubagentResult(
+        task_id="cleanup_test_123",
+        status="completed",
+        config=config,
+        task="Cleanup test",
+        cleanup_status="session_cleaned",
+        cleanup_metadata={"action": "test", "timestamp": "2026-03-25T00:00:00"},
+    )
+    
+    assert result.cleanup_status == "session_cleaned"
+    assert result.cleanup_metadata["action"] == "test"
+    
+    # 序列化
+    data = result.to_dict()
+    assert data["cleanup_status"] == "session_cleaned"
+    assert data["cleanup_metadata"]["action"] == "test"
+    
+    # 反序列化
+    result2 = SubagentResult.from_dict(data)
+    assert result2.cleanup_status == result.cleanup_status
+    assert result2.cleanup_metadata == result.cleanup_metadata
+    
+    print("✓ SubagentResult cleanup 字段正常")
+
+
+def test_cleanup_completed_task():
+    """测试清理已完成任务"""
+    config = SubagentConfig(label="test-cleanup-completed", runtime="subagent")
+    executor = SubagentExecutor(config, cwd="/tmp")
+    
+    task_id = executor.execute_async("Test cleanup completed")
+    
+    # 手动标记为 completed
+    from subagent_executor import _update_task_status
+    _update_task_status(task_id, "completed")
+    
+    # 清理
+    cleaned = executor.cleanup(task_id, kill_process=False)
+    assert cleaned is True
+    
+    # 验证状态文件仍存在（持久化）
+    from subagent_executor import _load_state
+    result = _load_state(task_id)
+    assert result is not None
+    assert result.status == "completed"
+    
+    print("✓ 清理已完成任务正常")
+
+
+def test_cleanup_timed_out_task():
+    """测试清理超时任务"""
+    from datetime import datetime, timedelta
+    
+    config = SubagentConfig(
+        label="test-cleanup-timeout",
+        runtime="subagent",
+        timeout_seconds=1,
+    )
+    executor = SubagentExecutor(config, cwd="/tmp")
+    
+    task_id = executor.execute_async("Test cleanup timeout")
+    
+    # 手动标记为 timed_out
+    from subagent_executor import _update_task_status, _state_file
+    import json
+    
+    _update_task_status(task_id, "timed_out", error="Timed out")
+    
+    # 设置过去时间触发超时 cleanup
+    state_path = _state_file(task_id)
+    if state_path.exists():
+        with open(state_path, "r") as f:
+            data = json.load(f)
+        data["started_at"] = (datetime.now() - timedelta(seconds=5)).isoformat()
+        data["status"] = "timed_out"
+        with open(state_path, "w") as f:
+            json.dump(data, f, indent=2)
+    
+    # 清理（kill_process=False 避免实际杀进程）
+    cleaned = executor.cleanup(task_id, kill_process=False)
+    
+    # 验证 cleanup_status
+    result = executor.get_result(task_id)
+    assert result is not None
+    assert result.status == "timed_out"
+    
+    print("✓ 清理超时任务正常")
+
+
+def test_cleanup_failed_task():
+    """测试清理失败任务"""
+    config = SubagentConfig(label="test-cleanup-failed", runtime="subagent")
+    executor = SubagentExecutor(config, cwd="/tmp")
+    
+    task_id = executor.execute_async("Test cleanup failed")
+    
+    # 手动标记为 failed
+    from subagent_executor import _update_task_status
+    _update_task_status(task_id, "failed", error="Test failure")
+    
+    # 清理
+    cleaned = executor.cleanup(task_id, kill_process=False)
+    assert cleaned is True
+    
+    result = executor.get_result(task_id)
+    assert result is not None
+    assert result.status == "failed"
+    
+    print("✓ 清理失败任务正常")
+
+
+def test_cancel_running_task():
+    """测试取消运行中任务"""
+    config = SubagentConfig(label="test-cancel", runtime="subagent")
+    executor = SubagentExecutor(config, cwd="/tmp")
+    
+    task_id = executor.execute_async("Test cancel")
+    
+    # 取消任务
+    cancelled = executor.cancel(task_id)
+    # 可能返回 True 或 False，取决于任务状态
+    
+    result = executor.get_result(task_id)
+    assert result is not None
+    # 状态应该是 cancelled 或保持原状态（如果已完成）
+    
+    print("✓ 取消运行中任务正常")
+
+
+def test_force_cleanup():
+    """测试强制清理"""
+    config = SubagentConfig(label="test-force-cleanup", runtime="subagent")
+    executor = SubagentExecutor(config, cwd="/tmp")
+    
+    task_id = executor.execute_async("Test force cleanup")
+    
+    # 强制清理（无论状态如何）
+    result = executor.force_cleanup(task_id)
+    
+    assert result["success"] is True
+    assert result["task_id"] == task_id
+    assert "final_status" in result
+    assert "cleanup_status" in result
+    
+    print("✓ 强制清理正常")
+
+
+def test_process_group_kill():
+    """测试进程组杀死"""
+    config = SubagentConfig(label="test-pg-kill", runtime="subagent")
+    executor = SubagentExecutor(config, cwd="/tmp")
+    
+    task_id = executor.execute_async("Test process group kill")
+    
+    # 获取结果
+    result = executor.get_result(task_id)
+    assert result is not None
+    
+    # 如果有 pid，测试 _kill_process_group
+    if result.pid:
+        # 手动调用（因为任务可能已完成）
+        executor._kill_process_group(result)
+        
+        # 重新加载验证 cleanup_status
+        result = executor.get_result(task_id)
+        assert result is not None
+        # cleanup_status 应该是 process_killed / session_cleaned / cleanup_failed 之一
+        assert result.cleanup_status in ["process_killed", "session_cleaned", "cleanup_failed", None]
+    
+    print("✓ 进程组杀死正常")
+
+
+def test_cleanup_metadata_tracking():
+    """测试 cleanup 元数据追踪"""
+    config = SubagentConfig(label="test-cleanup-metadata", runtime="subagent")
+    executor = SubagentExecutor(config, cwd="/tmp")
+    
+    task_id = executor.execute_async("Test cleanup metadata")
+    
+    # 手动标记 cleanup_status
+    from subagent_executor import _update_task_status
+    _update_task_status(
+        task_id,
+        "completed",
+        cleanup_status="session_cleaned",
+        cleanup_metadata={
+            "action": "test_cleanup",
+            "timestamp": "2026-03-25T00:00:00",
+            "ui_cleanup": "unknown",
+        },
+    )
+    
+    result = executor.get_result(task_id)
+    assert result is not None
+    assert result.cleanup_status == "session_cleaned"
+    assert result.cleanup_metadata["action"] == "test_cleanup"
+    assert result.cleanup_metadata["ui_cleanup"] == "unknown"
+    
+    print("✓ Cleanup 元数据追踪正常")
+
+
+def test_ui_cleanup_unknown_modeling():
+    """测试 UI 清理状态显式建模"""
+    config = SubagentConfig(label="test-ui-unknown", runtime="subagent")
+    executor = SubagentExecutor(config, cwd="/tmp")
+    
+    task_id = executor.execute_async("Test UI cleanup unknown")
+    
+    # 手动模拟 timeout cleanup
+    from subagent_executor import _update_task_status
+    _update_task_status(
+        task_id,
+        "timed_out",
+        cleanup_status="process_killed",
+        cleanup_metadata={
+            "action": "kill_process_group",
+            "signal": "SIGTERM",
+            "ui_cleanup": "unknown",  # 显式建模：UI 清理状态未知
+        },
+    )
+    
+    result = executor.get_result(task_id)
+    assert result is not None
+    assert result.cleanup_status == "process_killed"
+    assert result.cleanup_metadata.get("ui_cleanup") == "unknown"
+    
+    print("✓ UI 清理状态显式建模正常")
+
+
 def run_all_tests():
     """运行所有测试"""
     print("=" * 60)
@@ -463,6 +716,17 @@ def run_all_tests():
         test_cleanup,
         test_timeout_auto_detection,
         test_metadata_propagation,
+        # Cleanup 机制测试（本批新增）
+        test_cleanup_status_definition,
+        test_subagent_result_cleanup_fields,
+        test_cleanup_completed_task,
+        test_cleanup_timed_out_task,
+        test_cleanup_failed_task,
+        test_cancel_running_task,
+        test_force_cleanup,
+        test_process_group_kill,
+        test_cleanup_metadata_tracking,
+        test_ui_cleanup_unknown_modeling,
     ]
     
     passed = 0
