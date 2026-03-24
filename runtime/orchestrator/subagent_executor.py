@@ -62,6 +62,37 @@ __all__ = [
 
 EXECUTOR_VERSION = "subagent_executor_v1"
 
+# ============ 全局并发控制（防 fork 炸弹） ============
+
+MAX_CONCURRENT_SUBAGENTS = int(os.environ.get("OPENCLAW_MAX_CONCURRENT_SUBAGENTS", "15"))
+MAX_SPAWN_DEPTH = int(os.environ.get("OPENCLAW_MAX_SPAWN_DEPTH", "2"))
+SPAWN_DEPTH_ENV_KEY = "OPENCLAW_SPAWN_DEPTH"
+
+_global_semaphore = threading.Semaphore(MAX_CONCURRENT_SUBAGENTS)
+_active_subagent_count = 0
+_active_subagent_count_lock = threading.Lock()
+
+
+def _get_current_spawn_depth() -> int:
+    """读取当前递归 spawn 深度（从环境变量）"""
+    try:
+        return int(os.environ.get(SPAWN_DEPTH_ENV_KEY, "0"))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _count_system_claude_processes() -> int:
+    """统计系统中活跃的 claude 进程数（防止跨 executor 实例的进程累积）"""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-cf", "claude"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return int(result.stdout.strip()) if result.returncode == 0 else 0
+    except Exception:
+        return 0
+
+
 # ============ 状态定义 ============
 
 SubagentStatus = Literal["pending", "running", "completed", "failed", "timed_out", "cancelled"]
@@ -354,48 +385,75 @@ class SubagentExecutor:
         """
         异步启动 subagent。
         
-        Args:
-            task: 任务描述
-            task_id: 任务 ID（可选，默认自动生成）
-        
-        Returns:
-            task_id: 任务 ID（启动即返回）
+        三层防护:
+        1. 递归深度检测 (OPENCLAW_SPAWN_DEPTH > MAX_SPAWN_DEPTH → 拒绝)
+        2. 系统级进程数熔断 (pgrep claude > MAX_CONCURRENT_SUBAGENTS → 拒绝)
+        3. 进程内信号量 (跨线程并发保护)
         """
-        # 生成 task_id
         if not task_id:
             task_id = f"task_{uuid.uuid4().hex[:12]}"
         
-        # 创建初始状态
+        depth = _get_current_spawn_depth()
+        if depth >= MAX_SPAWN_DEPTH:
+            result = SubagentResult(
+                task_id=task_id, status="failed", config=self.config, task=task,
+                error=(f"Spawn depth {depth} >= MAX_SPAWN_DEPTH {MAX_SPAWN_DEPTH}. "
+                       f"Recursive fork bomb prevented."),
+                metadata={"executor_version": EXECUTOR_VERSION,
+                          "rejected_reason": "spawn_depth_exceeded"},
+            )
+            _register_task(result)
+            return task_id
+        
+        system_count = _count_system_claude_processes()
+        if system_count >= MAX_CONCURRENT_SUBAGENTS:
+            result = SubagentResult(
+                task_id=task_id, status="failed", config=self.config, task=task,
+                error=(f"System claude process count {system_count} >= limit "
+                       f"{MAX_CONCURRENT_SUBAGENTS}. Global circuit breaker triggered."),
+                metadata={"executor_version": EXECUTOR_VERSION,
+                          "rejected_reason": "system_overload"},
+            )
+            _register_task(result)
+            return task_id
+        
+        acquired = _global_semaphore.acquire(blocking=False)
+        if not acquired:
+            result = SubagentResult(
+                task_id=task_id, status="failed", config=self.config, task=task,
+                error=(f"Concurrency limit reached (max={MAX_CONCURRENT_SUBAGENTS}). "
+                       f"Try again later."),
+                metadata={"executor_version": EXECUTOR_VERSION,
+                          "rejected_reason": "concurrency_limit"},
+            )
+            _register_task(result)
+            return task_id
+        
+        with _active_subagent_count_lock:
+            global _active_subagent_count
+            _active_subagent_count += 1
+        
         result = SubagentResult(
-            task_id=task_id,
-            status="pending",
-            config=self.config,
-            task=task,
+            task_id=task_id, status="pending", config=self.config, task=task,
             metadata={
                 "executor_version": EXECUTOR_VERSION,
                 "allowed_tools": self.allowed_tools,
+                "spawn_depth": depth,
             },
         )
-        
-        # 注册任务
         _register_task(result)
-        
-        # 启动 subagent 进程
         self._start_subagent_process(task_id, task)
         
         return task_id
     
     def _start_subagent_process(self, task_id: str, task: str):
         """
-        启动 subagent 进程。
-        
-        当前实现：调用 subagent runner 脚本
+        启动 subagent 进程，注入 OPENCLAW_SPAWN_DEPTH 环境变量。
+        失败时释放全局信号量。
         """
-        # 构建命令
         runner_script = Path(self.cwd) / "scripts" / "run_subagent_claude_v1.sh"
         
         if not runner_script.exists():
-            # 回退到直接调用 Python
             cmd = [
                 sys.executable, "-c",
                 f"print('Simulated subagent execution for task: {task}')"
@@ -407,29 +465,32 @@ class SubagentExecutor:
                 self.config.label,
             ]
         
-        # 启动进程（非阻塞）
+        child_env = os.environ.copy()
+        current_depth = _get_current_spawn_depth()
+        child_env[SPAWN_DEPTH_ENV_KEY] = str(current_depth + 1)
+        
         try:
             process = subprocess.Popen(
                 cmd,
                 cwd=self.cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                start_new_session=True,  # 后台运行
+                start_new_session=True,
+                env=child_env,
             )
             
-            # 更新状态
             _update_task_status(
-                task_id,
-                "running",
-                pid=process.pid,
-                metadata={"process_started": True},
+                task_id, "running", pid=process.pid,
+                metadata={"process_started": True, "spawn_depth": current_depth + 1},
             )
             
         except Exception as e:
-            # 启动失败
+            _global_semaphore.release()
+            with _active_subagent_count_lock:
+                global _active_subagent_count
+                _active_subagent_count -= 1
             _update_task_status(
-                task_id,
-                "failed",
+                task_id, "failed",
                 error=f"Failed to start subagent process: {str(e)}",
             )
     
