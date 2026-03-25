@@ -97,7 +97,8 @@ def sync_callback_to_workflow_state(
 
     try:
         ws = load_workflow_state(path)
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to load workflow state from %s: %s", path, e)
         return False
 
     mapped_status = _STATUS_MAP_FROM_STATE_MACHINE.get(status, status)
@@ -135,6 +136,7 @@ def find_active_workflow_state(search_dir: str | Path = ".") -> Optional[Path]:
             ws = load_workflow_state(c)
             if ws.status in ("pending", "running", "gate_blocked"):
                 return c
-        except Exception:
+        except Exception as e:
+            logger.debug("Skipping %s: %s", c, e)
             continue
     return None

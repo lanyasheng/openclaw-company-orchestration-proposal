@@ -526,8 +526,8 @@ class SubagentExecutor:
             process = subprocess.Popen(
                 cmd,
                 cwd=self.cwd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True,
                 env=child_env,
             )

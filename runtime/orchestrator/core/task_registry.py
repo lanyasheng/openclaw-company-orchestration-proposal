@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-task_registry.py — Unified Task Registry
+task_registry.py — Structured Task Registry (core layer)
 
-统一任务注册表，跟踪所有任务的注册、状态和依赖关系。
+Structured in-memory task registry for batch-aggregator and
+orchestrator rule-chain consumption. This is the **core layer**
+registry used by the callback-driven path (Layer 1).
 
-核心功能：
-- 任务注册与查询
-- 批次管理
-- 依赖关系追踪
-- 状态持久化
+Boundary note:
+  - THIS module (core/task_registry.py): in-memory TaskRegistry with
+    dataclass-based TaskRegistration, used by orchestrator.py and
+    batch_aggregator.py for structured fan-in / rule evaluation.
+  - task_registration.py (top-level): JSONL-based ledger used by the
+    Continuation Kernel (Layer 2) for persistent registration records
+    and artifact linkage (registration_id → dispatch_id → ...).
+  Both coexist intentionally — they serve different layers.
 """
 
 from __future__ import annotations

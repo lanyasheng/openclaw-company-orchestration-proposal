@@ -179,11 +179,18 @@ def list_tasks(
     _ensure_state_dir()
     
     tasks = []
-    for task_file in STATE_DIR.glob("tsk_*.json"):
-        with open(task_file, "r") as f:
-            task = json.load(f)
-        
-        # 过滤
+    for task_file in STATE_DIR.glob("*.json"):
+        if task_file.name.startswith("batch-"):
+            continue
+        try:
+            with open(task_file, "r") as f:
+                task = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        if "task_id" not in task:
+            continue
+
         if batch_id is not None and task.get("batch_id") != batch_id:
             continue
         if state is not None and task.get("state") != state.value:

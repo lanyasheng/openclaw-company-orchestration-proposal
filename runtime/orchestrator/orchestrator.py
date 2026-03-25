@@ -273,8 +273,13 @@ class Orchestrator:
             ws_path = find_active_workflow_state()
             if ws_path:
                 sync_callback_to_workflow_state(ws_path, task_id, status, result)
-        except Exception:
+        except ImportError:
             pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to sync task %s to workflow_state: %s", task_id, e
+            )
 
 
 # ============ 内置决策规则 ============

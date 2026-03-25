@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-task_registration.py — Universal Task Registration Layer (v2)
+task_registration.py — Continuation Kernel Registration Ledger (Layer 2)
 
-目标：把 next_task_registration payload 变成真实可落盘的注册记录，
-并提供统一的 task registry / ledger 供 operator/main 消费。
+JSONL-based persistent registration ledger for the Continuation Kernel.
+Records registration → dispatch → spawn → receipt → callback linkage.
 
-核心概念：
-- TaskRegistrationRecord: 真实注册记录（可落盘）
-- TaskRegistry: 统一任务注册表（ledger）
-- registration_status: registered | skipped | blocked
-- truth_anchor: 稳定的 source linkage（source_task_id / source_batch_id / new_task_id）
-
-这是通用 kernel，不绑定任何特定场景。trading/channel 等场景可以 plug-in 使用。
+Boundary note:
+  - THIS module: JSONL ledger for Continuation Kernel artifact chain.
+    Used by auto_dispatch, spawn_closure, completion_receipt, etc.
+  - core/task_registry.py: in-memory structured registry for Layer 1
+    (callback-driven orchestrator rule chain / batch_aggregator).
+  Both coexist intentionally — they serve different layers.
 """
 
 from __future__ import annotations
