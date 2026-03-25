@@ -1,10 +1,14 @@
 """
-回调驱动编排器 v1
+OpenClaw 编排控制面
 
-模块：
-- state_machine: 任务状态机
+回调驱动核心:
+- state_machine: 任务状态机（per-task JSON）
 - batch_aggregator: Fan-in 汇总层
-- orchestrator: 回调驱动编排器
+- orchestrator: 规则链决策引擎
+
+DAG 工作流增强:
+- workflow_state / task_planner / batch_executor / batch_reviewer
+- workflow_graph (LangGraph) / workflow_loop (轮询降级)
 """
 
 from state_machine import (

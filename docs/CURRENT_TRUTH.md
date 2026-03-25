@@ -1,4 +1,4 @@
-## v2 Main Chain + LangGraph (2026-03-25)
+## 架构总览 (2026-03-25)
 
 ### 唯一入口
 
@@ -6,39 +6,33 @@
 python3 runtime/orchestrator/cli.py <command>
 ```
 
-### 唯一真值
-
-`workflow_state_<id>.json` — 所有工作流状态的单一文件。
-
-### 架构
+### 三层一体架构
 
 ```
 cli.py (唯一入口)
-  ├── plan → task_planner.py (DAG 验证 + 批次分解)
-  ├── run  → workflow_graph.py (LangGraph) 或 workflow_loop.py (降级)
-  │          ├── batch_executor.py → subagent_executor.py
-  │          ├── batch_reviewer.py (fan-in 评审)
-  │          └── workflow_state.py (状态读写)
-  ├── show → workflow_state.py (查看状态)
-  └── resume → 从 gate/中断处恢复
+  ├── DAG 工作流命令:
+  │   ├── plan → task_planner.py (DAG 验证 + 批次分解)
+  │   ├── run  → workflow_graph.py (LangGraph) 或 workflow_loop.py (降级)
+  │   │          ├── batch_executor.py → subagent_executor.py
+  │   │          ├── batch_reviewer.py (fan-in 评审)
+  │   │          └── workflow_state.py (状态读写)
+  │   ├── show → workflow_state.py (查看状态)
+  │   └── resume → 从 gate/中断处恢复
+  │
+  └── 回调驱动命令:
+      ├── status → state_machine.py (任务状态查询)
+      ├── batch-summary → batch_aggregator.py (批次汇总)
+      ├── decide → orchestrator.py (规则链决策)
+      └── list / stuck → 任务列举 / 卡住检测
 ```
 
-### 关键文件
-
-| 文件 | 职责 |
-|------|------|
-| `workflow_state.py` | 统一数据模型 + 读写 |
-| `workflow_graph.py` | LangGraph StateGraph (推荐引擎) |
-| `workflow_loop.py` | 轮询主循环 (降级引擎) |
-| `task_planner.py` | DAG 验证 + 拓扑排序 |
-| `batch_executor.py` | 并行 SubagentExecutor 派发 |
-| `batch_reviewer.py` | fan-in 评审 (all/any/majority) + 安全门控 |
+回调驱动核心（state_machine + batch_aggregator + orchestrator）和 DAG 工作流增强（workflow_state + task_planner + batch_executor + batch_reviewer）共享统一的执行基板（SubagentExecutor）和质量门控（completion_validator + auto_continue_trigger）。
 
 ### 测试
 
-781/781 全部通过 (含 34 个 v2 新增)。
+781/781 全部通过。
 
-> **详细操作指南**: [`docs/OPERATIONS.md`](OPERATIONS.md)
+> **详细操作指南**: [`docs/OPERATIONS.md`](OPERATIONS.md) · **README**: [`../README.md`](../README.md)
 
 ---
 

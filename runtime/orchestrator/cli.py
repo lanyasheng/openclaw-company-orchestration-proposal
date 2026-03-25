@@ -2,19 +2,19 @@
 """
 编排器 CLI — 唯一入口
 
-v2 命令 (推荐):
+DAG 工作流命令:
   orchestrator-cli plan <description> <config.json>   创建工作流
   orchestrator-cli run <state.json> [--workspace .]   运行工作流
   orchestrator-cli resume <state.json>                从中断处恢复
   orchestrator-cli show <state.json>                  查看工作流状态
 
-v1 命令 (兼容):
-  orchestrator-cli status <task_id>
-  orchestrator-cli batch-summary <batch_id>
-  orchestrator-cli decide <batch_id>
-  orchestrator-cli list [--state <state>]
-  orchestrator-cli stuck [--timeout <minutes>]
-  orchestrator-cli test
+回调驱动命令:
+  orchestrator-cli status <task_id>                   查询任务状态
+  orchestrator-cli batch-summary <batch_id>           查询批次汇总
+  orchestrator-cli decide <batch_id>                  对批次做决策
+  orchestrator-cli list [--state <state>]             列出任务
+  orchestrator-cli stuck [--timeout <minutes>]        检测卡住的批次
+  orchestrator-cli test                               运行内置测试
 """
 
 import json
@@ -311,7 +311,7 @@ def main():
     
     cmd = sys.argv[1]
 
-    # v2 commands
+    # DAG workflow commands
     if cmd == "plan":
         if len(sys.argv) < 4:
             print("Usage: orchestrator-cli plan <description> <config.json>")
@@ -345,7 +345,7 @@ def main():
         cmd_show(sys.argv[2])
         return
 
-    # v1 commands
+    # Callback-driven commands
     if cmd == "status":
         if len(sys.argv) < 3:
             print("Usage: orchestrator-cli status <task_id>")
