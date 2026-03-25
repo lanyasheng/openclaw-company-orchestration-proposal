@@ -486,8 +486,14 @@ Many teams ask: "Why not just use Temporal / LangGraph / a DAG engine as the bac
 | **Channel roundtable** | ✅ Minimum adapter | Generic channel onboarding |
 | **Control plane main chain** | ✅ In place | Registration → dispatch → execution → receipt → callback |
 | **Tests** | ✅ 468 passing | 100% pass rate |
-| **Auto-continue** | ⚠️ Safe semi-auto | Allowlist-based, condition-triggered, reversible |
-| **Git push auto-continue** | ⚠️ Not fully automatic | Internal simulation closed; real push executor pending |
+| **Validator (enforce mode)** | ✅ P0 enforced | Subtask completion validator in enforce mode (not audit-only) |
+| **Single-writer guard** | ✅ P0-4 implemented | Per truth-domain / batch-domain (not global repo lock) |
+| **Auto-continue trigger** | ✅ P0-4 implemented | Based on validator result + receipt status + writer conflict check |
+| **Auto-dispatch execution** | ✅ P0-5 cutover | Dispatch execution switched to SubagentExecutor |
+| **Parent-child / fan-in / closeout** | ✅ Batch-B integrated | Lineage + fan-in readiness + closeout glue integration |
+| **Planning→execution→closeout** | ✅ Batch-D integrated | Medium-granularity truth-domain integration |
+| **Execution substrate** | ✅ Extended | Issue lane + sessions_spawn_bridge + auto-dispatch |
+| **Git push auto-continue** | ⚠️ Not fully automatic | Internal simulation only |
 | **CLI integration** | ⚠️ Mock API call | OpenClaw CLI integration needs confirmation |
 | **Auto-trigger config** | ⚠️ Local JSON | Version control pending (see technical debt) |
 
@@ -498,8 +504,14 @@ Many teams ask: "Why not just use Temporal / LangGraph / a DAG engine as the bac
 | Trading continuation works | Real execution artifacts in `~/.openclaw/shared-context/` | ✅ Validated |
 | Control plane main chain | 468 tests passing, artifacts generated | ✅ Validated |
 | Auto-trigger consumption | Configurable guards, dedupe mechanism | ✅ Implemented |
+| Validator enforce mode | `completion_validator_rules.py` (mode=enforce) + integration tests | ✅ Implemented (2026-03-25) |
+| Single-writer per domain | `single_writer_guard.py` (file lock per truth-domain) | ✅ Implemented (2026-03-25) |
+| Auto-continue trigger | `auto_continue_trigger.py` + 10 tests | ✅ Implemented (2026-03-25) |
+| Auto-dispatch to SubagentExecutor | `auto_dispatch.py` + 12 integration tests | ✅ Implemented (2026-03-25) |
+| Parent-child / fan-in / closeout | `lineage.py` + `closeout_glue.py` + 6 integration tests | ✅ Implemented (2026-03-25) |
+| Planning→execution→closeout integration | `planning_execution_closeout_integration.py` + 11 tests | ✅ Implemented (2026-03-25) |
 | Full Git push auto-continue | Internal simulation only | ⚠️ Not fully closed |
-| Generic全自动无人续跑 | Not the design goal | ❌ Out of scope |
+| Generic 全自动无人续跑 | Not the design goal | ❌ Out of scope |
 
 | **Deer-Flow: SubagentExecutor** | ✅ Implemented | 16/16 tests passing (2026-03-24) |
 | **Deer-Flow: 热状态存储** | ✅ Implemented | 16/16 tests passing (2026-03-24) |
@@ -508,8 +520,6 @@ Many teams ask: "Why not just use Temporal / LangGraph / a DAG engine as the bac
 > **Further along than a proposal, but intentionally earlier than a fully general-purpose workflow platform.**
 >
 > **New architecture is live, not just planned:** SubagentExecutor + 热状态存储已实现并测试通过 (2026-03-24), but control plane remains OpenClaw-native. Deer-Flow patterns enter only at execution layer.
-
----
 
 ## Typical Scenarios
 

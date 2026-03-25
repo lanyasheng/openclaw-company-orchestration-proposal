@@ -1,4 +1,4 @@
-# CURRENT_TRUTH(2026-03-24)
+# CURRENT_TRUTH (2026-03-25)
 
 > **角色**: 📍 **当前真值唯一入口** - 了解"今天系统实际如何工作"从这里开始
 >
@@ -12,6 +12,29 @@
 > **更新**: 2026-03-24 - Deer-Flow 借鉴线 Batch A/B: SubagentExecutor 封装 + 热状态存储已实现 (32 个测试通过)
 >
 > **更新**: 2026-03-25 - P0 Batch 5: Subagent Session Cleanup 已实现 (process group kill / cleanup status / UI cleanup unknown 显式建模)
+
+---
+
+## P0/P0.5 关键批次摘要 (截至 2026-03-25)
+
+**本批已落地的关键节点:**
+- ✅ **P0: Validator enforce cutover** (`67b8b8e`): Validator 从 audit-only 切换到 enforce 模式
+- ✅ **P0 micro-slice 01: Lineage** (`b42affb`): Lineage 数据结构 + 最小接线
+- ✅ **P0 micro-slice 02: Fan-in readiness** (`7459206`): Fan-in readiness check 最小实现
+- ✅ **P0 micro-slice 03: Closeout glue** (`d8c58b4`): Closeout glue core 最小实现
+- ✅ **P0 micro-slice 04: Validator whitelist tightening** (`12592c5`): 白名单精细化 (前缀匹配)
+- ✅ **P0-4: Auto-continue + single-writer** (`500eb6d`): 自动续批 + per-domain single-writer guard
+- ✅ **P0-5: Auto-dispatch execution** (`b0d2115` / `9f66e36`): Auto-dispatch 切换到 SubagentExecutor
+- ✅ **Batch-B: Parent-child/fan-in/closeout** (`677dfcf`): 三条能力整合
+- ✅ **Batch-D: Planning→execution→closeout** (`cee8eae`): 中等粒度 truth-domain 整合
+
+**后续重点:**
+- Execution substrate 已扩展到 issue lane / sessions_spawn_bridge / auto-dispatch
+- Validator 已 enforce (非 audit-only)，结果接入 receipt 主判定链
+- Single-writer 已修正为 per truth-domain / batch-domain (非全仓库一刀切)
+- Parent-child / fan-in / closeout / planning-execution-closeout 整合能力已具备
+
+---
 
 **更新**: 2026-03-25 - **Subtask Completion Validator v1 已实现 (audit-only)**: 完成 validator 核心模块 (`completion_validator.py` / `completion_validator_rules.py`) + 集成到 `completion_receipt.py` + 20 个测试通过。当前模式：`audit_only` (只记录不拦截)，支持 Through/Block/Gate 规则、白名单机制、audit 日志。
 

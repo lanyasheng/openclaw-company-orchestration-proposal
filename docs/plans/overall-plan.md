@@ -106,13 +106,24 @@
    - 禁止 heartbeat 写 terminal truth、直接 dispatch 下一跳、接管 gate。
    - **状态**: 已实现 (`runtime/orchestrator/heartbeat_boundary.py`)
 
-**P0 完成标准：** ✅ **全部完成 (2026-03-24)**
+**P0 完成标准：** ✅ **全部完成 (2026-03-25)**
 - 默认回答"为什么停"不再靠聊天猜；
 - 主链知道下一步该由谁接；
 - coding continuation 至少有一条窄 lane 可标准化；
 - heartbeat 不再被误当 workflow owner。
 - **Deer-Flow 借鉴线 Batch A/B/D 完成**: SubagentExecutor / SubagentStateManager / IssueLaneExecutor 全部落地，测试 48/48 通过
 - **Wave 2 Cutover 完成 (2026-03-24)**: SubagentExecutor 执行基板扩展到 sessions_spawn_bridge，统一执行链路，测试 55/55 通过
+
+**P0.5 关键批次 (2026-03-25 已落地):**
+- ✅ **P0: Validator enforce cutover** (`67b8b8e`): Validator 从 audit-only 切换到 enforce 模式，接入 receipt 主判定链
+- ✅ **P0 micro-slice 01: Lineage** (`b42affb`): Lineage 数据结构 + 最小接线 (parent-child tracking)
+- ✅ **P0 micro-slice 02: Fan-in readiness** (`7459206`): Fan-in readiness check 最小实现
+- ✅ **P0 micro-slice 03: Closeout glue** (`d8c58b4`): Closeout glue core 最小实现 (ExecutionToCloseoutGlue)
+- ✅ **P0 micro-slice 04: Validator whitelist tightening** (`12592c5`): 白名单从子串匹配改为前缀匹配，移除过宽的 list/check
+- ✅ **P0-4: Auto-continue trigger + single-writer guard** (`500eb6d`): 自动续批机制 + per-domain single-writer 文件锁
+- ✅ **P0-5: Auto-dispatch execution cutover** (`b0d2115` / `9f66e36`): Auto-dispatch 执行路径切换到 SubagentExecutor
+- ✅ **Batch-B: Parent-child / fan-in / closeout integration** (`677dfcf`): Lineage + fan-in readiness + closeout glue 整合
+- ✅ **Batch-D: Planning→execution→closeout integration** (`cee8eae`): 中等粒度 truth-domain 整合能力
 
 ### P1:DeepAgents / SWE-agent 叶子 pilot + planning->execution handoff 标准化 + stopped_because/next_step contract
 

@@ -486,9 +486,13 @@ api_execution_id (childSessionKey / runId)
 | **Channel roundtable** | ✅ 最小适配器 | 通用频道接入 |
 | **控制面主链** | ✅ 已打通 | 注册 → 派发 → 执行 → receipt → callback |
 | **测试** | ✅ 468 个通过 | 100% 通过率 |
-| **自动续推** | ⚠️ safe semi-auto | 白名单、条件触发、可回退 |
-| **Deer-Flow: SubagentExecutor** | ✅ 已实现 | 16/16 测试通过 (2026-03-24) |
-| **Deer-Flow: 热状态存储** | ✅ 已实现 | 16/16 测试通过 (2026-03-24) |
+| **Validator (enforce 模式)** | ✅ P0 已强制执行 | Subtask completion validator 处于 enforce 模式（非 audit-only） |
+| **Single-writer guard** | ✅ P0-4 已实现 | 按 truth-domain / batch-domain 隔离（非全仓库锁） |
+| **Auto-continue trigger** | ✅ P0-4 已实现 | 基于 validator 结果 + receipt 状态 + writer 冲突检查 |
+| **Auto-dispatch execution** | ✅ P0-5 已切换 | Dispatch 执行路径切换到 SubagentExecutor |
+| **Parent-child / fan-in / closeout** | ✅ Batch-B 已整合 | Lineage + fan-in readiness + closeout glue 整合 |
+| **Planning→execution→closeout** | ✅ Batch-D 已整合 | 中等粒度 truth-domain 整合 |
+| **Execution substrate** | ✅ 已扩展 | Issue lane + sessions_spawn_bridge + auto-dispatch |
 | **Git push 自动续推** | ⚠️ 尚未完全自动 | 内部模拟闭环已通；真实 push 执行器待实现 |
 | **CLI 集成** | ⚠️ Mock API call | OpenClaw CLI 集成需确认 |
 | **Auto-trigger 配置** | ⚠️ 本地 JSON | 版本控制待完成（见 technical debt） |
@@ -500,6 +504,12 @@ api_execution_id (childSessionKey / runId)
 | Trading continuation 有效 | `~/.openclaw/shared-context/` 中的真实执行 artifact | ✅ 已验证 |
 | 控制面主链打通 | 468 个测试通过，artifact 生成 | ✅ 已验证 |
 | Auto-trigger consumption | 可配置的 guards、去重机制 | ✅ 已实现 |
+| Validator enforce 模式 | `completion_validator_rules.py` (mode=enforce) + 集成测试 | ✅ 已实现 (2026-03-25) |
+| Single-writer per domain | `single_writer_guard.py` (按 truth-domain 文件锁) | ✅ 已实现 (2026-03-25) |
+| Auto-continue trigger | `auto_continue_trigger.py` + 10 个测试 | ✅ 已实现 (2026-03-25) |
+| Auto-dispatch to SubagentExecutor | `auto_dispatch.py` + 12 个集成测试 | ✅ 已实现 (2026-03-25) |
+| Parent-child / fan-in / closeout | `lineage.py` + `closeout_glue.py` + 6 个集成测试 | ✅ 已实现 (2026-03-25) |
+| Planning→execution→closeout 整合 | `planning_execution_closeout_integration.py` + 11 个测试 | ✅ 已实现 (2026-03-25) |
 | SubagentExecutor 封装 | `runtime/orchestrator/subagent_executor.py` + 16 测试 | ✅ 已实现 (2026-03-24) |
 | 热状态存储 | `runtime/orchestrator/subagent_state.py` + 16 测试 | ✅ 已实现 (2026-03-24) |
 | 完整 Git push 自动续推 | 仅内部模拟 | ⚠️ 未完全闭环 |
@@ -508,8 +518,8 @@ api_execution_id (childSessionKey / runId)
 ### 诚实总结
 
 > **已不只是方案稿，但也还没重到可以叫"通用 workflow 平台"。**
-
----
+>
+> **新架构已上线，不只是计划：** SubagentExecutor + 热状态存储已实现并测试通过 (2026-03-24)，但控制面仍由 OpenClaw 持有。Deer-Flow 模式只进入执行层。
 
 ## 典型场景
 
