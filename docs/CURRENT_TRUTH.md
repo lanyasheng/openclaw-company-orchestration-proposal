@@ -23,6 +23,8 @@
 
 **更新**: 2026-03-25 - **P0 极小切片 02: Fan-in Readiness Check 最小实现已实现**: 在 `lineage.py` 中新增 `check_fanin_readiness()` 函数，基于 batch_id 查询所有 child lineage + closeout 状态，判断是否 ready to fan-in。6 个测试全部通过 (无 lineage/全部完成/部分完成/incomplete closeout/最小接线/回归测试)。受影响文件：`lineage.py` (新增函数)、`test_lineage_fanin_readiness.py` (新增 6 测试)、`test_lineage.py` (清理 pytest warning)。详见 commit。
 
+**更新**: 2026-03-25 - **P0 极小切片 03: Closeout Glue Core 最小实现已实现**: 新增 `closeout_glue.py` 模块，提供 `ExecutionToCloseoutGlue` 类，把 completion receipt 的核心字段映射到 closeout 可消费的结构。映射字段：`execution_id` → `source_execution_id`, `receipt_status` → `dispatch_readiness`, `result_summary` → `summary`, `lineage_id` → `lineage_id`, `next_step/next_owner/stopped_because` → 从 continuation_contract 继承。14 个测试全部通过 (数据结构/映射逻辑/dispatch readiness 判定/summary 提取/continuation 字段提取/最小接线/回归测试)。受影响文件：`closeout_glue.py` (新增)、`test_closeout_glue.py` (新增 14 测试)。详见 commit。
+
 **更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
 
 **更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
