@@ -33,6 +33,8 @@
 
 **更新**: 2026-03-25 - **P0 极小切片 03: Closeout Glue Core 最小实现已实现**: 新增 `closeout_glue.py` 模块，提供 `ExecutionToCloseoutGlue` 类，把 completion receipt 的核心字段映射到 closeout 可消费的结构。映射字段：`execution_id` → `source_execution_id`, `receipt_status` → `dispatch_readiness`, `result_summary` → `summary`, `lineage_id` → `lineage_id`, `next_step/next_owner/stopped_because` → 从 continuation_contract 继承。14 个测试全部通过 (数据结构/映射逻辑/dispatch readiness 判定/summary 提取/continuation 字段提取/最小接线/回归测试)。受影响文件：`closeout_glue.py` (新增)、`test_closeout_glue.py` (新增 14 测试)。详见 commit。
 
+**更新**: 2026-03-25 - **Batch D: Planning → Execution → Closeout 中等粒度整合完成**: 新增 `planning_execution_closeout_integration.py` 模块，提供中等批次 truth-domain 整合能力。核心变更：(1) 新增 `PlanningExecutionCloseoutContext` 数据结构，统一包含 planning/execution/receipt/closeout/lineage/fanin 信息，(2) 新增 `IntegrationKernel` 类，负责从 execution_id 或 issue_id 构建整合上下文，(3) 实现 planning artifact → execution context 的统一映射，(4) 实现 receipt → closeout glue 输入的 richer mapping，(5) 整合 lineage / fan-in readiness / continuation contract 到统一结构，(6) 新增 11 个集成测试 (happy path / missing planning / partial execution / 向后兼容)。受影响文件：`planning_execution_closeout_integration.py` (新增)、`test_planning_execution_closeout_integration.py` (新增 11 测试)。详见 commit。
+
 **更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
 
 **更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
