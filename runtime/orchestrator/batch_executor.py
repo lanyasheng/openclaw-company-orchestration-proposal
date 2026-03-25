@@ -3,13 +3,16 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from typing import Optional
 
 from workflow_state import WorkflowState, BatchEntry, TaskEntry
-from subagent_executor import SubagentExecutor, SubagentConfig, TERMINAL_STATES
+from executor_interface import TaskExecutorBase, SubagentTaskExecutor, TaskResult
 
 __all__ = ["BatchExecutor"]
 
 logger = logging.getLogger(__name__)
+
+_TERMINAL_RESULT_STATUSES = {"completed", "failed", "timed_out"}
 
 
 def _iso_now() -> str:
@@ -17,21 +20,24 @@ def _iso_now() -> str:
 
 
 class BatchExecutor:
-    def __init__(self, workspace_dir: str, timeout_seconds: int = 900):
+    """Executes and monitors a batch of tasks using a pluggable executor.
+
+    By default uses ``SubagentTaskExecutor``.  Pass a custom
+    ``TaskExecutorBase`` via *executor_factory* to use a different backend
+    (HTTP workers, LangChain agents, etc.).
+    """
+
+    def __init__(
+        self,
+        workspace_dir: str,
+        timeout_seconds: int = 900,
+        executor: Optional[TaskExecutorBase] = None,
+    ):
         self.workspace_dir = workspace_dir
         self.timeout_seconds = timeout_seconds
-        self._executor: SubagentExecutor | None = None
-
-    @property
-    def executor(self) -> SubagentExecutor:
-        if self._executor is None:
-            config = SubagentConfig(
-                label="batch-task",
-                runtime="subagent",
-                timeout_seconds=self.timeout_seconds,
-            )
-            self._executor = SubagentExecutor(config=config, cwd=self.workspace_dir)
-        return self._executor
+        self._executor: TaskExecutorBase = executor or SubagentTaskExecutor(
+            workspace_dir, timeout_seconds
+        )
 
     def execute_batch(self, batch: BatchEntry, workflow_state: WorkflowState) -> None:
         batch.status = "running"
@@ -43,8 +49,10 @@ class BatchExecutor:
             task.started_at = _iso_now()
             self._sync_to_state_machine(task.task_id, batch.batch_id, "running")
             try:
-                sub_id = self.executor.execute_async(task.label)
-                task.subagent_task_id = sub_id
+                handle = self._executor.execute(
+                    task.task_id, task.label, {"batch_id": batch.batch_id}
+                )
+                task.subagent_task_id = handle
             except Exception as e:
                 task.status = "failed"
                 task.error = str(e)
@@ -53,6 +61,10 @@ class BatchExecutor:
 
     def monitor_batch(self, batch: BatchEntry) -> bool:
         if not any(t.status == "running" for t in batch.tasks):
+            pending_retries = [t for t in batch.tasks if t.status == "pending"]
+            if pending_retries:
+                self._redispatch_pending(pending_retries, batch)
+                return False
             if batch.status == "running":
                 batch.status = "completed"
                 batch.completed_at = _iso_now()
@@ -62,33 +74,25 @@ class BatchExecutor:
             if task.status != "running" or not task.subagent_task_id:
                 continue
             try:
-                result = self.executor.get_result(task.subagent_task_id)
+                tr: TaskResult = self._executor.poll(task.subagent_task_id)
             except Exception as e:
                 task.status = "failed"
                 task.error = str(e)
                 task.completed_at = _iso_now()
                 continue
-            if result is None:
-                continue
-            if result.status in TERMINAL_STATES:
-                if result.status == "completed":
-                    task.status = "completed"
-                    task.completed_at = _iso_now()
-                    task.result_summary = (
-                        result.result if isinstance(result.result, str)
-                        else json.dumps(result.result) if result.result else ""
-                    )
-                    task.callback_result = {
-                        "verdict": "PASS",
-                        "raw": result.result,
-                    }
-                    task.execution_metadata["completed_by"] = "subagent"
-                    task.execution_metadata["subagent_status"] = result.status
-                    self._sync_to_state_machine(
-                        task.task_id, batch.batch_id, "completed",
-                        result={"verdict": "PASS", "summary": task.result_summary},
-                    )
-                elif task.retry_count < task.max_retries:
+            if tr.status == "completed":
+                task.status = "completed"
+                task.completed_at = _iso_now()
+                task.result_summary = tr.output or ""
+                task.callback_result = {"verdict": "PASS", "raw": tr.output}
+                task.execution_metadata["completed_by"] = "executor"
+                task.execution_metadata["executor_status"] = tr.status
+                self._sync_to_state_machine(
+                    task.task_id, batch.batch_id, "completed",
+                    result={"verdict": "PASS", "summary": task.result_summary},
+                )
+            elif tr.status in ("failed", "timed_out"):
+                if task.retry_count < task.max_retries:
                     task.retry_count += 1
                     task.status = "pending"
                     task.error = None
@@ -96,23 +100,43 @@ class BatchExecutor:
                 else:
                     task.status = "failed"
                     task.completed_at = _iso_now()
-                    task.error = result.error or result.status
-                    task.callback_result = {
-                        "verdict": "FAIL",
-                        "error": task.error,
-                    }
-                    task.execution_metadata["completed_by"] = "subagent"
-                    task.execution_metadata["subagent_status"] = result.status
+                    task.error = tr.error or tr.status
+                    task.callback_result = {"verdict": "FAIL", "error": task.error}
+                    task.execution_metadata["completed_by"] = "executor"
+                    task.execution_metadata["executor_status"] = tr.status
                     self._sync_to_state_machine(
                         task.task_id, batch.batch_id, "failed",
                         result={"error": task.error},
                     )
 
-        all_done = all(t.status != "running" for t in batch.tasks)
+        has_running = any(t.status == "running" for t in batch.tasks)
+        has_pending = any(t.status == "pending" for t in batch.tasks)
+        if not has_running and has_pending:
+            self._redispatch_pending(
+                [t for t in batch.tasks if t.status == "pending"], batch
+            )
+            return False
+
+        all_done = not has_running and not has_pending
         if all_done and batch.status == "running":
             batch.status = "completed"
             batch.completed_at = _iso_now()
         return all_done
+
+    def _redispatch_pending(self, tasks: list[TaskEntry], batch: BatchEntry) -> None:
+        """Re-dispatch tasks that were reset to pending after a retry."""
+        for task in tasks:
+            task.status = "running"
+            task.started_at = _iso_now()
+            try:
+                handle = self._executor.execute(
+                    task.task_id, task.label, {"batch_id": batch.batch_id}
+                )
+                task.subagent_task_id = handle
+            except Exception as e:
+                task.status = "failed"
+                task.error = str(e)
+                task.completed_at = _iso_now()
 
     @staticmethod
     def _sync_to_state_machine(

@@ -266,10 +266,9 @@ def cmd_resume_workflow(state_path: str, workspace_dir: str = "."):
         engine = "LangGraph"
     except ImportError:
         from workflow_loop import WorkflowLoop
-        from workflow_state import load_workflow_state
         engine = "WorkflowLoop"
 
-    print(f"Resuming workflow from {state_path} ({engine})")
+    print(f"Resuming workflow from {state_path} ({engine}, workspace={workspace_dir})")
 
     if engine == "LangGraph":
         result = resume_workflow(state_path, workspace_dir)
@@ -343,9 +342,14 @@ def main():
 
     if cmd == "resume":
         if len(sys.argv) < 3:
-            print("Usage: orchestrator-cli resume <state.json>")
+            print("Usage: orchestrator-cli resume <state.json> [--workspace <dir>]")
             sys.exit(1)
-        cmd_resume_workflow(sys.argv[2])
+        workspace = "."
+        if "--workspace" in sys.argv:
+            idx = sys.argv.index("--workspace")
+            if idx + 1 < len(sys.argv):
+                workspace = sys.argv[idx + 1]
+        cmd_resume_workflow(sys.argv[2], workspace)
         return
 
     if cmd == "show":

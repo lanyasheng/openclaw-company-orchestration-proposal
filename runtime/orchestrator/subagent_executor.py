@@ -491,12 +491,24 @@ class SubagentExecutor:
 
         runner_script = Path(self.cwd) / "scripts" / "run_subagent_claude_v1.sh"
         
+        test_mode = os.environ.get("OPENCLAW_TEST_MODE", "0") == "1" or BYPASS_FORK_GUARD
+
         if not runner_script.exists():
-            test_mode = os.environ.get("OPENCLAW_TEST_MODE", "0") == "1" or BYPASS_FORK_GUARD
             if test_mode:
+                state_dir = str(SUBAGENT_STATE_DIR)
                 cmd = [
                     sys.executable, "-c",
-                    f"import json,sys; json.dump({{'status':'completed','result':'test_ok'}},sys.stdout)"
+                    (
+                        "import json,os,pathlib,sys;"
+                        f"d=pathlib.Path({state_dir!r});"
+                        "d.mkdir(parents=True,exist_ok=True);"
+                        f"f=d/'{task_id}.json';"
+                        "f.write_text(json.dumps("
+                        "{'status':'completed','result':'test_ok',"
+                        f"'task_id':'{task_id}','task':'',"
+                        "'config':{'label':'test','runtime':'subagent',"
+                        "'timeout_seconds':900}}))"
+                    ),
                 ]
             else:
                 _update_task_status(
@@ -517,11 +529,13 @@ class SubagentExecutor:
                 task,
                 self.config.label,
             ]
-        
+
         child_env = os.environ.copy()
         current_depth = _get_current_spawn_depth()
         child_env[SPAWN_DEPTH_ENV_KEY] = str(current_depth + 1)
-        
+        child_env["OPENCLAW_SUBAGENT_STATE_DIR"] = str(SUBAGENT_STATE_DIR)
+        child_env["OPENCLAW_TASK_ID"] = task_id
+
         try:
             process = subprocess.Popen(
                 cmd,
@@ -565,16 +579,60 @@ class SubagentExecutor:
     def _monitor_process_and_release(self, task_id: str, process):
         """
         监控子进程结束，释放信号量。
-        在进程结束时自动标记 cleanup_status。
-        在非 bypass 模式下运行。
+        在进程结束时根据退出码和状态文件推断终端态。
+
+        终端态判定优先级：
+        1. 子进程写入的状态文件（runner 或 test-mode 脚本负责写）
+        2. 退出码 0 → completed, 非 0 → failed
         """
         try:
-            exit_code = process.wait()  # 阻塞直到进程结束
-            
-            # 进程结束时，标记 cleanup_status（如果还未标记）
+            exit_code = process.wait()
+
             result = _get_task(task_id)
-            if result and result.cleanup_status is None:
-                # 进程正常结束，标记为 session_cleaned
+            if result is None:
+                return
+
+            persisted = _load_state(task_id)
+            if persisted and persisted.status in TERMINAL_STATES:
+                if result.status not in TERMINAL_STATES:
+                    _update_task_status(
+                        task_id,
+                        persisted.status,
+                        result=persisted.result,
+                        error=persisted.error,
+                        cleanup_status="session_cleaned",
+                        cleanup_metadata={
+                            "action": "process_exited_state_file",
+                            "exit_code": exit_code,
+                            "timestamp": _iso_now(),
+                        },
+                    )
+                return
+
+            if result.status not in TERMINAL_STATES:
+                if exit_code == 0:
+                    _update_task_status(
+                        task_id, "completed",
+                        result="process exited successfully",
+                        cleanup_status="session_cleaned",
+                        cleanup_metadata={
+                            "action": "process_exited_zero",
+                            "exit_code": 0,
+                            "timestamp": _iso_now(),
+                        },
+                    )
+                else:
+                    _update_task_status(
+                        task_id, "failed",
+                        error=f"process exited with code {exit_code}",
+                        cleanup_status="session_cleaned",
+                        cleanup_metadata={
+                            "action": "process_exited_nonzero",
+                            "exit_code": exit_code,
+                            "timestamp": _iso_now(),
+                        },
+                    )
+            elif result.cleanup_status is None:
                 _update_task_status(
                     task_id,
                     result.status,
@@ -583,13 +641,11 @@ class SubagentExecutor:
                         "action": "process_exited_naturally",
                         "exit_code": exit_code,
                         "timestamp": _iso_now(),
-                        "ui_cleanup": "unknown",  # 显式建模：UI 清理状态未知
                     },
                 )
         except Exception:
             pass
         finally:
-            # 释放信号量
             _global_semaphore.release()
             with _semaphore_holders_lock:
                 _semaphore_holders.pop(task_id, None)
