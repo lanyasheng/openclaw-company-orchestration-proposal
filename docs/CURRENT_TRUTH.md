@@ -6,31 +6,32 @@
 python3 runtime/orchestrator/cli.py <command>
 ```
 
-### 三层一体架构
+### 两条编排路径（共享执行基板）
 
 ```
 cli.py (唯一入口)
-  ├── DAG 工作流命令:
-  │   ├── plan → task_planner.py (DAG 验证 + 批次分解)
+  │
+  ├── DAG 工作流路径 (批量编排):
+  │   ├── plan → task_planner.py (DAG 验证 + 拓扑排序)
   │   ├── run  → workflow_graph.py (LangGraph) 或 workflow_loop.py (降级)
-  │   │          ├── batch_executor.py → subagent_executor.py
+  │   │          ├── batch_executor.py → TaskExecutorBase → SubagentExecutor
   │   │          ├── batch_reviewer.py (fan-in 评审)
   │   │          └── workflow_state.py (状态读写)
   │   ├── show → workflow_state.py (查看状态)
   │   └── resume → 从 gate/中断处恢复
   │
-  └── 回调驱动命令:
+  └── 回调驱动路径 (事件驱动):
       ├── status → state_machine.py (任务状态查询)
       ├── batch-summary → batch_aggregator.py (批次汇总)
       ├── decide → orchestrator.py (规则链决策)
       └── list / stuck → 任务列举 / 卡住检测
 ```
 
-回调驱动核心（state_machine + batch_aggregator + orchestrator）和 DAG 工作流增强（workflow_state + task_planner + batch_executor + batch_reviewer）共享统一的执行基板（SubagentExecutor）和质量门控（completion_validator + auto_continue_trigger）。
+两条路径共享统一的执行基板（SubagentExecutor / TaskExecutorBase）和质量门控（completion_validator + auto_continue_trigger）。DAG 路径适合预规划的批量任务，回调路径适合实时响应的事件流。
 
 ### 测试
 
-781/781 全部通过。
+778/778 全部通过（含 6 个端到端测试）。
 
 > **详细操作指南**: [`docs/OPERATIONS.md`](OPERATIONS.md) · **README**: [`../README.md`](../README.md)
 

@@ -10,7 +10,18 @@ python3 runtime/orchestrator/cli.py <command>
 
 所有操作都通过这个 CLI 入口执行。无论是创建工作流、运行、恢复还是查看状态。
 
-## 核心命令
+## 两条编排路径
+
+本框架提供两条共存的编排路径，共享同一个执行基板（`SubagentExecutor`）：
+
+| 路径 | 适用场景 | CLI 命令 | 核心模块 |
+|------|---------|---------|---------|
+| **DAG 工作流** | 批量编排：计划好所有批次 → 一次性自动推进 | `plan` / `run` / `resume` / `show` | `workflow_state` + `batch_executor` + `batch_reviewer` |
+| **回调驱动** | 事件驱动：消息 → callback → decision → 下一跳 | `status` / `batch-summary` / `decide` / `list` / `stuck` | `state_machine` + `orchestrator` + `batch_aggregator` |
+
+两者不是"版本替代"关系——DAG 路径适合预规划的批量任务，回调路径适合实时响应的事件流。
+
+## DAG 工作流命令
 
 ### 创建工作流
 
@@ -38,19 +49,15 @@ cat > my_workflow.json << 'EOF'
 ]
 EOF
 
-# 2. 创建工作流
+# 2. 创建工作流（DAG 校验 + 拓扑排序）
 python3 runtime/orchestrator/cli.py plan "Trading analysis" my_workflow.json
-# 输出: workflow_state_wf_20260325_143012.json
 ```
 
 ### 运行工作流
 
 ```bash
 # 优先使用 LangGraph (自动 checkpoint)，无 langgraph 时降级到 WorkflowLoop
-python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json
-
-# 指定工作目录
-python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace /path/to/workspace
+python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace .
 ```
 
 ### 查看状态
@@ -62,35 +69,38 @@ python3 runtime/orchestrator/cli.py show workflow_state_wf_xxx.json
 输出示例:
 ```
 Workflow: wf_20260325_143012
-Status: running
+Status: completed
 Batches: 2 (current: 1)
 
-→ [ completed] b0: 数据收集 → proceed
+  [ completed] b0: 数据收集 → proceed
       [ completed] t1: 收集 A 股数据 — done
       [ completed] t2: 收集港股数据 — done
-  [   pending] b1: 分析 (deps: b0)
-      [   pending] t3: 趋势分析
+→ [ completed] b1: 分析 (deps: b0) → proceed
+      [ completed] t3: 趋势分析 — done
+
+Context summary (292 chars):
+  Goal: Trading analysis ...
 ```
 
 ### 从中断处恢复
 
 ```bash
-# 上下文压缩 / gate 阻断后恢复
-python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
+python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json --workspace .
+```
+
+## 回调驱动命令
+
+```bash
+python3 runtime/orchestrator/cli.py status <task_id>         # 查询任务状态
+python3 runtime/orchestrator/cli.py batch-summary <batch_id>  # 查询批次汇总
+python3 runtime/orchestrator/cli.py decide <batch_id>         # 对批次做决策
+python3 runtime/orchestrator/cli.py list [--state <state>]    # 列出任务
+python3 runtime/orchestrator/cli.py stuck [--timeout <min>]   # 检测卡住的批次
 ```
 
 ## 真值唯一 — 状态文件
 
-### 全局状态
-
 **唯一真值**: `workflow_state_<id>.json`
-
-这个文件包含：
-- 工作流元信息 (ID, 状态, 创建时间)
-- 所有批次的状态 (pending / running / completed / failed)
-- 每个任务的状态和结果
-- 每个批次的续行决策 (proceed / stop / gate)
-- `context_summary` — LLM 上下文恢复用的语义摘要
 
 ```
 workflow_state_wf_xxx.json    ← 唯一真值，所有状态都在这里
@@ -102,72 +112,100 @@ workflow_state_wf_xxx.json    ← 唯一真值，所有状态都在这里
 └── context_summary           ← LLM 语义恢复
 ```
 
-### v1 兼容状态
+回调驱动路径的状态存储在 `~/.openclaw/shared-context/job-status/`（由 `state_machine.py` 管理），通过 `state_sync.py` 桥接到 `workflow_state.json`。
 
-v1 的任务状态仍存储在 `~/.openclaw/shared-context/job-status/`（由 `state_machine.py` 管理）。v2 不依赖这个目录。
+## Runner 脚本契约
+
+任务实际由 `scripts/run_subagent_claude_v1.sh` 执行。`SubagentExecutor` 会向子进程注入以下环境变量：
+
+| 变量 | 说明 |
+|------|------|
+| `OPENCLAW_TASK_ID` | 任务唯一标识 |
+| `OPENCLAW_SUBAGENT_STATE_DIR` | 状态文件写入目录 |
+| `OPENCLAW_SPAWN_DEPTH` | 递归深度（防 fork 炸弹） |
+
+**Runner 必须做的事**：在退出前写入 `$OPENCLAW_SUBAGENT_STATE_DIR/$OPENCLAW_TASK_ID.json`，包含 `status` 和 `result` 字段。退出码作为 fallback（0 = completed, 非 0 = failed）。
+
+**无 runner 时**：设置 `OPENCLAW_TEST_MODE=1` 可跑测试模式。
 
 ## 执行引擎
 
 | 引擎 | 文件 | 何时使用 |
 |------|------|---------|
-| **LangGraph** (推荐) | `workflow_graph.py` | 安装了 `langgraph` 时自动使用。提供 checkpoint、条件路由、interrupt/resume |
+| **LangGraph** (推荐) | `workflow_graph.py` | 安装了 `langgraph` 时自动使用。提供 SQLite checkpoint、条件路由、interrupt/resume |
 | **WorkflowLoop** (降级) | `workflow_loop.py` | 无 langgraph 时使用。轮询模式，功能等价 |
 
 两者共享底层模块：`workflow_state.py` + `batch_executor.py` + `batch_reviewer.py`。
+
+## 可插拔执行器
+
+`BatchExecutor` 默认使用 `SubagentTaskExecutor`，也可以注入自定义执行器：
+
+```python
+from executor_interface import TaskExecutorBase, TaskResult
+from batch_executor import BatchExecutor
+
+class MyExecutor(TaskExecutorBase):
+    def execute(self, task_id, label, context):
+        return task_id  # 返回 handle
+
+    def poll(self, handle):
+        return TaskResult(status="completed", output="done")
+
+executor = BatchExecutor(".", executor=MyExecutor())
+```
 
 ## 架构关系
 
 ```
 cli.py (唯一入口)
-  ├── plan → task_planner.py → workflow_state.py (创建)
-  ├── run  → workflow_graph.py 或 workflow_loop.py
-  │          ├── batch_executor.py → subagent_executor.py (执行)
-  │          ├── batch_reviewer.py (评审)
-  │          └── workflow_state.py (读写状态)
-  ├── show → workflow_state.py (读取)
-  └── resume → workflow_graph.py 或 workflow_loop.py (恢复)
+  │
+  ├── DAG 工作流路径:
+  │   ├── plan → task_planner.py → workflow_state.json (创建)
+  │   ├── run  → workflow_graph.py (LangGraph) 或 workflow_loop.py (降级)
+  │   │          ├── batch_executor.py → TaskExecutorBase → SubagentExecutor (执行)
+  │   │          ├── batch_reviewer.py (fan-in 评审)
+  │   │          └── workflow_state.py (状态读写)
+  │   ├── show → workflow_state.py (读取 + 展示)
+  │   └── resume → 从 gate/中断处恢复
+  │
+  └── 回调驱动路径:
+      ├── status → state_machine.py (任务状态查询)
+      ├── batch-summary → batch_aggregator.py (批次汇总)
+      ├── decide → orchestrator.py (规则链决策)
+      └── list / stuck → 任务列举 / 卡住检测
 ```
-
-### v1 文件说明 (仍保留，但不在主链路中)
-
-| 文件 | 角色 | v2 中的对应 |
-|------|------|-----------|
-| `orchestrator.py` | v1 回调处理 | `batch_reviewer.py` |
-| `auto_dispatch.py` | v1 自动派发 | `batch_executor.py` |
-| `auto_continue_trigger.py` | v1 续行触发 | `workflow_graph.py` (advance 节点) |
-| `sessions_spawn_request.py` | v1 会话创建 | `batch_executor.py` (dispatch 节点) |
-| `state_machine.py` | v1 任务状态 | `workflow_state.py` |
 
 ## 常见场景
 
 ### 场景 1: Agent 上下文压缩后恢复
 
 ```bash
-# 查看当前状态
 python3 runtime/orchestrator/cli.py show workflow_state_wf_xxx.json
 # 看到 context_summary，了解之前做到哪了
-
-# 继续执行
-python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
+python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json --workspace .
 ```
 
 ### 场景 2: 遇到 gate 需要人工审批
 
-```
-show → 看到 status=gate_blocked
-# 人工确认后
-resume → 从 gate 处继续
+```bash
+# show → 看到 status=gate_blocked
+# 人工确认后:
+python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json --workspace .
 ```
 
 ### 场景 3: 通过 Python API 使用
 
 ```python
 from task_planner import TaskPlanner
-from workflow_graph import run_workflow
-from workflow_state import save_workflow_state, load_workflow_state
+from workflow_loop import WorkflowLoop
+from workflow_state import save_workflow_state
 
 planner = TaskPlanner()
 state = planner.plan("My workflow", batches_config)
 save_workflow_state(state, "state.json")
-result = run_workflow(state, "state.json", workspace_dir=".")
+
+loop = WorkflowLoop(".", timeout_seconds=900)
+result = loop.run("state.json")
+print(f"Workflow finished: {result.status}")
 ```
