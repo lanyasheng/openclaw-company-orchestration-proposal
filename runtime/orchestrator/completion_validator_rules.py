@@ -33,6 +33,9 @@ __all__ = [
     "has_unhandled_error",
     # 主验证函数
     "validate_completion",
+    # Post-enforce 调优
+    "format_decision_reason",
+    "generate_audit_summary",
     # 配置
     "VALIDATOR_CONFIG",
 ]
@@ -459,3 +462,248 @@ def validate_completion(
             "error": True,
             "error_message": str(e),
         }
+
+
+# ========== Post-Enforce 调优 (P0-6 Batch G) ==========
+
+# Block 规则人类可读描述
+BLOCK_RULE_DESCRIPTIONS: Dict[str, str] = {
+    "B1_pure_directory_listing": "输出仅包含目录列表，无实际交付物",
+    "B2_pure_code_snippet": "输出仅包含代码片段，无执行结果/测试/总结",
+    "B3_intermediate_state": "输出包含中间状态关键词，任务未完成",
+    "B4_unhandled_error": "输出包含未处理的错误堆栈",
+    "B5_nonzero_exit": "任务退出码非零",
+    "B6_empty_output": "输出过短或为空",
+}
+
+# Through 规则人类可读描述
+THROUGH_RULE_DESCRIPTIONS: Dict[str, str] = {
+    "T1": "包含明确完成声明",
+    "T2": "交付物文件存在",
+    "T3": "包含测试通过证据",
+    "T4": "包含 git 提交证据",
+    "T5": "包含结构化总结",
+    "T6": "无中间状态关键词",
+}
+
+# Gate 规则人类可读描述
+GATE_RULE_DESCRIPTIONS: Dict[str, str] = {
+    "G1_boundary_case": "Through 分数处于边界，需要人工审查",
+    "G2_blocked_with_explanation": "被 Block 规则命中但有详细解释，降级为 Gate",
+}
+
+
+def format_decision_reason(
+    status: str,
+    reason: str,
+    metadata: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    格式化 decision reason，生成结构化输出
+    
+    Args:
+        status: 验证状态 (accepted/blocked/gate/error)
+        reason: 规则 ID 或原因
+        metadata: 验证元数据
+    
+    Returns:
+        结构化 decision reason 字典，包含：
+        - status: 验证状态
+        - reason_code: 规则 ID
+        - reason_human: 人类可读描述
+        - rule_details: 命中的规则详情
+        - suggestions: 改进建议（如果适用）
+    """
+    # 确定规则类型和描述
+    rule_type = "unknown"
+    rule_description = "未知规则"
+    
+    if status == "accepted":
+        rule_type = "through"
+        if reason == "whitelisted":
+            rule_description = "白名单任务，通过基本质量检查"
+        else:
+            rule_description = "Through 分数达到阈值"
+    elif status == "blocked":
+        rule_type = "block"
+        rule_description = BLOCK_RULE_DESCRIPTIONS.get(reason, reason)
+    elif status == "gate":
+        rule_type = "gate"
+        rule_description = GATE_RULE_DESCRIPTIONS.get(reason, reason)
+    elif status == "error":
+        rule_type = "error"
+        rule_description = f"Validator 内部错误：{reason}"
+    
+    # 提取规则详情
+    rule_details = []
+    
+    # Block 规则详情
+    if "block_details" in metadata:
+        for rule_id in metadata["block_details"]:
+            rule_details.append({
+                "rule_id": rule_id,
+                "description": BLOCK_RULE_DESCRIPTIONS.get(rule_id, rule_id),
+                "type": "block",
+            })
+    
+    # Through 规则详情
+    if "through_details" in metadata:
+        for rule_id in metadata["through_details"]:
+            rule_details.append({
+                "rule_id": rule_id,
+                "description": THROUGH_RULE_DESCRIPTIONS.get(rule_id, rule_id),
+                "type": "through",
+            })
+    
+    # 生成改进建议
+    suggestions = []
+    
+    if status == "blocked":
+        if "B1" in metadata.get("block_details", []):
+            suggestions.append("添加实际交付物说明，而非仅列出目录")
+        if "B2" in metadata.get("block_details", []):
+            suggestions.append("添加代码执行结果、测试输出或总结")
+        if "B3" in metadata.get("block_details", []):
+            suggestions.append("完成任务后再提交，避免中间状态")
+        if "B4" in metadata.get("block_details", []):
+            suggestions.append("处理错误后再提交，或明确说明错误原因")
+        if "B5" in metadata.get("block_details", []):
+            suggestions.append("修复错误确保退出码为 0")
+        if "B6" in metadata.get("block_details", []):
+            suggestions.append("提供更详细的输出（至少 100 字符）")
+        if reason == "low_through_score":
+            suggestions.append("添加完成声明、测试证据、git 提交等交付物")
+    
+    if status == "gate":
+        suggestions.append("请人工审查任务完成情况")
+    
+    return {
+        "status": status,
+        "reason_code": reason,
+        "reason_human": rule_description,
+        "rule_type": rule_type,
+        "rule_details": rule_details,
+        "suggestions": suggestions,
+        "metadata_summary": {
+            "score": metadata.get("through_score", metadata.get("score", 0)),
+            "threshold": metadata.get("through_threshold", 3),
+            "whitelisted": metadata.get("whitelisted", False),
+            "blocked": metadata.get("blocked", False),
+            "gate": metadata.get("gate", False),
+        },
+    }
+
+
+def generate_audit_summary(
+    audits: List[Dict[str, Any]],
+    group_by: str = "status",
+) -> Dict[str, Any]:
+    """
+    生成审计样本汇总
+    
+    Args:
+        audits: 审计记录列表（来自 load_validation_audit 或 list_validation_audits）
+        group_by: 分组维度 (status / label / reason / date)
+    
+    Returns:
+        汇总字典，包含：
+        - total: 总样本数
+        - by_group: 按分组维度的统计
+        - blocked_rate: 拦截率
+        - gate_rate: Gate 率
+        - common_block_reasons: 常见 Block 原因
+        - common_gate_reasons: 常见 Gate 原因
+        - samples: 样本摘要（每个分组最多 5 个）
+    """
+    if not audits:
+        return {
+            "total": 0,
+            "by_group": {},
+            "blocked_rate": 0.0,
+            "gate_rate": 0.0,
+            "common_block_reasons": [],
+            "common_gate_reasons": [],
+            "samples": {},
+        }
+    
+    total = len(audits)
+    
+    # 按维度分组
+    by_group: Dict[str, List[Dict[str, Any]]] = {}
+    for audit in audits:
+        if group_by == "status":
+            key = audit.get("status", "unknown")
+        elif group_by == "label":
+            key = audit.get("label", "unknown")
+        elif group_by == "reason":
+            key = audit.get("reason", "unknown")
+        elif group_by == "date":
+            # 按日期分组（ISO 日期部分）
+            timestamp = audit.get("timestamp", "")
+            key = timestamp.split("T")[0] if timestamp else "unknown"
+        else:
+            key = "unknown"
+        
+        if key not in by_group:
+            by_group[key] = []
+        by_group[key].append(audit)
+    
+    # 统计
+    blocked_count = sum(1 for a in audits if a.get("status") == "blocked_completion")
+    gate_count = sum(1 for a in audits if a.get("status") == "gate_required")
+    
+    blocked_rate = blocked_count / total if total > 0 else 0.0
+    gate_rate = gate_count / total if total > 0 else 0.0
+    
+    # 常见 Block 原因
+    block_reasons: Dict[str, int] = {}
+    for audit in audits:
+        if audit.get("status") == "blocked_completion":
+            reason = audit.get("reason", "unknown")
+            block_reasons[reason] = block_reasons.get(reason, 0) + 1
+    
+    common_block_reasons = sorted(
+        [{"reason": k, "count": v} for k, v in block_reasons.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:10]
+    
+    # 常见 Gate 原因
+    gate_reasons: Dict[str, int] = {}
+    for audit in audits:
+        if audit.get("status") == "gate_required":
+            reason = audit.get("reason", "unknown")
+            gate_reasons[reason] = gate_reasons.get(reason, 0) + 1
+    
+    common_gate_reasons = sorted(
+        [{"reason": k, "count": v} for k, v in gate_reasons.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:10]
+    
+    # 样本摘要（每个分组最多 5 个）
+    samples: Dict[str, List[Dict[str, Any]]] = {}
+    for key, group_audits in by_group.items():
+        samples[key] = [
+            {
+                "audit_id": a.get("audit_id", ""),
+                "status": a.get("status", ""),
+                "reason": a.get("reason", ""),
+                "label": a.get("label", ""),
+                "timestamp": a.get("timestamp", ""),
+            }
+            for a in group_audits[:5]
+        ]
+    
+    return {
+        "total": total,
+        "by_group": {k: len(v) for k, v in by_group.items()},
+        "blocked_rate": blocked_rate,
+        "gate_rate": gate_rate,
+        "common_block_reasons": common_block_reasons,
+        "common_gate_reasons": common_gate_reasons,
+        "samples": samples,
+    }
+
+
+# ========== End Post-Enforce 调优 ==========
