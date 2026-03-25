@@ -13,8 +13,8 @@ import sys
 from pathlib import Path
 
 # 添加 runtime/orchestrator 到路径
-REPO_ROOT = Path(__file__).resolve().parents[1]
-ORCHESTRATOR_DIR = REPO_ROOT / "orchestrator"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ORCHESTRATOR_DIR = REPO_ROOT / "runtime" / "orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
@@ -139,7 +139,7 @@ def test_dispatch_reference_content():
     )
     
     # 保存 dispatch plan 到临时文件
-    dispatch_path = REPO_ROOT / "orchestrator" / "test_dispatch_plan.json"
+    dispatch_path = REPO_ROOT / "runtime" / "orchestrator" / "test_dispatch_plan.json"
     with open(dispatch_path, "w") as f:
         json.dump(plan.to_dict(), f, indent=2)
     
@@ -170,7 +170,7 @@ def test_operator_runbook_exists():
     print("Test 3: Operator runbook file exists")
     print("=" * 60)
     
-    runbook_path = Path(__file__).resolve().parents[2] / "runtime" / "orchestrator" / "examples" / "trading_roundtable_operator_runbook_v1.md"
+    runbook_path = REPO_ROOT / "runtime" / "orchestrator" / "examples" / "trading_roundtable_operator_runbook_v1.md"
     
     assert runbook_path.exists(), f"Operator runbook not found at {runbook_path}"
     assert runbook_path.stat().st_size > 0, "Operator runbook is empty"

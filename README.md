@@ -180,9 +180,27 @@ Create a `config.json` with batch definitions. Each batch has:
 - `depends_on` — list of batch IDs this batch waits for (cycles are rejected)
 - `fan_in_policy` — `all_success` (default) / `any_success` / `majority`
 
-### Step 2: Provide a Runner Script
+### Step 2: Install and Configure Runner
 
-`SubagentExecutor` looks for `<workspace>/scripts/run_subagent_claude_v1.sh`. Arguments: `<task_prompt> <label>`.
+The repo includes a ready-to-use runner script for Claude Code:
+
+```bash
+# 1. Install Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+
+# 2. Verify installation
+claude --version
+
+# 3. The runner script is already in scripts/run_subagent_claude_v1.sh
+#    It auto-detects Claude CLI from PATH or common locations.
+
+# 4. (Optional) Configure environment variables:
+export CLAUDE_CLI_PATH="/path/to/claude"  # If not in PATH
+export CLAUDE_TIMEOUT_S=900               # Task timeout (default: 900s)
+export CLAUDE_WORKDIR="/path/to/project"  # Working directory
+```
+
+`SubagentExecutor` invokes the runner with arguments: `<task_prompt> <label>`.
 
 ### Step 3: Run and Iterate
 

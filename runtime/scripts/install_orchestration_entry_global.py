@@ -9,13 +9,14 @@ import sys
 from pathlib import Path
 from typing import Dict
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
-SOURCE_SKILL = WORKSPACE_ROOT / "skills" / "orchestration-entry" / "SKILL.md"
-SOURCE_REFERENCES_DIR = WORKSPACE_ROOT / "skills" / "orchestration-entry" / "references"
-SOURCE_COMMAND = WORKSPACE_ROOT / "scripts" / "orch_command.py"
+# Repo root is two levels up from this script: runtime/scripts/...
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_SKILL = REPO_ROOT / "runtime" / "skills" / "orchestration-entry" / "SKILL.md"
+SOURCE_REFERENCES_DIR = REPO_ROOT / "runtime" / "skills" / "orchestration-entry" / "references"
+SOURCE_COMMAND = REPO_ROOT / "runtime" / "scripts" / "orch_command.py"
 SOURCE_HELPERS = {
-    "entry_defaults.py": WORKSPACE_ROOT / "orchestrator" / "entry_defaults.py",
-    "continuation_backends.py": WORKSPACE_ROOT / "orchestrator" / "continuation_backends.py",
+    "entry_defaults.py": REPO_ROOT / "runtime" / "orchestrator" / "entry_defaults.py",
+    "continuation_backends.py": REPO_ROOT / "runtime" / "orchestrator" / "continuation_backends.py",
 }
 
 
@@ -86,7 +87,7 @@ def main() -> int:
     json.dump(
         {
             "global_root": str(global_root),
-            "workspace_root": str(WORKSPACE_ROOT),
+            "repo_root": str(REPO_ROOT),
             "installed": installed,
             "self_contained_runtime": True,
         },
