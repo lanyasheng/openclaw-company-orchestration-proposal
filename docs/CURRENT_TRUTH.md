@@ -1,13 +1,44 @@
-## v2 Main Chain (2026-03-25)
+## v2 Main Chain + LangGraph (2026-03-25)
 
-Unified orchestration chain implemented:
-- `workflow_state.py` — single state file replaces 8+ scattered directories
-- `workflow_loop.py` — main loop: plan → execute → review → advance
-- `task_planner.py` — DAG validation + topological sort
-- `batch_executor.py` — parallel SubagentExecutor dispatch
-- `batch_reviewer.py` — fan-in evaluation with all_success/any_success/majority policies
+### 唯一入口
 
-v1 modules preserved for backward compatibility. New workflows should use v2 chain.
+```bash
+python3 runtime/orchestrator/cli.py <command>
+```
+
+### 唯一真值
+
+`workflow_state_<id>.json` — 所有工作流状态的单一文件。
+
+### 架构
+
+```
+cli.py (唯一入口)
+  ├── plan → task_planner.py (DAG 验证 + 批次分解)
+  ├── run  → workflow_graph.py (LangGraph) 或 workflow_loop.py (降级)
+  │          ├── batch_executor.py → subagent_executor.py
+  │          ├── batch_reviewer.py (fan-in 评审)
+  │          └── workflow_state.py (状态读写)
+  ├── show → workflow_state.py (查看状态)
+  └── resume → 从 gate/中断处恢复
+```
+
+### 关键文件
+
+| 文件 | 职责 |
+|------|------|
+| `workflow_state.py` | 统一数据模型 + 读写 |
+| `workflow_graph.py` | LangGraph StateGraph (推荐引擎) |
+| `workflow_loop.py` | 轮询主循环 (降级引擎) |
+| `task_planner.py` | DAG 验证 + 拓扑排序 |
+| `batch_executor.py` | 并行 SubagentExecutor 派发 |
+| `batch_reviewer.py` | fan-in 评审 (all/any/majority) + 安全门控 |
+
+### 测试
+
+781/781 全部通过 (含 34 个 v2 新增)。
+
+> **详细操作指南**: [`docs/OPERATIONS.md`](OPERATIONS.md)
 
 ---
 
@@ -22,9 +53,9 @@ v1 modules preserved for backward compatibility. New workflows should use v2 cha
 >
 > **真值边界**: 本文档 + `runtime/` 实现 + `tests/` 验收 = 当前唯一可信源;`archive/`、`docs/plans/` 历史计划文档仅供参考
 >
-> **更新**: 2026-03-24 - Deer-Flow 借鉴线 Batch A/B: SubagentExecutor 封装 + 热状态存储已实现 (32 个测试通过)
+> **更新**: 2026-03-25 - v2 统一主链 + LangGraph 集成完成，781/781 测试通过
 >
-> **更新**: 2026-03-25 - P0 Batch 5: Subagent Session Cleanup 已实现 (process group kill / cleanup status / UI cleanup unknown 显式建模)
+> **更新**: 2026-03-24 - Deer-Flow 借鉴线 Batch A/B: SubagentExecutor 封装 + 热状态存储已实现 (32 个测试通过)
 
 ---
 

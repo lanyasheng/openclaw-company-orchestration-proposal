@@ -6,7 +6,20 @@
 >
 > **Default backend:** `subagent` | **Compat backend:** `tmux` | **First validated scenario:** `trading_roundtable` continuation
 >
-> **Maturity:** architecture-validated / unified main chain | **Latest:** WorkflowLoop + unified state (2026-03-25)
+> **Maturity:** architecture-validated / unified main chain + LangGraph | **Latest:** v2 全量测试 781/781 通过 (2026-03-25)
+
+### Quick Start
+
+```bash
+# 唯一入口
+python3 runtime/orchestrator/cli.py plan "My workflow" config.json
+python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json
+python3 runtime/orchestrator/cli.py show workflow_state_wf_xxx.json
+python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
+```
+
+> **操作指南**: [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — 入口在哪？状态记在哪？怎么看？怎么恢复？
+> **真值文件**: `workflow_state_<id>.json` — 所有工作流状态的唯一真值
 
 ---
 

@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-编排器 CLI 入口
+编排器 CLI — 唯一入口
 
-Usage:
+v2 命令 (推荐):
+  orchestrator-cli plan <description> <config.json>   创建工作流
+  orchestrator-cli run <state.json> [--workspace .]   运行工作流
+  orchestrator-cli resume <state.json>                从中断处恢复
+  orchestrator-cli show <state.json>                  查看工作流状态
+
+v1 命令 (兼容):
   orchestrator-cli status <task_id>
   orchestrator-cli batch-summary <batch_id>
   orchestrator-cli decide <batch_id>
@@ -11,10 +17,10 @@ Usage:
   orchestrator-cli test
 """
 
+import json
 import sys
 import os
 
-# 添加 orchestrator 目录到路径
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
@@ -172,13 +178,151 @@ def cmd_test():
     print("\n✅ Tests completed!")
 
 
+def cmd_plan(description: str, config_path: str):
+    """创建工作流"""
+    from task_planner import TaskPlanner
+    from workflow_state import save_workflow_state
+
+    with open(config_path) as f:
+        batches_config = json.load(f)
+
+    planner = TaskPlanner()
+    state = planner.plan(description, batches_config)
+
+    out_path = f"workflow_state_{state.workflow_id}.json"
+    save_workflow_state(state, out_path)
+    print(f"Workflow created: {state.workflow_id}")
+    print(f"  Batches: {len(state.batches)}")
+    total_tasks = sum(len(b.tasks) for b in state.batches)
+    print(f"  Tasks: {total_tasks}")
+    print(f"  State file: {out_path}")
+    print(f"\nRun with: orchestrator-cli run {out_path}")
+
+
+def cmd_run(state_path: str, workspace_dir: str = "."):
+    """运行工作流"""
+    try:
+        from workflow_graph import run_workflow
+        from workflow_state import load_workflow_state
+        engine = "LangGraph"
+    except ImportError:
+        from workflow_loop import WorkflowLoop
+        from workflow_state import load_workflow_state
+        engine = "WorkflowLoop"
+
+    ws = load_workflow_state(state_path)
+    print(f"Running workflow {ws.workflow_id} ({engine})")
+    print(f"  Batches: {len(ws.batches)}, current: {ws.plan.get('current_batch_index', 0)}")
+
+    if engine == "LangGraph":
+        result = run_workflow(ws, state_path, workspace_dir)
+    else:
+        loop = WorkflowLoop(workspace_dir)
+        result = loop.run(state_path)
+
+    print(f"\nResult: {result.status}")
+    for b in result.batches:
+        dec = b.continuation.decision if b.continuation else "—"
+        print(f"  {b.batch_id} ({b.label}): {b.status} → {dec}")
+
+
+def cmd_resume_workflow(state_path: str, workspace_dir: str = "."):
+    """从中断处恢复工作流"""
+    try:
+        from workflow_graph import resume_workflow
+        engine = "LangGraph"
+    except ImportError:
+        from workflow_loop import WorkflowLoop
+        from workflow_state import load_workflow_state
+        engine = "WorkflowLoop"
+
+    print(f"Resuming workflow from {state_path} ({engine})")
+
+    if engine == "LangGraph":
+        result = resume_workflow(state_path, workspace_dir)
+    else:
+        loop = WorkflowLoop(workspace_dir)
+        result = loop.resume(state_path)
+
+    print(f"\nResult: {result.status}")
+    for b in result.batches:
+        dec = b.continuation.decision if b.continuation else "—"
+        print(f"  {b.batch_id} ({b.label}): {b.status} → {dec}")
+
+
+def cmd_show(state_path: str):
+    """查看工作流状态"""
+    from workflow_state import load_workflow_state
+    ws = load_workflow_state(state_path)
+    print(f"Workflow: {ws.workflow_id}")
+    print(f"Status: {ws.status}")
+    print(f"Created: {ws.created_at}")
+    print(f"Updated: {ws.updated_at}")
+    print(f"Description: {ws.plan.get('description', '—')}")
+    print(f"Batches: {len(ws.batches)} (current: {ws.plan.get('current_batch_index', 0)})")
+    print()
+    for i, b in enumerate(ws.batches):
+        marker = "→ " if i == ws.plan.get("current_batch_index", 0) else "  "
+        dec_str = ""
+        if b.continuation:
+            dec_str = f" → {b.continuation.decision}"
+        deps = f" (deps: {', '.join(b.depends_on)})" if b.depends_on else ""
+        print(f"{marker}[{b.status:>10}] {b.batch_id}: {b.label}{deps}{dec_str}")
+        for t in b.tasks:
+            t_status = t.status
+            t_extra = ""
+            if t.result_summary:
+                t_extra = f" — {t.result_summary[:60]}"
+            if t.error:
+                t_extra = f" — ERROR: {t.error[:60]}"
+            print(f"      [{t_status:>10}] {t.task_id}: {t.label}{t_extra}")
+    if ws.context_summary:
+        print(f"\nContext summary ({len(ws.context_summary)} chars):")
+        print(f"  {ws.context_summary[:200]}...")
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)
     
     cmd = sys.argv[1]
-    
+
+    # v2 commands
+    if cmd == "plan":
+        if len(sys.argv) < 4:
+            print("Usage: orchestrator-cli plan <description> <config.json>")
+            sys.exit(1)
+        cmd_plan(sys.argv[2], sys.argv[3])
+        return
+
+    if cmd == "run":
+        if len(sys.argv) < 3:
+            print("Usage: orchestrator-cli run <state.json> [--workspace <dir>]")
+            sys.exit(1)
+        workspace = "."
+        if "--workspace" in sys.argv:
+            idx = sys.argv.index("--workspace")
+            if idx + 1 < len(sys.argv):
+                workspace = sys.argv[idx + 1]
+        cmd_run(sys.argv[2], workspace)
+        return
+
+    if cmd == "resume":
+        if len(sys.argv) < 3:
+            print("Usage: orchestrator-cli resume <state.json>")
+            sys.exit(1)
+        cmd_resume_workflow(sys.argv[2])
+        return
+
+    if cmd == "show":
+        if len(sys.argv) < 3:
+            print("Usage: orchestrator-cli show <state.json>")
+            sys.exit(1)
+        cmd_show(sys.argv[2])
+        return
+
+    # v1 commands
     if cmd == "status":
         if len(sys.argv) < 3:
             print("Usage: orchestrator-cli status <task_id>")
