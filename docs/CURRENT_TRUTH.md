@@ -1,3 +1,16 @@
+## v2 Main Chain (2026-03-25)
+
+Unified orchestration chain implemented:
+- `workflow_state.py` — single state file replaces 8+ scattered directories
+- `workflow_loop.py` — main loop: plan → execute → review → advance
+- `task_planner.py` — DAG validation + topological sort
+- `batch_executor.py` — parallel SubagentExecutor dispatch
+- `batch_reviewer.py` — fan-in evaluation with all_success/any_success/majority policies
+
+v1 modules preserved for backward compatibility. New workflows should use v2 chain.
+
+---
+
 # CURRENT_TRUTH (2026-03-25)
 
 > **角色**: 📍 **当前真值唯一入口** - 了解"今天系统实际如何工作"从这里开始

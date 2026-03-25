@@ -6,7 +6,7 @@
 >
 > **Default backend:** `subagent` | **Compat backend:** `tmux` | **First validated scenario:** `trading_roundtable` continuation
 >
-> **Maturity:** safe semi-auto / thin bridge / production-validated | **Deer-Flow借鉴:** SubagentExecutor + 热状态存储已落地 (2026-03-24)
+> **Maturity:** architecture-validated / unified main chain | **Latest:** WorkflowLoop + unified state (2026-03-25)
 
 ---
 
@@ -425,6 +425,60 @@ api_execution_id (childSessionKey / runId)
 
 ---
 
+## Unified Main Chain (v2)
+
+> Added 2026-03-25: Consolidates four parallel execution paths into one clear chain.
+
+### The Problem with v1
+
+v1 had four independent paths for "what happens after a task completes":
+- `orchestrator.py` (batch callback) — `next_tasks` left empty
+- `auto_dispatch.py` — whitelist limited to one scenario
+- `auto_continue_trigger.py` — wrote decisions but never executed
+- `sessions_spawn_request.py` — disabled by default
+
+### The v2 Solution
+
+One chain, four stages:
+
+```
+TaskPlanner → BatchExecutor → BatchReviewer → WorkflowLoop
+(decompose)    (parallel exec)  (fan-in review)  (auto-advance)
+```
+
+**Key files:**
+- `runtime/orchestrator/workflow_state.py` — Unified state model
+- `runtime/orchestrator/workflow_loop.py` — Main orchestration loop
+- `runtime/orchestrator/task_planner.py` — DAG-aware task decomposition
+- `runtime/orchestrator/batch_executor.py` — Parallel SubagentExecutor dispatch
+- `runtime/orchestrator/batch_reviewer.py` — Fan-in evaluation + gate decisions
+
+**Unified state file:** `workflow_state.json` — one file to see global status, including `context_summary` for context recovery after LLM window compression.
+
+### Quick Example
+
+```python
+from task_planner import TaskPlanner
+from workflow_loop import WorkflowLoop
+
+planner = TaskPlanner()
+state = planner.plan("Trading analysis", [
+    {"batch_id": "b0", "label": "Data collection", "tasks": [
+        {"task_id": "t1", "label": "Collect A-share data"},
+        {"task_id": "t2", "label": "Collect HK data"},
+    ], "depends_on": []},
+    {"batch_id": "b1", "label": "Analysis", "tasks": [
+        {"task_id": "t3", "label": "Trend analysis"},
+    ], "depends_on": ["b0"]},
+])
+
+save_workflow_state(state, "workflow_state.json")
+loop = WorkflowLoop(workspace_dir="/path/to/workspace")
+result = loop.run("workflow_state.json")
+```
+
+---
+
 ## Why Not Temporal / LangGraph / DAG Engine?
 
 ### The Question
@@ -485,7 +539,7 @@ Many teams ask: "Why not just use Temporal / LangGraph / a DAG engine as the bac
 | **Trading continuation** | ✅ Production-validated | Real execution path verified |
 | **Channel roundtable** | ✅ Minimum adapter | Generic channel onboarding |
 | **Control plane main chain** | ✅ In place | Registration → dispatch → execution → receipt → callback |
-| **Tests** | ✅ 468 passing | 100% pass rate |
+| **Tests** | ✅ 700+ passing | 100% pass rate |
 | **Validator (enforce mode)** | ✅ P0 enforced | Subtask completion validator in enforce mode (not audit-only) |
 | **Single-writer guard** | ✅ P0-4 implemented | Per truth-domain / batch-domain (not global repo lock) |
 | **Auto-continue trigger** | ✅ P0-4 implemented | Based on validator result + receipt status + writer conflict check |
@@ -502,7 +556,7 @@ Many teams ask: "Why not just use Temporal / LangGraph / a DAG engine as the bac
 | Claim | Evidence | Status |
 |-------|----------|--------|
 | Trading continuation works | Real execution artifacts in `~/.openclaw/shared-context/` | ✅ Validated |
-| Control plane main chain | 468 tests passing, artifacts generated | ✅ Validated |
+| Control plane main chain | 700+ tests passing, artifacts generated | ✅ Validated |
 | Auto-trigger consumption | Configurable guards, dedupe mechanism | ✅ Implemented |
 | Validator enforce mode | `completion_validator_rules.py` (mode=enforce) + integration tests | ✅ Implemented (2026-03-25) |
 | Single-writer per domain | `single_writer_guard.py` (file lock per truth-domain) | ✅ Implemented (2026-03-25) |
@@ -638,7 +692,13 @@ openclaw-company-orchestration-proposal/
 │   ├── technical-debt/               # Technical debt backlog
 │   └── validation/                   # Validation evidence
 ├── runtime/
-│   ├── orchestrator/                 # Core orchestration logic
+│   ├── orchestrator/
+│   │   ├── workflow_state.py      # Unified state model (v2)
+│   │   ├── workflow_loop.py       # Main orchestration loop (v2)
+│   │   ├── task_planner.py        # DAG-aware task planner (v2)
+│   │   ├── batch_executor.py      # Parallel batch executor (v2)
+│   │   ├── batch_reviewer.py      # Fan-in reviewer (v2)
+│   │   ├── ...                    # (v1 modules preserved)
 │   ├── skills/                       # OpenClaw skill integrations
 │   └── scripts/                      # Entry commands & utilities
 ├── tests/
@@ -684,7 +744,7 @@ openclaw-company-orchestration-proposal/
 
 | Indicator | Meaning |
 |-----------|---------|
-| **Tests passing** | 468 tests, 100% pass rate |
+| **Tests passing** | 700+ tests, 100% pass rate |
 | **Artifacts generated** | Execution/receipt/request artifacts in `~/.openclaw/shared-context/` |
 | **Documentation updated** | README, CURRENT_TRUTH, architecture docs aligned |
 | **Technical debt tracked** | Known issues in `docs/technical-debt/` |
@@ -707,7 +767,7 @@ python3 -m pytest tests/orchestrator/ -v
 ### Current Status
 
 ```
-468 tests passing (100% pass rate)
+700+ tests passing (100% pass rate)
 ```
 
 ### Key Test Files

@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED**: This document describes v1 behavior. See README.md "Unified Main Chain (v2)" for current architecture.
+
 # P0-3 Batch 3: Consumption to Execution Chain
 
 > **Date**: 2026-03-23

@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED**: This document describes v1 behavior. See README.md "Unified Main Chain (v2)" for current architecture.
+
 # P0-3 Batch 6: Trading Live Cutover
 
 **Date:** 2026-03-23  

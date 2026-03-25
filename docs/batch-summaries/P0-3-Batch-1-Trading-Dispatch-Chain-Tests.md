@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED**: This document describes v1 behavior. See README.md "Unified Main Chain (v2)" for current architecture.
+
 # P0-3 Batch 1 Summary: Trading Continuation Dispatch Chain Tests
 
 **Date**: 2026-03-23  

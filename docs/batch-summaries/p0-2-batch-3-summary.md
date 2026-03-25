@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED**: This document describes v1 behavior. See README.md "Unified Main Chain (v2)" for current architecture.
+
 # P0-2 Batch 3: Handoff Schema → Task Registration Integration
 
 **Commit:** `e41ae97`  

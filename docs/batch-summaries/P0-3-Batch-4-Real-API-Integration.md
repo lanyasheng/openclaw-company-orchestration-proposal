@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED**: This document describes v1 behavior. See README.md "Unified Main Chain (v2)" for current architecture.
+
 # P0-3 Batch 4: Real sessions_spawn API Integration
 
 > **Date**: 2026-03-23

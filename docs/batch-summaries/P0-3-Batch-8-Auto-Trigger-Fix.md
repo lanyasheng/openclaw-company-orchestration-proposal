@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED**: This document describes v1 behavior. See README.md "Unified Main Chain (v2)" for current architecture.
+
 # P0-3 Batch 8: Auto-Trigger Continuation Fix — 打通 receipt → request → consumed → execution 主链
 
 > **Date**: 2026-03-24

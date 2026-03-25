@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED**: This document describes v1 behavior. See README.md "Unified Main Chain (v2)" for current architecture.
+
 # Wave 2 Cutover Plan — SubagentExecutor Execution Substrate Expansion
 
 **Date**: 2026-03-24  
