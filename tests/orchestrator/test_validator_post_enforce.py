@@ -14,8 +14,10 @@ import os
 import sys
 from pathlib import Path
 
-# 添加 runtime 路径
-sys.path.insert(0, str(Path(__file__).parent.parent / "runtime" / "orchestrator"))
+# Add orchestrator to path
+ORCHESTRATOR_DIR = Path(__file__).resolve().parents[2] / "runtime" / "orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from completion_validator_rules import (
     format_decision_reason,
