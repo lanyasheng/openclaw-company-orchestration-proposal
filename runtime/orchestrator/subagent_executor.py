@@ -28,7 +28,7 @@ executor = SubagentExecutor(
         timeout_seconds=900,
         allowed_tools=["read", "write", "edit", "exec"],
     ),
-    cwd="/Users/study/.openclaw/workspace",
+    cwd="<REPO_ROOT>/../../..",  # Or use Path.home() / ".openclaw/workspace"
 )
 
 task_id = executor.execute_async("实现 XXX 功能")

@@ -622,7 +622,7 @@ def test_patch_artifact_and_pr_description():
         patch_id="patch-002",
         issue_id="issue-002",
         planning_id="plan-002",
-        repo_path="/Users/study/.openclaw/workspace/repos/test",
+        repo_path="<REPO_ROOT>/repos/test",  # Placeholder for portable tests
         files_changed=["src/main.py", "tests/test_main.py"],
         diff_summary="2 files changed, 50 insertions(+), 10 deletions(-)",
         diff_content="diff --git a/src/main.py b/src/main.py...",

@@ -1,8 +1,15 @@
-# Trading Roundtable Operator Runbook v1.0
+# Trading Roundtable Operator Runbook v1.0 ⚠️ DEPRECATED
+
+> **状态**: ⚠️ **DEPRECATED** — 本文档已过时，仅供参考。请以当前 canonical 文档为准。
+> 
+> **迁移指引**: 
+> - 当前 canonical runbook: `docs/runbooks/trading_roundtable_operator_runbook.md` (待更新)
+> - 当前协议：`docs/protocols/trading_roundtable_auto_execution_protocol_v1.md`
+> - 本文档保留作为历史参考，但不再维护。新 operator 请阅读最新文档。
 
 > **Operator-facing checklist for trading roundtable batch execution**  
-> **版本**: 1.0.0  
-> **生效日期**: 2026-03-24  
+> **版本**: 1.0.0 (deprecated)  
+> **原生效日期**: 2026-03-24  
 > **关联协议**: `../docs/protocols/trading_roundtable_auto_execution_protocol_v1.md`
 
 ---
@@ -99,7 +106,7 @@ print('next_step:', closeout['continuation_contract']['next_step'])
 
 **命令**:
 ```bash
-cd /Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal
+cd <REPO_ROOT>  # 替换为实际 repo 路径，例如 ~/repos/openclaw-company-orchestration-proposal
 
 # 更新 manifest（如果脚本已实现）
 python3 runtime/scripts/update_manifest.py \

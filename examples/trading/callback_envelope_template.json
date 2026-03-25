@@ -12,15 +12,15 @@
   "completed_at": "2026-03-24T10:00:00Z",
   
   "backend_terminal_receipt": {
-    "_comment": "由 harness/runtime 自动填充，描述后端执行终态",
+    "_comment": "由 harness/runtime 自动填充，描述后端执行终态。路径为示例占位符，实际运行时由 backend 填充相对路径或绝对路径",
     "receipt_version": "tmux_terminal_receipt.v1",
     "backend": "tmux",
     "terminal_status": "completed",
     "artifact_paths": [
-      "/Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal/runtime/orchestrator/summaries/batch-trading_batch_001-summary.md",
-      "/Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal/runtime/orchestrator/decisions/batch-trading_batch_001-decision.json",
-      "/Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal/runtime/orchestrator/dispatches/batch-trading_batch_001-dispatch_plan.json",
-      "/Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal/runtime/orchestrator/terminal.json"
+      "<REPO_ROOT>/runtime/orchestrator/summaries/batch-trading_batch_001-summary.md",
+      "<REPO_ROOT>/runtime/orchestrator/decisions/batch-trading_batch_001-decision.json",
+      "<REPO_ROOT>/runtime/orchestrator/dispatches/batch-trading_batch_001-dispatch_plan.json",
+      "<REPO_ROOT>/runtime/orchestrator/terminal.json"
     ],
     "run_handle": {
       "run_id": "run_trading_001",

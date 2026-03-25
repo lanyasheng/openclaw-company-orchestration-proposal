@@ -84,7 +84,7 @@ executor = SubagentExecutor(
         runtime="subagent",
         timeout_seconds=900,
     ),
-    cwd="/Users/study/.openclaw/workspace",
+    cwd="<REPO_ROOT>/../../..",  # Or use Path.home() / ".openclaw/workspace"
 )
 
 # 启动任务

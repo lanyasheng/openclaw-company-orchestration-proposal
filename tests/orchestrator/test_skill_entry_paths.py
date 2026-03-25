@@ -36,8 +36,6 @@ def test_skill_entry_exists():
     print(f"   - orch_command.py: {command_path}")
     print(f"   - install script: {install_path}")
     print()
-    
-    return True
 
 
 def test_install_script_paths():
@@ -73,8 +71,6 @@ def test_install_script_paths():
     print("   - References runtime/skills, runtime/scripts, runtime/orchestrator")
     print("   - No WORKSPACE_ROOT references")
     print()
-    
-    return True
 
 
 def test_no_hardcoded_workspace_paths():
@@ -120,8 +116,6 @@ def test_no_hardcoded_workspace_paths():
     print("   - orch_command.py uses relative paths")
     print("   - install script uses REPO_ROOT")
     print()
-    
-    return True
 
 
 def test_install_script_syntax():
@@ -143,8 +137,6 @@ def test_install_script_syntax():
     
     print("✅ Install script has valid Python syntax")
     print()
-    
-    return True
 
 
 def test_skill_documentation_paths():
@@ -170,8 +162,6 @@ def test_skill_documentation_paths():
     print("   - References runtime/orchestrator/cli.py")
     print("   - No workspace/orchestrator/ references")
     print()
-    
-    return True
 
 
 def main():

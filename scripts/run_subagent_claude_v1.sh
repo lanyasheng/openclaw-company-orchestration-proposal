@@ -21,7 +21,7 @@
 #
 # Requirements:
 #   - Claude Code CLI installed (`npm install -g @anthropic-ai/claude-code`)
-#   - Or available at /Users/study/bin/claude
+#   - Or set CLAUDE_CLI_PATH environment variable
 #
 # Quickstart:
 #   1. Install Claude Code: npm install -g @anthropic-ai/claude-code
@@ -39,12 +39,15 @@ WORKDIR="${CLAUDE_WORKDIR:-$(pwd)}"
 TIMEOUT_S="${CLAUDE_TIMEOUT_S:-900}"
 
 # Auto-detect Claude CLI path
+# Priority: CLAUDE_CLI_PATH env > PATH > common locations
 if [ -n "${CLAUDE_CLI_PATH:-}" ]; then
     CLAUDE_BIN="$CLAUDE_CLI_PATH"
 elif command -v claude &>/dev/null; then
     CLAUDE_BIN="$(command -v claude)"
-elif [ -x /Users/study/bin/claude ]; then
-    CLAUDE_BIN="/Users/study/bin/claude"
+elif [ -x "$HOME/bin/claude" ]; then
+    CLAUDE_BIN="$HOME/bin/claude"
+elif [ -x "$HOME/.npm-global/bin/claude" ]; then
+    CLAUDE_BIN="$HOME/.npm-global/bin/claude"
 else
     echo "[runner] ERROR: Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code" >&2
     echo "[runner] Or set CLAUDE_CLI_PATH environment variable." >&2

@@ -96,8 +96,6 @@ def test_dispatch_plan_canonical_callback():
     print(f"   - push_required_before_next_batch: {canonical_callback['push_required_before_next_batch']}")
     print(f"   - operator_runbook: {canonical_callback['operator_runbook']}")
     print()
-    
-    return True
 
 
 def test_dispatch_reference_content():
@@ -160,8 +158,6 @@ def test_dispatch_reference_content():
     
     # 清理临时文件
     dispatch_path.unlink()
-    
-    return True
 
 
 def test_operator_runbook_exists():
@@ -188,8 +184,6 @@ def test_operator_runbook_exists():
     print(f"   - Path: {runbook_path}")
     print(f"   - Size: {runbook_path.stat().st_size} bytes")
     print()
-    
-    return True
 
 
 def main():

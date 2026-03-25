@@ -42,8 +42,6 @@ def test_runner_script_exists():
     print(f"   - Size: {runner_path.stat().st_size} bytes")
     print(f"   - Executable: Yes")
     print()
-    
-    return True
 
 
 def test_claude_cli_available():
@@ -82,14 +80,12 @@ def test_claude_cli_available():
         else:
             print(f"   - Version check failed (may still work)")
         print()
-        return True
     else:
         print("⚠️  Claude CLI not found in PATH or common locations")
         print("   Install with: npm install -g @anthropic-ai/claude-code")
         print("   Or set CLAUDE_CLI_PATH environment variable")
         print()
         # Don't fail the test - runner can be configured later
-        return True
 
 
 def test_runner_help():
@@ -112,8 +108,6 @@ def test_runner_help():
     
     print("✅ Runner script has valid bash syntax")
     print()
-    
-    return True
 
 
 def test_runner_stub_fallback():
@@ -137,8 +131,6 @@ def test_runner_stub_fallback():
     print("   - Exits with code 127 (command not found)")
     print("   - Documents CLAUDE_CLI_PATH environment variable")
     print()
-    
-    return True
 
 
 def main():
