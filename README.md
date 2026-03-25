@@ -1,146 +1,97 @@
-# OpenClaw Company Orchestration
+# OpenClaw Orchestration Control Plane
 
-> **OpenClaw 原生的多任务编排控制面** — 回调驱动 · 批量 DAG · Continuation Kernel · Fan-in 审查 · 门控续行
+> **When an agent finishes a task, what happens next?**
+> This repo makes the answer explicit, traceable, and safe — natively on OpenClaw.
 
 [中文版](README_CN.md) · [Operations Guide](docs/OPERATIONS.md) · [Current Truth](docs/CURRENT_TRUTH.md)
 
 ---
 
-## What This Solves
+## The Problem
 
-When you use OpenClaw with `sessions_spawn` / subagents for multi-task work, you hit a coordination gap:
+Multi-agent systems rarely fail because the model can't answer a question. They fail because of **coordination gaps**:
 
-- An agent finishes a task, reports results — **then what?** Who decides the next step?
-- 5 parallel tasks complete with mixed results — **proceed or stop?** By what rule?
-- Process crashes mid-workflow — **where were we?** How to resume?
-- Complex work needs phases (planning → execution → closeout) — **who orchestrates the handoffs?**
+| Gap | What Goes Wrong |
+|-----|-----------------|
+| **No explicit handoff** | Agent A finishes. Nobody tells Agent B. Work stalls silently. |
+| **No fan-in** | 5 parallel tasks return mixed results. Proceed or stop? By what rule? |
+| **No state continuity** | Process crashes. Where were we? What was done? How to resume? |
+| **No safety gate** | Auto-dispatch without guardrails → runaway agents, wasted compute. |
+| **No traceability** | Something went wrong. Can you trace the decision chain? |
 
-This repo is the **orchestration control plane** that answers these questions, built natively on OpenClaw's primitives (`sessions_spawn`, subagent, callback, shared-context).
+These are not "nice to have" — they are the **reason most multi-agent automation stays in demo mode**.
+
+---
+
+## What This Repo Provides
+
+An **orchestration control plane** for OpenClaw that makes task transitions explicit:
+
+```
+Task completes → Explicit contract → Fan-in review → Safety gate → Next dispatch
+                     ↓
+   (stopped_because / next_step / next_owner / readiness)
+```
+
+### Core Capabilities
+
+| Capability | How It Works | Status |
+|-----------|-------------|--------|
+| **Batch DAG Planning** | Define task batches with `depends_on`. Kahn's algorithm validates DAG, topological sort determines execution order. | ✅ Production-tested |
+| **Parallel Dispatch + Retry** | `BatchExecutor` dispatches tasks via `SubagentExecutor`, monitors completion, retries failed tasks (configurable `max_retries`). | ✅ Production-tested |
+| **Fan-in Review** | `BatchReviewer` applies `all_success` / `any_success` / `majority` policy to determine batch outcome. | ✅ Production-tested |
+| **Safety Gates** | Configurable gate conditions pause workflow for human review. Resume when ready. | ✅ Production-tested |
+| **Single JSON Truth** | One `workflow_state_*.json` file per workflow — all batches, tasks, decisions, context. The only source of truth. | ✅ Production-tested |
+| **LangGraph Integration** | Optional LangGraph StateGraph engine with SQLite checkpoint. Falls back to zero-dependency polling loop. | ✅ Production-tested |
+| **Continuation Kernel** | 9-version incremental evolution: `registration → dispatch → spawn → execute → receipt → callback → auto-continue`. Full artifact linkage chain. | ✅ Production-tested |
+| **Context Recovery** | `context_summary` auto-generated at each save. Resume from crash or context compression. | ✅ Production-tested |
+| **Pluggable Executors** | `TaskExecutorBase` abstract interface — swap in HTTP workers, LangChain agents, or any custom backend. | ✅ Interface defined |
+
+---
+
+## Architecture
+
+```mermaid
+graph TD
+  subgraph Control["Orchestration Control Plane"]
+    CLI["cli.py<br/>plan · run · show · resume"]
+    TP["TaskPlanner<br/>DAG validate · topo sort"]
+    WG["Workflow Engine<br/>LangGraph ↔ polling fallback"]
+    BE["BatchExecutor<br/>parallel dispatch · retry"]
+    BR["BatchReviewer<br/>fan-in policy · gate"]
+    WS["WorkflowState<br/>single JSON truth"]
+    CK["Continuation Kernel<br/>v1-v9 artifact chain"]
+  end
+
+  subgraph Exec["Execution Substrate"]
+    SE["SubagentExecutor<br/>process mgmt · cleanup"]
+    EI["TaskExecutorBase<br/>pluggable backends"]
+  end
+
+  subgraph Platform["OpenClaw Platform"]
+    SS["sessions_spawn"]
+    CB["callback / shared-context"]
+  end
+
+  CLI --> TP --> WS
+  CLI --> WG --> BE --> SE
+  WG --> BR --> WS
+  SE --> SS
+  CK --> CB
+  BE -.-> EI
+
+  style Control fill:#1a2744,stroke:#3b82f6,color:#fff
+  style Exec fill:#2d1a44,stroke:#8b5cf6,color:#fff
+  style Platform fill:#1a4428,stroke:#22c55e,color:#fff
+```
+
+**Design principle:** OpenClaw holds the platform primitives (`sessions_spawn`, callbacks, shared-context). This repo holds the **orchestration logic** — batch DAG, fan-in, gates, state. External frameworks (LangGraph, etc.) only enter at the execution layer.
 
 ---
 
 ## How It Works
 
-The system has three tightly integrated layers, evolved incrementally from real production needs:
-
-```mermaid
-graph TD
-  subgraph Core["Callback-Driven Core"]
-    SM["state_machine<br/>per-task JSON state"]
-    BA["batch_aggregator<br/>fan-in analysis"]
-    OR["orchestrator<br/>rule chain → decision → dispatch"]
-  end
-
-  subgraph Kernel["Continuation Kernel (v1–v9)"]
-    TR["task_registration<br/>JSONL ledger"]
-    AD["auto_dispatch<br/>policy → SubagentExecutor"]
-    SC["spawn_closure → spawn_execution"]
-    CR["completion_receipt<br/>receipt + validator"]
-    SR["sessions_spawn_request<br/>→ bridge_consumer → callback_auto_close"]
-    AT["auto_continue_trigger<br/>continue / blocked / gate"]
-  end
-
-  subgraph DAG["DAG Workflow Enhancement"]
-    WS["workflow_state<br/>single JSON truth"]
-    TP["task_planner<br/>DAG validate · topo sort"]
-    BE["batch_executor<br/>parallel dispatch · retry"]
-    BR["batch_reviewer<br/>fan-in policy · gate"]
-    WG["workflow_graph / workflow_loop<br/>LangGraph or polling engine"]
-    CLI["cli.py<br/>plan | run | show | resume"]
-  end
-
-  subgraph Exec["Execution Substrate"]
-    SE["SubagentExecutor<br/>process management · cleanup"]
-    SS["subagent_state<br/>hot state + file persist"]
-    EI["TaskExecutorBase<br/>pluggable interface"]
-  end
-
-  subgraph Quality["Quality Gates"]
-    CV["completion_validator<br/>enforce mode"]
-    SW["single_writer_guard<br/>per-domain lock"]
-    CG["closeout_guarantee<br/>failure visibility"]
-  end
-
-  OR --> AD
-  AD --> SE
-  CR --> AT
-  AT --> AD
-  SM --> BA --> OR
-  TR --> AD --> SC --> CR --> SR
-  CLI --> TP --> WS
-  CLI --> WG --> BE --> SE
-  WG --> BR --> WS
-  CV --> CR
-  SW --> AT
-  CG --> CR
-
-  style Core fill:#2d3a5a,stroke:#49a,color:#fff
-  style Kernel fill:#3a2d5a,stroke:#94a,color:#fff
-  style DAG fill:#2d5a3d,stroke:#4a9,color:#fff
-  style Exec fill:#5a3d2d,stroke:#a94,color:#fff
-  style Quality fill:#5a2d3d,stroke:#a49,color:#fff
-```
-
-### Layer 1: Callback-Driven Core
-
-The foundation. Each task is a JSON file (`~/.openclaw/shared-context/job-status/tsk_*.json`). When a task completes (callback received), the system:
-
-1. **`state_machine`** — Updates task status (`pending → running → callback_received → final_closed`)
-2. **`batch_aggregator`** — Checks if the batch is complete, analyzes success/failure/timeout statistics
-3. **`orchestrator`** — Runs a rule chain (`all_success` / `partial_failure` / `major_failure` / `has_common_blocker`) → produces `Decision` (proceed / retry / abort / fix_blocker) → optionally dispatches next tasks
-
-This is the **proven, production-validated base**. Trading roundtable, channel roundtable, and generic scenarios all plug in here.
-
-### Layer 2: Continuation Kernel (v1–v9)
-
-Built incrementally on top of the core to close the **"agent finishes then stops"** gap:
-
-| Version | Module | What It Does |
-|---------|--------|-------------|
-| v1–v2 | `partial_continuation`, `task_registration` | Closeout contract + JSONL task ledger |
-| v3–v4 | `auto_dispatch`, `spawn_closure` | Policy-based auto-dispatch + dedup + spawn artifacts |
-| v5 | `spawn_execution`, `completion_receipt` | Full loop: spawn → execute → receipt |
-| v6 | `sessions_spawn_request`, `callback_auto_close` | Generic sessions_spawn interface + auto-close bridge |
-| v7–v8 | `bridge_consumer` | Consume request → execute (real or simulated) + auto-trigger |
-| v9 | `sessions_spawn_bridge` | Real OpenClaw `sessions_spawn` API integration |
-
-Every version adds a piece; the **linkage chain** connects them: `registration_id → dispatch_id → spawn_id → execution_id → receipt_id → request_id → consumed_id → api_execution_id`.
-
-### Layer 3: DAG Workflow Enhancement
-
-Adds what the callback-driven core doesn't have: a **global view** of multi-batch workflows with explicit dependencies, a **single JSON truth file**, and **LangGraph-grade checkpointing**.
-
-| Module | Adds |
-|--------|------|
-| `workflow_state.py` | Single `workflow_state_*.json` — all batches, tasks, decisions in one file |
-| `task_planner.py` | DAG validation (Kahn's algorithm), topological sort, `depends_on` |
-| `batch_executor.py` | Parallel dispatch via SubagentExecutor, monitoring, configurable retry |
-| `batch_reviewer.py` | Fan-in policy (`all_success` / `any_success` / `majority`) + gate conditions |
-| `workflow_graph.py` | LangGraph StateGraph engine with SQLite checkpoint |
-| `workflow_loop.py` | Zero-dependency polling fallback |
-| `watchdog.py` | Stall detection, auto-resume marking |
-| `cli.py` | Unified CLI: `plan`, `run`, `show`, `resume` (+ v1 commands: `status`, `batch-summary`, `decide`, `list`) |
-
-### Execution Substrate
-
-All layers share a common execution engine:
-
-- **`SubagentExecutor`** — Wraps `sessions_spawn(runtime="subagent")` with process management, timeout, cleanup (process group kill), semaphore-based concurrency control
-- **`subagent_state`** — Hot state in memory + cold state on disk, survives restart
-- **`TaskExecutorBase`** — Abstract interface for plugging non-subagent backends (HTTP workers, LangChain agents, etc.)
-
-### Quality Gates
-
-Cross-cutting safety mechanisms:
-
-- **`completion_validator`** — Enforce mode (not audit-only): blocked/gate/through rules, whitelist with prefix matching
-- **`single_writer_guard`** — Per-domain file lock, prevents concurrent writes
-- **`auto_continue_trigger`** — Based on validator + receipt + writer guard, outputs `continue_allowed` / `continue_blocked` / `gate_required`
-- **`closeout_guarantee`** — Ensures failures are visible to users even when the main chain doesn't naturally surface them
-
----
-
-## Workflow Lifecycle
+### Workflow Lifecycle
 
 ```mermaid
 flowchart LR
@@ -158,49 +109,44 @@ flowchart LR
 ### State Machine
 
 ```
-Workflow: pending → running → completed / failed / gate_blocked (→ running via resume)
-Task:     pending → running → callback_received → final_closed (or failed / timeout)
+Workflow: pending → running → completed / failed / gate_blocked
+                                              ↓ resume
+                                           running
 ```
+
+### Artifact Linkage (Continuation Kernel)
+
+Every task execution maintains a traceable chain:
+
+```
+registration_id → dispatch_id → spawn_id → execution_id
+    → receipt_id → request_id → consumed_id → api_execution_id
+```
+
+Any ID can be used to query the full chain — forward or backward.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Install optional dependencies (recommended)
-pip install langgraph langgraph-checkpoint-sqlite
+pip install langgraph langgraph-checkpoint-sqlite  # optional, recommended
 
-# DAG workflow mode
+# 1. Plan — validate DAG, create state file
 python3 runtime/orchestrator/cli.py plan "Analyze codebase" config.json
+
+# 2. Run — execute batches
 python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace /path/to/project
+
+# 3. Monitor — check progress
 python3 runtime/orchestrator/cli.py show workflow_state_wf_xxx.json
+
+# 4. Resume — continue from gate or crash
 python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
-
-# Callback-driven mode (original orchestrator)
-python3 runtime/orchestrator/cli.py status <task_id>
-python3 runtime/orchestrator/cli.py batch-summary <batch_id>
-python3 runtime/orchestrator/cli.py decide <batch_id>
-python3 runtime/orchestrator/cli.py list --state running
-python3 runtime/orchestrator/cli.py stuck --timeout 60
-
-# Entry point for OpenClaw scenarios
-python3 runtime/scripts/orch_command.py --context <scenario> --channel-id "<id>" --topic "<topic>"
 ```
 
----
+### Example `config.json`
 
-## Onboarding a New Scenario
-
-### For Callback-Driven Scenarios (Trading, Channel, Custom)
-
-1. **Choose an adapter**: `trading_roundtable` for trading, `channel_roundtable` for generic channels, or write your own extending `orchestrator.py`
-2. **Configure auto-dispatch**: Start with `allow_auto_dispatch=false`, validate artifacts, then enable
-3. **Set fan-in rules**: Configure in the `Orchestrator` rule chain
-4. **First run**: Verify callback → ack → dispatch artifacts are stable before enabling auto-continuation
-
-### For DAG Workflow Scenarios
-
-1. **Define `config.json`**:
 ```json
 [
   {
@@ -222,76 +168,98 @@ python3 runtime/scripts/orch_command.py --context <scenario> --channel-id "<id>"
 ]
 ```
 
-2. **Provide runner script**: `<workspace>/scripts/run_subagent_claude_v1.sh <task_prompt> <label>`
-3. **Run**: `plan` → `run` → `show` → `resume`
+---
+
+## Onboarding a New Scenario
+
+### Step 1: Define Your Workflow
+
+Create a `config.json` with batch definitions. Each batch has:
+- `batch_id` — unique identifier
+- `tasks[]` — array of `{task_id, label}`, optional `executor` (default: `subagent`), optional `max_retries`
+- `depends_on` — list of batch IDs this batch waits for (cycles are rejected)
+- `fan_in_policy` — `all_success` (default) / `any_success` / `majority`
+
+### Step 2: Provide a Runner Script
+
+`SubagentExecutor` looks for `<workspace>/scripts/run_subagent_claude_v1.sh`. Arguments: `<task_prompt> <label>`.
+
+### Step 3: Run and Iterate
+
+```bash
+python3 runtime/orchestrator/cli.py plan "Your goal" config.json
+python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace .
+```
+
+Start with simple 2-batch workflows. Validate artifacts. Add complexity gradually.
+
+### For Callback-Driven Scenarios
+
+If your scenario is callback-driven (like trading or channel roundtable):
+
+1. Choose an adapter: `trading_roundtable`, `channel_roundtable`, or custom
+2. Start with `allow_auto_dispatch=false`
+3. Validate callback → ack → dispatch artifacts are stable
+4. Then enable auto-continuation
 
 ---
 
-## Positioning
+## Positioning vs Other Frameworks
 
-| Framework | Focus | This Repo |
-|-----------|-------|-----------|
-| **LangGraph** | General stateful agent graphs | **Embedded** as optional engine; we add batch DAG + fan-in + gate + JSON truth on top |
-| **Deer-Flow** | Research workflow | Shared concept: SubagentExecutor design. We extend with continuation kernel + quality gates |
-| **CrewAI / AutoGen** | Agent definition frameworks | We are a **control plane** — we orchestrate when and how agents run, not what they are |
-| **Temporal** | Durable workflows at scale | We are single-process + JSON checkpoint — no server cluster needed |
+| Framework | What It Optimizes For | How We Relate |
+|-----------|----------------------|---------------|
+| **LangGraph** | General-purpose stateful agent graphs, checkpoints, interrupts | **Embedded** as our optional engine. We add batch DAG, fan-in, gates, and JSON truth on top. |
+| **Deer-Flow** (ByteDance) | Research workflow: plan → research → report | Shared concept: `SubagentExecutor` design (task_id / timeout / status). We extend with full continuation kernel and quality gates. |
+| **CrewAI / AutoGen** | Agent definition and conversation | We are the **control plane** — we decide *when and how* agents run, not *what* agents are. |
+| **Temporal** | Durable workflows at enterprise scale | We are single-process + JSON checkpoint. No server cluster needed. Right-sized for OpenClaw. |
+| **Google ADK** | Code-first agent toolkit | We focus on **orchestration** not **agent capability**. ADK agents can be task executors under our planner. |
 
-**This repo is the OpenClaw-native orchestration control plane.** It keeps OpenClaw's `sessions_spawn`, callback, and shared-context as the canonical interface. External frameworks only enter at the leaf execution layer.
+**One line:** We are a **thin, opinionated control plane** for OpenClaw. LangGraph is an optional execution backend. Agents do the work; we orchestrate the transitions.
 
 ---
 
 ## Repository Structure
 
 ```
-├── runtime/orchestrator/     # ALL orchestration modules (core + kernel + DAG + execution)
-│   ├── state_machine.py      # Task state machine (per-task JSON files)
-│   ├── batch_aggregator.py   # Fan-in analysis, batch summarization
-│   ├── orchestrator.py       # Rule chain decision engine
-│   ├── subagent_executor.py  # SubagentExecutor (Deer-Flow inspired)
-│   ├── task_registration.py  # Task registry (JSONL ledger)
-│   ├── auto_dispatch.py      # Auto-dispatch with policy evaluation
-│   ├── spawn_closure.py      # Spawn closure artifacts
-│   ├── completion_receipt.py # Completion receipts + validator integration
-│   ├── sessions_spawn_*.py   # sessions_spawn request/bridge
-│   ├── bridge_consumer.py    # Bridge consumption layer
-│   ├── auto_continue_trigger.py  # Auto-continue decision
-│   ├── completion_validator.py   # Enforce-mode validator
-│   ├── workflow_state.py     # Single JSON truth (DAG enhancement)
-│   ├── task_planner.py       # DAG validation + topo sort
-│   ├── batch_executor.py     # Parallel dispatch + retry
-│   ├── batch_reviewer.py     # Fan-in policy + gate
-│   ├── workflow_graph.py     # LangGraph engine (SQLite checkpoint)
-│   ├── workflow_loop.py      # Polling fallback engine
-│   ├── watchdog.py           # Stall detection + auto-resume
-│   ├── cli.py                # Unified CLI entry point
-│   └── ...                   # Trading/channel adapters, quality gates, etc.
-├── tests/orchestrator/       # Test suite (781 tests, all passing)
-├── runtime/tests/            # Integration tests (subset)
-├── docs/                     # CURRENT_TRUTH, Operations, architecture docs
-├── examples/                 # Sample configs and payloads
-├── schemas/                  # JSON schemas
-├── scripts/                  # Helper scripts, runner entry
-├── plugins/                  # OpenClaw plugins (human-gate)
-├── archive/                  # Historical POCs and old kernel docs
-└── orchestration_runtime/    # Early prototype (deprecated, see runtime/)
+runtime/orchestrator/       # Core orchestration modules
+├── cli.py                  # Unified CLI entry point
+├── workflow_state.py       # Single JSON truth model
+├── task_planner.py         # DAG validation + topological sort
+├── batch_executor.py       # Parallel dispatch + retry
+├── batch_reviewer.py       # Fan-in policy + gate conditions
+├── workflow_graph.py       # LangGraph engine (SQLite checkpoint)
+├── workflow_loop.py        # Zero-dependency polling fallback
+├── subagent_executor.py    # Process management + cleanup
+├── executor_interface.py   # Pluggable executor abstract interface
+├── watchdog.py             # Stall detection + auto-resume
+├── state_machine.py        # Per-task state (callback-driven core)
+├── batch_aggregator.py     # Fan-in analysis
+├── orchestrator.py         # Rule chain decision engine
+├── auto_dispatch.py        # Policy-based auto-dispatch
+├── completion_receipt.py   # Completion receipt + validator
+├── sessions_spawn_*.py     # OpenClaw sessions_spawn integration
+└── ...                     # Adapters, quality gates, artifacts
+
+tests/orchestrator/         # Test suite (781 tests, all passing)
+docs/                       # Operations guide, architecture docs
+examples/                   # Sample configs and payloads
 ```
 
 ---
 
 ## Design Principles
 
-1. **OpenClaw native** — Built on `sessions_spawn`, callback, shared-context. Not a framework transplant.
-2. **Incremental** — Each kernel version adds one capability. No big-bang rewrites.
-3. **Callback-driven first, DAG when needed** — Simple scenarios use callbacks; complex multi-batch DAGs use `workflow_state`.
-4. **Prove, then automate** — Start with `allow_auto_dispatch=false`. Validate artifacts. Then enable auto-continuation.
-5. **Thin bridge, not thick platform** — We orchestrate; agents do the work.
+1. **OpenClaw Native** — Built on `sessions_spawn`, callback, shared-context. Not a framework transplant.
+2. **Incremental Evolution** — Each kernel version adds one capability. No big-bang rewrites.
+3. **Callback-Driven First, DAG When Needed** — Simple scenarios use callbacks. Complex multi-batch workflows use `workflow_state`.
+4. **Prove, Then Automate** — Start with `allow_auto_dispatch=false`. Validate. Then enable.
+5. **Thin Bridge, Not Thick Platform** — We orchestrate the transitions. Agents do the work.
 
 ---
 
 ## Tests
 
 ```bash
-cd <repo-root>
 PYTHONPATH=runtime/orchestrator:runtime/scripts python3 -m pytest tests/orchestrator/ -q
 # 781 passed
 ```
