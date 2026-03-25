@@ -199,12 +199,12 @@ class Orchestrator:
         Returns:
             如果触发了新派发则返回 dispatch_id，否则返回 None
         """
-        # 1. 标记收到回调
         mark_callback_received(task_id, result)
-        
-        # 2. 检查批次是否完成
+
+        self._sync_to_workflow_state(task_id, "callback_received", result)
+
         if not is_batch_complete(batch_id):
-            return None  # 批次未完成，等待其他任务
+            return None
         
         # 3. 生成汇总报告
         check_and_summarize_batch(batch_id)
@@ -252,22 +252,29 @@ class Orchestrator:
         return dispatch_id
     
     def get_decision(self, decision_id: str) -> Optional[Dict[str, Any]]:
-        """获取决策记录"""
         decision_file = _decision_file(decision_id)
         if not decision_file.exists():
             return None
-        
         with open(decision_file, "r") as f:
             return json.load(f)
-    
+
     def get_dispatch(self, dispatch_id: str) -> Optional[Dict[str, Any]]:
-        """获取派发记录"""
         dispatch_file = _dispatch_file(dispatch_id)
         if not dispatch_file.exists():
             return None
-        
         with open(dispatch_file, "r") as f:
             return json.load(f)
+
+    def _sync_to_workflow_state(
+        self, task_id: str, status: str, result: Optional[Dict[str, Any]] = None
+    ) -> None:
+        try:
+            from state_sync import sync_callback_to_workflow_state, find_active_workflow_state
+            ws_path = find_active_workflow_state()
+            if ws_path:
+                sync_callback_to_workflow_state(ws_path, task_id, status, result)
+        except Exception:
+            pass
 
 
 # ============ 内置决策规则 ============

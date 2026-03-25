@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 
 from workflow_state import WorkflowState, BatchEntry, TaskEntry
 from subagent_executor import SubagentExecutor, SubagentConfig, TERMINAL_STATES
 
 __all__ = ["BatchExecutor"]
+
+logger = logging.getLogger(__name__)
 
 
 def _iso_now() -> str:
@@ -31,7 +34,6 @@ class BatchExecutor:
         return self._executor
 
     def execute_batch(self, batch: BatchEntry, workflow_state: WorkflowState) -> None:
-        _ = workflow_state
         batch.status = "running"
         batch.started_at = _iso_now()
         for task in batch.tasks:
@@ -39,6 +41,7 @@ class BatchExecutor:
                 continue
             task.status = "running"
             task.started_at = _iso_now()
+            self._sync_to_state_machine(task.task_id, batch.batch_id, "running")
             try:
                 sub_id = self.executor.execute_async(task.label)
                 task.subagent_task_id = sub_id
@@ -46,6 +49,7 @@ class BatchExecutor:
                 task.status = "failed"
                 task.error = str(e)
                 task.completed_at = _iso_now()
+                self._sync_to_state_machine(task.task_id, batch.batch_id, "failed")
 
     def monitor_batch(self, batch: BatchEntry) -> bool:
         if not any(t.status == "running" for t in batch.tasks):
@@ -74,6 +78,10 @@ class BatchExecutor:
                         result.result if isinstance(result.result, str)
                         else json.dumps(result.result) if result.result else ""
                     )
+                    self._sync_to_state_machine(
+                        task.task_id, batch.batch_id, "completed",
+                        result={"verdict": "PASS", "summary": task.result_summary},
+                    )
                 elif task.retry_count < task.max_retries:
                     task.retry_count += 1
                     task.status = "pending"
@@ -83,9 +91,23 @@ class BatchExecutor:
                     task.status = "failed"
                     task.completed_at = _iso_now()
                     task.error = result.error or result.status
+                    self._sync_to_state_machine(
+                        task.task_id, batch.batch_id, "failed",
+                        result={"error": task.error},
+                    )
 
         all_done = all(t.status != "running" for t in batch.tasks)
         if all_done and batch.status == "running":
             batch.status = "completed"
             batch.completed_at = _iso_now()
         return all_done
+
+    @staticmethod
+    def _sync_to_state_machine(
+        task_id: str, batch_id: str, status: str, result: dict | None = None
+    ) -> None:
+        try:
+            from state_sync import sync_task_to_state_machine
+            sync_task_to_state_machine(task_id, batch_id, status, result)
+        except Exception:
+            logger.debug("state_machine sync skipped for %s", task_id, exc_info=True)
