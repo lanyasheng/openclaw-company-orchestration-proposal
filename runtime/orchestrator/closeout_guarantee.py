@@ -206,16 +206,27 @@ class CloseoutGuaranteeArtifact:
         )
     
     def write(self) -> Path:
-        """写入 guarantee artifact 到文件"""
         _ensure_guarantee_dir()
         guarantee_path = _guarantee_file(self.batch_id)
         _atomic_json_write(guarantee_path, self.to_dict())
-        
-        # 更新 index
+
         index = _load_guarantee_index()
         index[self.batch_id] = self.guarantee_id
         _save_guarantee_index(index)
-        
+
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_batch(self.batch_id, continuation={
+                    "stopped_because": f"guarantee_{self.guarantee_status}",
+                    "decision": "stop" if self.guarantee_status == "fallback_needed" else "proceed",
+                    "next_batch": None,
+                    "decided_at": self.guarantee_time,
+                })
+        except Exception:
+            pass
+
         return guarantee_path
 
 

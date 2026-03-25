@@ -281,10 +281,21 @@ class CloseoutArtifact:
         )
     
     def write(self) -> Path:
-        """写入 closeout artifact 到文件"""
         _ensure_closeout_dir()
         closeout_path = _closeout_file(self.batch_id)
         _atomic_json_write(closeout_path, self.to_dict())
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_batch(self.batch_id, continuation={
+                    "stopped_because": f"closeout_{self.closeout_status}",
+                    "decision": "proceed" if self.closeout_status == "completed" else "stop",
+                    "next_batch": None,
+                    "decided_at": self.closeout_time,
+                })
+        except Exception:
+            pass
         return closeout_path
 
 

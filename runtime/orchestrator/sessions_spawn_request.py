@@ -573,13 +573,22 @@ class SessionsSpawnRequest:
         )
     
     def write(self) -> Path:
-        """写入 spawn request artifact 到文件"""
         _ensure_request_dir()
         req_file = _spawn_request_file(self.request_id)
         tmp_file = req_file.with_suffix(".tmp")
         with open(tmp_file, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         tmp_file.replace(req_file)
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_task(
+                    self.source_task_id,
+                    execution_metadata={"request_id": self.request_id, "request_status": self.spawn_request_status},
+                )
+        except Exception:
+            pass
         return req_file
     
     def to_sessions_spawn_call(self) -> Dict[str, Any]:

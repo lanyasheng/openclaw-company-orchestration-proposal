@@ -321,13 +321,22 @@ class BridgeConsumedArtifact:
         )
     
     def write(self) -> Path:
-        """写入 consumed artifact 到文件"""
         _ensure_consumed_dir()
         artifact_file = _consumed_artifact_file(self.consumed_id)
         tmp_file = artifact_file.with_suffix(".tmp")
         with open(tmp_file, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         tmp_file.replace(artifact_file)
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_task(
+                    self.source_task_id,
+                    execution_metadata={"consumed_id": self.consumed_id, "consumer_status": self.consumer_status},
+                )
+        except Exception:
+            pass
         return artifact_file
     
     def get_linkage(self) -> Dict[str, str]:

@@ -201,6 +201,11 @@ def cmd_plan(description: str, config_path: str):
 
 def cmd_run(state_path: str, workspace_dir: str = "."):
     """运行工作流"""
+    from workflow_state_store import get_store
+    store = get_store()
+    store.set_active(os.path.abspath(state_path))
+    os.environ["OPENCLAW_WORKFLOW_STATE_PATH"] = os.path.abspath(state_path)
+
     try:
         from workflow_graph import run_workflow
         from workflow_state import load_workflow_state
@@ -251,6 +256,11 @@ def cmd_run(state_path: str, workspace_dir: str = "."):
 
 def cmd_resume_workflow(state_path: str, workspace_dir: str = "."):
     """从中断处恢复工作流"""
+    from workflow_state_store import get_store
+    store = get_store()
+    store.set_active(os.path.abspath(state_path))
+    os.environ["OPENCLAW_WORKFLOW_STATE_PATH"] = os.path.abspath(state_path)
+
     try:
         from workflow_graph import resume_workflow
         engine = "LangGraph"

@@ -336,13 +336,22 @@ class PlanningArtifact:
         return len(errors) == 0, errors
     
     def write(self) -> Path:
-        """写入 planning artifact 到文件"""
         _ensure_planning_dir()
         planning_file = _planning_file(self.artifact_id)
         tmp_file = planning_file.with_suffix(".tmp")
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
         tmp_file.replace(planning_file)
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active and hasattr(self, "source_task_id") and self.source_task_id:
+                store.update_task(
+                    self.source_task_id,
+                    execution_metadata={"planning_id": self.artifact_id},
+                )
+        except Exception:
+            pass
         return planning_file
 
 

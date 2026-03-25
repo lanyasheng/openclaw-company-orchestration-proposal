@@ -237,14 +237,23 @@ class IssueLaneExecutionResult:
         )
     
     def write(self) -> Path:
-        """写入执行结果到文件"""
         _ensure_execution_dir()
         exec_file = _execution_file(self.execution_id)
         tmp_file = exec_file.with_suffix(".tmp")
         with open(tmp_file, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
-        tmp_path = tmp_file.replace(exec_file)
-        return tmp_path
+        result_path = tmp_file.replace(exec_file)
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_task(
+                    self.issue_id,
+                    execution_metadata={"issue_execution_id": self.execution_id},
+                )
+        except Exception:
+            pass
+        return result_path
     
     @classmethod
     def load(cls, execution_id: str) -> Optional["IssueLaneExecutionResult"]:

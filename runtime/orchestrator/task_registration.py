@@ -264,18 +264,30 @@ class TaskRegistry:
         # 添加注册时间戳
         record.metadata["registered_at"] = _iso_now()
         
-        # 写入单个记录文件
         record_file = _registration_file(record.registration_id)
         tmp_file = record_file.with_suffix(".tmp")
         with open(tmp_file, "w") as f:
             json.dump(record.to_dict(), f, indent=2)
         tmp_file.replace(record_file)
-        
-        # 追加到注册表
+
         records = self._read_registry()
         records.append(record.to_dict())
         self._write_registry(records)
-        
+
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active and record.task_id:
+                store.update_task(
+                    record.task_id,
+                    execution_metadata={
+                        "registration_id": record.registration_id,
+                        "registration_status": record.registration_status,
+                    },
+                )
+        except Exception:
+            pass
+
         return record
     
     def get(self, registration_id: str) -> Optional[TaskRegistrationRecord]:

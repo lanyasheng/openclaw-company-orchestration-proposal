@@ -255,13 +255,22 @@ class SpawnExecutionArtifact:
         )
     
     def write(self) -> Path:
-        """写入 spawn execution artifact 到文件"""
         _ensure_execution_dir()
         exec_file = _spawn_execution_file(self.execution_id)
         tmp_file = exec_file.with_suffix(".tmp")
         with open(tmp_file, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         tmp_file.replace(exec_file)
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_task(
+                    self.source_task_id,
+                    execution_metadata={"execution_id": self.execution_id, "spawn_id": self.source_spawn_id},
+                )
+        except Exception:
+            pass
         return exec_file
 
 

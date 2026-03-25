@@ -249,13 +249,22 @@ class SpawnClosureArtifact:
         )
     
     def write(self) -> Path:
-        """写入 spawn closure artifact 到文件"""
         _ensure_spawn_dir()
         spawn_file = _spawn_closure_file(self.spawn_id)
         tmp_file = spawn_file.with_suffix(".tmp")
         with open(tmp_file, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         tmp_file.replace(spawn_file)
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_task(
+                    self.source_task_id,
+                    execution_metadata={"spawn_id": self.spawn_id, "dispatch_id": self.source_dispatch_id},
+                )
+        except Exception:
+            pass
         return spawn_file
 
 

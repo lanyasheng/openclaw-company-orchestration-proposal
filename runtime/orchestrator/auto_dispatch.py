@@ -188,13 +188,26 @@ class DispatchArtifact:
         )
     
     def write(self) -> Path:
-        """写入 dispatch artifact 到文件"""
+        """写入 dispatch artifact 到文件，同时同步到 WorkflowState"""
         _ensure_dispatch_dir()
         dispatch_file = _dispatch_file(self.dispatch_id)
         tmp_file = dispatch_file.with_suffix(".tmp")
         with open(tmp_file, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         tmp_file.replace(dispatch_file)
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_task(
+                    self.task_id,
+                    execution_metadata={
+                        "dispatch_id": self.dispatch_id,
+                        "dispatch_status": self.dispatch_status,
+                    },
+                )
+        except Exception:
+            pass
         return dispatch_file
 
 

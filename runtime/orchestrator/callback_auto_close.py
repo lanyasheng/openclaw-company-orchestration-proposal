@@ -301,14 +301,23 @@ class CallbackAutoCloseArtifact:
         )
     
     def write(self) -> Path:
-        """写入 callback close artifact 到文件"""
         _ensure_close_dir()
         close_file = _callback_close_file(self.close_id)
         tmp_file = close_file.with_suffix(".tmp")
         with open(tmp_file, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         tmp_file.replace(close_file)
-        
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_task(
+                    self.source_task_id,
+                    execution_metadata={"close_id": self.close_id, "close_status": self.close_status},
+                )
+        except Exception:
+            pass
+
         # 记录 linkage index
         linkage_keys = _build_linkage_keys(
             self.source_dispatch_id,

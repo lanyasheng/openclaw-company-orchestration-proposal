@@ -269,13 +269,26 @@ class CompletionReceiptArtifact:
         )
     
     def write(self) -> Path:
-        """写入 completion receipt artifact 到文件"""
+        """写入 completion receipt artifact 到文件，同时同步到 WorkflowState"""
         _ensure_receipt_dir()
         receipt_file = _completion_receipt_file(self.receipt_id)
         tmp_file = receipt_file.with_suffix(".tmp")
         with open(tmp_file, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         tmp_file.replace(receipt_file)
+        try:
+            from workflow_state_store import get_store
+            store = get_store()
+            if store.is_active:
+                store.update_task(
+                    self.source_task_id,
+                    status="completed" if self.receipt_status == "completed" else "failed",
+                    result_summary=self.result_summary[:200] if self.result_summary else None,
+                    callback_result={"receipt_id": self.receipt_id, "receipt_status": self.receipt_status},
+                    execution_metadata={"receipt_id": self.receipt_id, "spawn_id": self.source_spawn_id},
+                )
+        except Exception:
+            pass
         return receipt_file
 
 
