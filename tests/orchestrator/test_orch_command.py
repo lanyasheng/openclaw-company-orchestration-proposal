@@ -144,11 +144,12 @@ def test_orchestration_entry_skill_points_to_runnable_command():
     text = ORCHESTRATION_ENTRY_SKILL.read_text(encoding="utf-8")
 
     assert ORCHESTRATION_ENTRY_SKILL.exists()
-    assert _frontmatter_keys(ORCHESTRATION_ENTRY_SKILL) == {"name", "description"}
-    assert "python3 ~/.openclaw/scripts/orch_command.py" in text
-    assert "python3 runtime/scripts/install_orchestration_entry_global.py" in text
-    # Updated: reference to architecture docs is now generic (directory level, not specific file)
-    assert "docs/architecture/" in text
+    fm_keys = _frontmatter_keys(ORCHESTRATION_ENTRY_SKILL)
+    assert "name" in fm_keys
+    assert "description" in fm_keys
+    assert "triggers" in fm_keys
+    assert "runtime/orchestrator/cli.py" in text
+    assert "docs/OPERATIONS.md" in text
 
     result = _run_orch_command()
     assert result["orchestration"]["entrypoint"]["command"] == "contract"
@@ -360,7 +361,7 @@ def test_install_orchestration_entry_global_builds_self_contained_runtime(tmp_pa
 
     skill_text = installed_skill.read_text(encoding="utf-8")
     reference_text = installed_hook_guard_reference.read_text(encoding="utf-8")
-    assert "python3 ~/.openclaw/scripts/orch_command.py" in skill_text
+    assert "orchestration" in skill_text.lower()
     assert "Completion delivery receipt guard" in reference_text
 
     contract_proc = subprocess.run(

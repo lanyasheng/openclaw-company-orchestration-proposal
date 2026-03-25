@@ -30,17 +30,20 @@ write_result() {
     local status="$1"
     local result="$2"
     local error="${3:-}"
-    python3 -c "
+    python3 - "$TASK_ID" "$status" "$result" "$error" "$TASK_DESC" "$TASK_LABEL" "$STATE_FILE" <<'PYEOF'
 import json, sys
-json.dump({
-    'task_id': '$TASK_ID',
-    'status': '$status',
-    'result': $(python3 -c "import json; print(json.dumps('$result'))"),
-    'error': $(python3 -c "import json; print(json.dumps('$error'))") if '$error' else None,
-    'task': $(python3 -c "import json; print(json.dumps('$TASK_DESC'))"),
-    'config': {'label': '$TASK_LABEL', 'runtime': 'subagent', 'timeout_seconds': 900},
-}, open('$STATE_FILE', 'w'), indent=2)
-"
+task_id, status, result, error, desc, label, out_path = sys.argv[1:8]
+data = {
+    "task_id": task_id,
+    "status": status,
+    "result": result if result else None,
+    "error": error if error else None,
+    "task": desc,
+    "config": {"label": label, "runtime": "subagent", "timeout_seconds": 900},
+}
+with open(out_path, "w") as f:
+    json.dump(data, f, indent=2)
+PYEOF
 }
 
 # ──── YOUR AGENT COMMAND HERE ────────────────────────────────────────
@@ -53,12 +56,12 @@ echo "[runner] Starting task $TASK_ID: $TASK_LABEL"
 echo "[runner] Description: $TASK_DESC"
 
 # Default: echo-based stub (replace with real agent)
-AGENT_OUTPUT="Task '$TASK_LABEL' completed by runner stub"
+AGENT_OUTPUT="Task completed by runner stub: $TASK_LABEL"
 AGENT_EXIT=0
 
 # ──── WRITE RESULT ───────────────────────────────────────────────────
 if [ "$AGENT_EXIT" -eq 0 ]; then
-    write_result "completed" "$AGENT_OUTPUT"
+    write_result "completed" "$AGENT_OUTPUT" ""
     echo "[runner] Task $TASK_ID completed successfully"
 else
     write_result "failed" "" "Agent exited with code $AGENT_EXIT"

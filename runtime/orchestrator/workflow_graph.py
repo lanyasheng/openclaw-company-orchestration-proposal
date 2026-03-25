@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict  # noqa: F811
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -212,15 +212,21 @@ def _route_after_advance(gs: GraphState) -> str:
     return END
 
 
-def _default_checkpointer(db_path: str | None = None):
-    if db_path and _HAS_SQLITE_SAVER:
-        return SqliteSaver.from_conn_string(db_path)
-    return MemorySaver()
+def _create_sqlite_saver(db_path: str) -> Any:
+    """Create a SqliteSaver, handling the context-manager API."""
+    if not _HAS_SQLITE_SAVER:
+        return None
+    import sqlite3
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    return SqliteSaver(conn)
 
 
 def build_workflow_graph(checkpointer=None, db_path: str | None = None):
     if checkpointer is None:
-        checkpointer = _default_checkpointer(db_path)
+        if db_path:
+            checkpointer = _create_sqlite_saver(db_path)
+        if checkpointer is None:
+            checkpointer = MemorySaver()
 
     graph = StateGraph(GraphState)
     graph.add_node("check_batch", node_check_batch)

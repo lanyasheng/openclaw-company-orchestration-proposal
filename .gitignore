@@ -10,3 +10,5 @@ runtime/*.sqlite
 runtime/*.sqlite3
 *.pid
 *.lock
+workflow_state_wf_*.json
+*.checkpoint.db
