@@ -47,10 +47,7 @@ class BatchExecutor:
     def monitor_batch(self, batch: BatchEntry) -> bool:
         if not any(t.status == "running" for t in batch.tasks):
             if batch.status == "running":
-                has_failure = any(t.status in ("failed", "timeout") for t in batch.tasks)
-                batch.status = "failed" if has_failure and all(
-                    t.status != "completed" for t in batch.tasks
-                ) else "completed"
+                batch.status = "completed"
                 batch.completed_at = _iso_now()
             return True
 
@@ -80,10 +77,7 @@ class BatchExecutor:
                     task.error = result.error or result.status
 
         all_done = all(t.status != "running" for t in batch.tasks)
-        if all_done:
-            has_failure = any(t.status in ("failed", "timeout") for t in batch.tasks)
-            batch.status = "failed" if has_failure and all(
-                t.status != "completed" for t in batch.tasks
-            ) else "completed"
+        if all_done and batch.status == "running":
+            batch.status = "completed"
             batch.completed_at = _iso_now()
         return all_done

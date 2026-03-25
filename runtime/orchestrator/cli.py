@@ -210,20 +210,43 @@ def cmd_run(state_path: str, workspace_dir: str = "."):
         from workflow_state import load_workflow_state
         engine = "WorkflowLoop"
 
-    ws = load_workflow_state(state_path)
+    try:
+        ws = load_workflow_state(state_path)
+    except FileNotFoundError:
+        print(f"Error: state file not found: {state_path}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: invalid JSON in {state_path}: {e}")
+        sys.exit(1)
+
     print(f"Running workflow {ws.workflow_id} ({engine})")
     print(f"  Batches: {len(ws.batches)}, current: {ws.plan.get('current_batch_index', 0)}")
 
-    if engine == "LangGraph":
-        result = run_workflow(ws, state_path, workspace_dir)
-    else:
-        loop = WorkflowLoop(workspace_dir)
-        result = loop.run(state_path)
+    try:
+        if engine == "LangGraph":
+            result = run_workflow(ws, state_path, workspace_dir)
+        else:
+            loop = WorkflowLoop(workspace_dir)
+            result = loop.run(state_path)
+    except Exception as e:
+        print(f"\nError during execution: {type(e).__name__}: {e}")
+        print(f"State saved to: {state_path}")
+        print(f"Resume with: orchestrator-cli resume {state_path}")
+        sys.exit(1)
 
     print(f"\nResult: {result.status}")
     for b in result.batches:
         dec = b.continuation.decision if b.continuation else "—"
         print(f"  {b.batch_id} ({b.label}): {b.status} → {dec}")
+
+    if result.status == "gate_blocked":
+        print(f"\nWorkflow paused — manual review required.")
+        print(f"Resume with: orchestrator-cli resume {state_path}")
+    elif result.status == "failed":
+        for b in result.batches:
+            for t in b.tasks:
+                if t.error:
+                    print(f"\n  FAILED: {t.task_id}: {t.error}")
 
 
 def cmd_resume_workflow(state_path: str, workspace_dir: str = "."):

@@ -55,7 +55,11 @@ class WorkflowLoop:
 
             if batch.status == "pending":
                 if not dependencies_met(state, batch):
-                    logger.info("batch %s waiting for dependencies", batch.batch_id)
+                    logger.warning(
+                        "batch %s dependencies not met — this indicates a DAG ordering issue",
+                        batch.batch_id,
+                    )
+                    state.status = "failed"
                     break
 
                 logger.info("dispatching batch %s", batch.batch_id)
