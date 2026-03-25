@@ -39,6 +39,7 @@ __all__ = [
     "get_lineage_by_child",
     "get_lineage_by_batch",
     "check_fanin_readiness",
+    "build_fanin_closeout_context",
     "LINEAGE_STORE_DIR",
 ]
 
@@ -510,6 +511,232 @@ def check_fanin_readiness(batch_id: str) -> Dict[str, Any]:
             "children": child_details,
         },
     }
+
+
+@dataclass
+class FaninCloseoutContext:
+    """
+    Fan-in Closeout Context — 整合 lineage / fan-in readiness / closeout glue 的上下文。
+    
+    这是 P0 中等批次整合点 (batch-b-parent-child-fanin-closeout-integration) 的核心数据结构。
+    
+    核心字段：
+    - batch_id: 批次 ID
+    - readiness: fan-in readiness 检查结果
+    - children: 所有 child 的 closeout glue input 列表
+    - ready_to_fanin: 是否 ready to fan-in
+    - fanin_decision: fan-in 决策建议
+    - metadata: 额外元数据
+    
+    使用示例：
+    ```python
+    from lineage import build_fanin_closeout_context
+    
+    ctx = build_fanin_closeout_context("batch_001")
+    if ctx.ready_to_fanin:
+        proceed_to_fanin(ctx.children)
+    else:
+        wait_for_children(ctx.readiness["pending_children"])
+    ```
+    """
+    batch_id: str
+    readiness: Dict[str, Any]
+    children: List[Dict[str, Any]]
+    ready_to_fanin: bool
+    fanin_decision: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """序列化为字典"""
+        return {
+            "batch_id": self.batch_id,
+            "readiness": self.readiness,
+            "children": self.children,
+            "ready_to_fanin": self.ready_to_fanin,
+            "fanin_decision": self.fanin_decision,
+            "metadata": self.metadata,
+        }
+
+
+def build_fanin_closeout_context(batch_id: str) -> FaninCloseoutContext:
+    """
+    构建 Fan-in Closeout Context — 整合 lineage / fan-in readiness / closeout glue。
+    
+    这是 P0 中等批次整合点 (batch-b-parent-child-fanin-closeout-integration) 的核心函数。
+    
+    核心流程：
+    1. 查询 batch 的所有 lineage records (lineage 能力)
+    2. 检查 fan-in readiness (fan-in readiness 能力)
+    3. 为每个 child 生成 closeout glue input (closeout glue 能力)
+    4. 返回整合的上下文
+    
+    Args:
+        batch_id: 批次 ID
+    
+    Returns:
+        FaninCloseoutContext: 整合的上下文
+    
+    整合能力：
+    - 基于 lineage 查 children
+    - 基于 closeout 查 readiness
+    - 基于 completion receipt 生成 closeout glue input
+    
+    决策逻辑：
+    - ready_to_fanin = readiness["ready"]
+    - fanin_decision:
+      - "proceed" if ready_to_fanin
+      - "wait" if not ready (有 pending children)
+      - "review" if no lineage found
+    
+    使用示例：
+    ```python
+    ctx = build_fanin_closeout_context("batch_001")
+    
+    print(f"Batch {ctx.batch_id}:")
+    print(f"  Ready to fan-in: {ctx.ready_to_fanin}")
+    print(f"  Decision: {ctx.fanin_decision}")
+    print(f"  Total children: {ctx.readiness['total_children']}")
+    print(f"  Completed: {ctx.readiness['completed_children']}")
+    
+    if ctx.ready_to_fanin:
+        # 所有 children 完成，可以 fan-in
+        for child_glue in ctx.children:
+            process_fanin_input(child_glue)
+    else:
+        # 等待 pending children
+        for pending_id in ctx.readiness["pending_children"]:
+            wait_for_child(pending_id)
+    ```
+    """
+    # Step 1: 查询 lineage records
+    records = get_lineage_by_batch(batch_id)
+    
+    if not records:
+        # 没有 lineage records
+        return FaninCloseoutContext(
+            batch_id=batch_id,
+            readiness={
+                "ready": False,
+                "reason": "No lineage records found for batch",
+                "total_children": 0,
+                "completed_children": 0,
+                "pending_children": [],
+                "details": {"batch_id": batch_id, "error": "no_lineage"},
+            },
+            children=[],
+            ready_to_fanin=False,
+            fanin_decision="review",
+            metadata={"error": "no_lineage"},
+        )
+    
+    # Step 2: 检查 fan-in readiness
+    readiness = check_fanin_readiness(batch_id)
+    
+    # Step 3: 为每个 child 生成 closeout glue input
+    children_glue = []
+    
+    for child_id in [r.child_id for r in records]:
+        child_detail = readiness["details"]["children"].get(child_id, {})
+        child_status = child_detail.get("status", "unknown")
+        
+        # 尝试从 completion receipt 生成 closeout glue input
+        glue_input = _build_child_closeout_glue(child_id, child_status)
+        
+        if glue_input:
+            children_glue.append(glue_input)
+    
+    # Step 4: 决定 fan-in decision
+    ready_to_fanin = readiness["ready"]
+    
+    if ready_to_fanin:
+        fanin_decision = "proceed"
+    elif readiness["total_children"] == 0:
+        fanin_decision = "review"
+    else:
+        fanin_decision = "wait"
+    
+    return FaninCloseoutContext(
+        batch_id=batch_id,
+        readiness=readiness,
+        children=children_glue,
+        ready_to_fanin=ready_to_fanin,
+        fanin_decision=fanin_decision,
+        metadata={
+            "integration_version": "fanin_closeout_v1",
+            "generated_at": _iso_now(),
+        },
+    )
+
+
+def _build_child_closeout_glue(child_id: str, child_status: str) -> Optional[Dict[str, Any]]:
+    """
+    为单个 child 构建 closeout glue input。
+    
+    尝试从 completion receipt 和 closeout 生成 glue input。
+    
+    Args:
+        child_id: child ID
+        child_status: child 状态 (from readiness check)
+    
+    Returns:
+        Dict with glue input, or None if not available
+    """
+    glue_input = {
+        "child_id": child_id,
+        "status": child_status,
+        "glue_available": False,
+    }
+    
+    # 尝试从 closeout_tracker 获取 closeout
+    try:
+        from closeout_tracker import get_closeout
+        closeout = get_closeout(child_id)
+        
+        if closeout:
+            glue_input["closeout_id"] = closeout.closeout_id
+            glue_input["closeout_status"] = closeout.closeout_status
+            glue_input["push_required"] = closeout.push_required
+            glue_input["push_status"] = closeout.push_status
+            
+            # 从 continuation contract 提取 continuation 字段
+            glue_input["next_step"] = closeout.continuation_contract.next_step
+            glue_input["next_owner"] = closeout.continuation_contract.next_owner
+            glue_input["stopped_because"] = closeout.continuation_contract.stopped_because
+            
+            # 尝试从 completion receipt 生成更丰富的 glue
+            try:
+                from completion_receipt import get_completion_receipt_by_spawn_id
+                receipt = get_completion_receipt_by_spawn_id(child_id)
+                
+                if receipt:
+                    glue_input["receipt_id"] = receipt.receipt_id
+                    glue_input["receipt_status"] = receipt.receipt_status
+                    glue_input["result_summary"] = receipt.result_summary
+                    
+                    # 使用 closeout_glue 模块进行映射
+                    try:
+                        from closeout_glue import map_receipt_to_closeout
+                        closeout_glue_input = map_receipt_to_closeout(receipt)
+                        glue_input["glue_input"] = closeout_glue_input.to_dict()
+                        glue_input["glue_available"] = True
+                    except ImportError:
+                        # closeout_glue 不可用时，手动构建
+                        glue_input["dispatch_readiness"] = (
+                            "ready" if receipt.receipt_status == "completed" else "blocked"
+                        )
+                        glue_input["glue_available"] = True
+                
+            except (ImportError, AttributeError):
+                # completion_receipt 不可用或没有 get_completion_receipt_by_spawn_id
+                pass
+            
+            glue_input["glue_available"] = True
+    
+    except ImportError:
+        # closeout_tracker 不可用
+        pass
+    
+    return glue_input
 
 
 # CLI 入口

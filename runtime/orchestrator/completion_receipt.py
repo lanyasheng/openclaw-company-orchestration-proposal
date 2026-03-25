@@ -50,6 +50,7 @@ __all__ = [
     "create_completion_receipt",
     "list_completion_receipts",
     "get_completion_receipt",
+    "get_completion_receipt_by_spawn_id",
     "RECEIPT_VERSION",
     "build_receipt_continuation_contract",
 ]
@@ -519,6 +520,43 @@ class CompletionReceiptKernel:
             metadata["validation_result"] = validation_result.to_dict()
             metadata["validator_audit_dir"] = str(VALIDATOR_AUDIT_DIR)
         
+        # ========== Auto-Continue Trigger (P0-4) ==========
+        # 在 receipt 创建时评估 auto-continue 决策
+        try:
+            from auto_continue_trigger import evaluate_auto_continue
+            
+            # 注意：此时 receipt 还未完全创建，我们先创建一个临时对象用于评估
+            temp_receipt = CompletionReceiptArtifact(
+                receipt_id=receipt_id,
+                source_spawn_execution_id=execution.execution_id,
+                source_spawn_id=execution.spawn_id,
+                source_dispatch_id=execution.dispatch_id,
+                source_registration_id=execution.registration_id,
+                source_task_id=execution.task_id,
+                receipt_status=receipt_status,
+                receipt_reason=receipt_reason,
+                receipt_time=_iso_now(),
+                result_summary=result_summary,
+                dedupe_key=dedupe_key,
+                business_result=business_result,
+                metadata=metadata,
+            )
+            
+            auto_continue_decision = evaluate_auto_continue(
+                receipt_id=receipt_id,
+                receipt=temp_receipt,
+            )
+            
+            # 将 auto-continue 决策添加到 metadata
+            metadata["auto_continue"] = auto_continue_decision.to_dict()
+        except ImportError:
+            # auto_continue_trigger 模块不可用，跳过
+            pass
+        except Exception as e:
+            # Auto-continue 评估失败，记录错误但不阻止 receipt 创建
+            metadata["auto_continue_error"] = str(e)
+        # ========== End Auto-Continue Trigger ==========
+        
         artifact = CompletionReceiptArtifact(
             receipt_id=receipt_id,
             source_spawn_execution_id=execution.execution_id,
@@ -660,6 +698,20 @@ def get_completion_receipt(receipt_id: str) -> Optional[CompletionReceiptArtifac
         data = json.load(f)
     
     return CompletionReceiptArtifact.from_dict(data)
+
+
+def get_completion_receipt_by_spawn_id(spawn_id: str) -> Optional[CompletionReceiptArtifact]:
+    """
+    按 spawn_id 获取 completion receipt artifact。
+    
+    Args:
+        spawn_id: Spawn ID
+    
+    Returns:
+        CompletionReceiptArtifact，不存在则返回 None
+    """
+    receipts = list_completion_receipts(spawn_id=spawn_id, limit=1)
+    return receipts[0] if receipts else None
 
 
 # ============ Trading 场景特定 helper ============

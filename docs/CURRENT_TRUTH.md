@@ -21,6 +21,8 @@
 
 **更新**: 2026-03-25 - **P0 极小切片 04: Validator Whitelist 精细化完成**: 收紧白名单机制降低高抽象任务误放行风险。核心变更：(1) 白名单 label 从 5 个减少到 3 个 (`explore/audit/scan`)，移除过宽的 `list/check`，(2) 匹配逻辑从子串匹配改为前缀匹配 (`checklist` 不再匹配 `check`)，(3) 白名单任务也要满足基本质量检查 (B4 未处理错误、B6 空输出)，(4) 新增 8 个测试 (白名单匹配/收紧/基本条件检查) + 28 个现有测试全部通过。受影响文件：`completion_validator_rules.py` (新增 `_match_whitelist`/收紧配置)、`test_completion_validator.py` (新增 8 测试)。详见 commit。
 
+**更新**: 2026-03-25 - **P0 Batch-B: Parent-Child / Fan-in / Closeout 整合完成**: 将 lineage / fan-in readiness / closeout glue 三条能力整合成一个可验证的 integration slice。核心变更：(1) 新增 `build_fanin_closeout_context(batch_id)` 函数，基于 lineage 查 children -> readiness 检查 -> 生成 closeout glue input，(2) 新增 `FaninCloseoutContext` 数据结构，(3) 新增 `get_completion_receipt_by_spawn_id()` 便捷函数，(4) 6 个集成测试全部通过 (happy path / not-ready path / no lineage / incomplete closeout / serialization / regression)。受影响文件：`lineage.py` (新增整合函数)、`completion_receipt.py` (新增便捷函数)、`test_lineage_fanin_closeout_integration.py` (新增 6 测试)。详见 commit。
+
 **更新**: 2026-03-25 - **P0 极小切片 01: Lineage 数据结构 + 最小接线已实现**: 新增 `lineage.py` 模块 (parent_id/child_id/batch_id/lineage_id/relation_type/created_at + 序列化/反序列化)，最小接线到 `sessions_spawn_bridge.py` 的 `_call_via_python_api()` 路径，7 个测试全部通过 (数据结构/CRUD/便捷函数/接线/向后兼容)。受影响文件：`lineage.py` (新增)、`sessions_spawn_bridge.py` (集成 lineage_id)、`test_lineage.py` (新增 7 测试)。详见 commit。
 
 **更新**: 2026-03-25 - **P0 极小切片 02: Fan-in Readiness Check 最小实现已实现**: 在 `lineage.py` 中新增 `check_fanin_readiness()` 函数，基于 batch_id 查询所有 child lineage + closeout 状态，判断是否 ready to fan-in。6 个测试全部通过 (无 lineage/全部完成/部分完成/incomplete closeout/最小接线/回归测试)。受影响文件：`lineage.py` (新增函数)、`test_lineage_fanin_readiness.py` (新增 6 测试)、`test_lineage.py` (清理 pytest warning)。详见 commit。
