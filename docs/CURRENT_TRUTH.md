@@ -54,6 +54,18 @@ cli.py (唯一入口)
 
 ---
 
+## 📍 真值边界说明 (重要)
+
+**本文档是 CURRENT_TRUTH，不是 HISTORY**：
+- ✅ 包含：当前架构、核心批次摘要、入口指引、canonical 边界
+- ❌ 不包含：详细逐日更新日志、历史审计过程、已归档设计讨论
+
+**详细更新日志** → 见 git commit history 或 `archive/` 审计报告
+
+**历史设计讨论** → 见 `archive/design-seams/`、`docs/plans/`
+
+---
+
 ## P0/P0.5 关键批次摘要 (截至 2026-03-25)
 
 **本批已落地的关键节点:**
@@ -73,43 +85,7 @@ cli.py (唯一入口)
 - Single-writer 已修正为 per truth-domain / batch-domain (非全仓库一刀切)
 - Parent-child / fan-in / closeout / planning-execution-closeout 整合能力已具备
 
----
-
-**更新**: 2026-03-25 - **Subtask Completion Validator v1 已实现 (audit-only)**: 完成 validator 核心模块 (`completion_validator.py` / `completion_validator_rules.py`) + 集成到 `completion_receipt.py` + 20 个测试通过。当前模式：`audit_only` (只记录不拦截)，支持 Through/Block/Gate 规则、白名单机制、audit 日志。
-
-**更新**: 2026-03-25 - **事故归因证据链审计完成**: 完成《事故归因证据链审计报告》(`docs/review/incident-causality-audit-2026-03-25.md`)，审计 cleanup/completion/callback/validator 四条证据链。**主因定位**: (1) Validator 是 audit-only 模式不拦截，(2) Completion receipt status 不包含 validator 结果，(3) Validator 白名单可能误伤。**修复优先级**: P0-Validator 结果冒泡到 receipt status / enforce 模式灰度测试。详见审计报告。
-
-**更新**: 2026-03-25 - **P0 Validator 全切完成 (enforce 模式)**: Validator 结果已接入 `completion_receipt` 主判定链，从 audit-only 切换到 enforce 模式。核心变更：(1) `_determine_receipt_status()` 接入 validator 结果，(2) `blocked_completion`/`gate_required`/`validator_error` 映射为 `receipt_status=failed`，(3) 白名单保持最小收紧 (`explore/list/check/scan/audit`)，(4) 新增 12 个集成测试 + 21 个现有测试全部通过。受影响文件：`completion_validator_rules.py` (mode=enforce)、`completion_receipt.py` (接入 validator)、`test_completion_receipt_validator_integration.py` (新增)。详见 commit。
-
-**更新**: 2026-03-25 - **P0 极小切片 04: Validator Whitelist 精细化完成**: 收紧白名单机制降低高抽象任务误放行风险。核心变更：(1) 白名单 label 从 5 个减少到 3 个 (`explore/audit/scan`)，移除过宽的 `list/check`，(2) 匹配逻辑从子串匹配改为前缀匹配 (`checklist` 不再匹配 `check`)，(3) 白名单任务也要满足基本质量检查 (B4 未处理错误、B6 空输出)，(4) 新增 8 个测试 (白名单匹配/收紧/基本条件检查) + 28 个现有测试全部通过。受影响文件：`completion_validator_rules.py` (新增 `_match_whitelist`/收紧配置)、`test_completion_validator.py` (新增 8 测试)。详见 commit。
-
-**更新**: 2026-03-25 - **P0-4 Auto-Continue Trigger + Single-Writer Guard 已实现**: 实现真正的自动续批机制最小核心。核心变更：(1) 新增 `auto_continue_trigger.py` 模块，基于 validator 结果/receipt 状态/writer 冲突检查输出 `continue_allowed`/`continue_blocked`/`gate_required` 决策，(2) 新增 `single_writer_guard.py` 模块，实现最小 single-writer repo guard（文件锁机制，超时自动释放，reader parallel 支持），(3) 集成到 `completion_receipt.py` 的 receipt 创建路径，(4) 25 个测试全部通过（auto-continue 10 个 + single-writer 15 个）。受影响文件：`auto_continue_trigger.py` (新增)、`single_writer_guard.py` (新增)、`completion_receipt.py` (集成 auto-continue)、`test_auto_continue_trigger.py` (新增)、`test_single_writer_guard.py` (新增)。详见 commit。
-
-**更新**: 2026-03-25 - **P0-5 Batch C: Auto-Dispatch Execution Cutover 完成**: Auto-dispatch 执行路径切换到 SubagentExecutor。核心变更：(1) `auto_dispatch.py` 集成 SubagentExecutor，(2) `DispatchExecutor.execute_dispatch()` 在 dispatched 状态下实际启动 subagent 执行，(3) 新增 `_execute_dispatch_intent()` 方法封装执行逻辑，(4) dispatch artifact 元数据记录 `subagent_task_id` / `execution_started`，(5) 12 个集成测试全部通过 + 22 个回归测试通过。受影响文件：`auto_dispatch.py` (修改)、`test_auto_dispatch_execution.py` (新增 12 测试)。详见 commit `b0d2115`。
-
-**更新**: 2026-03-25 - **P0 Batch-B: Parent-Child / Fan-in / Closeout 整合完成**: 将 lineage / fan-in readiness / closeout glue 三条能力整合成一个可验证的 integration slice。核心变更：(1) 新增 `build_fanin_closeout_context(batch_id)` 函数，基于 lineage 查 children -> readiness 检查 -> 生成 closeout glue input，(2) 新增 `FaninCloseoutContext` 数据结构，(3) 新增 `get_completion_receipt_by_spawn_id()` 便捷函数，(4) 6 个集成测试全部通过 (happy path / not-ready path / no lineage / incomplete closeout / serialization / regression)。受影响文件：`lineage.py` (新增整合函数)、`completion_receipt.py` (新增便捷函数)、`test_lineage_fanin_closeout_integration.py` (新增 6 测试)。详见 commit。
-
-**更新**: 2026-03-25 - **P0 极小切片 01: Lineage 数据结构 + 最小接线已实现**: 新增 `lineage.py` 模块 (parent_id/child_id/batch_id/lineage_id/relation_type/created_at + 序列化/反序列化)，最小接线到 `sessions_spawn_bridge.py` 的 `_call_via_python_api()` 路径，7 个测试全部通过 (数据结构/CRUD/便捷函数/接线/向后兼容)。受影响文件：`lineage.py` (新增)、`sessions_spawn_bridge.py` (集成 lineage_id)、`test_lineage.py` (新增 7 测试)。详见 commit。
-
-**更新**: 2026-03-25 - **P0 极小切片 02: Fan-in Readiness Check 最小实现已实现**: 在 `lineage.py` 中新增 `check_fanin_readiness()` 函数，基于 batch_id 查询所有 child lineage + closeout 状态，判断是否 ready to fan-in。6 个测试全部通过 (无 lineage/全部完成/部分完成/incomplete closeout/最小接线/回归测试)。受影响文件：`lineage.py` (新增函数)、`test_lineage_fanin_readiness.py` (新增 6 测试)、`test_lineage.py` (清理 pytest warning)。详见 commit。
-
-**更新**: 2026-03-25 - **P0 极小切片 03: Closeout Glue Core 最小实现已实现**: 新增 `closeout_glue.py` 模块，提供 `ExecutionToCloseoutGlue` 类，把 completion receipt 的核心字段映射到 closeout 可消费的结构。映射字段：`execution_id` → `source_execution_id`, `receipt_status` → `dispatch_readiness`, `result_summary` → `summary`, `lineage_id` → `lineage_id`, `next_step/next_owner/stopped_because` → 从 continuation_contract 继承。14 个测试全部通过 (数据结构/映射逻辑/dispatch readiness 判定/summary 提取/continuation 字段提取/最小接线/回归测试)。受影响文件：`closeout_glue.py` (新增)、`test_closeout_glue.py` (新增 14 测试)。详见 commit。
-
-**更新**: 2026-03-25 - **Batch D: Planning → Execution → Closeout 中等粒度整合完成**: 新增 `planning_execution_closeout_integration.py` 模块，提供中等批次 truth-domain 整合能力。核心变更：(1) 新增 `PlanningExecutionCloseoutContext` 数据结构，统一包含 planning/execution/receipt/closeout/lineage/fanin 信息，(2) 新增 `IntegrationKernel` 类，负责从 execution_id 或 issue_id 构建整合上下文，(3) 实现 planning artifact → execution context 的统一映射，(4) 实现 receipt → closeout glue 输入的 richer mapping，(5) 整合 lineage / fan-in readiness / continuation contract 到统一结构，(6) 新增 11 个集成测试 (happy path / missing planning / partial execution / 向后兼容)。受影响文件：`planning_execution_closeout_integration.py` (新增)、`test_planning_execution_closeout_integration.py` (新增 11 测试)。详见 commit。
-
-**更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
-
-**更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)
->
-> **更新**: 2026-03-24 - **Wave 2 Cutover 完成**: SubagentExecutor 执行基板扩展到 sessions_spawn_bridge,统一执行链路 (55 个测试通过)
->
-> **更新**: 2026-03-23 - Owner/Executor 解耦 + Coding Lane 默认 Claude Code 已实现
->
-> **更新**: 2026-03-22 - V8 Real Execute Mode + Auto-Trigger Consumption 已实现
->
-> **用途**: 给这个 proposal repo 一个**当前真值入口**,避免旧计划、旧评审、旧 POC 被继续误读成"今天的默认口径"。
->
-> **注意**: 这个 repo 现在已升级为**单仓分层 monorepo**:`docs/` 持阅读入口,`runtime/` 持实现真值,`tests/` 持验收。历史上 runtime 曾散落在 OpenClaw workspace 本地;从 2026-03-22 起,本仓开始承担 orchestration runtime 的统一收口。
+> **详细更新日志**: 见 git commit history 或 `archive/audit/` 审计报告
 
 ---
 
