@@ -1,10 +1,11 @@
 # Subtask Completion Validator 设计文档 (2026-03-25)
 
-> **状态**: 设计锚定 (Design Anchor)  
+> **状态**: ✅ **已实现 (P0 全切 enforce 模式)**  
 > **作者**: Zoe (主会话)  
-> **审查**: 待实现  
+> **审查**: 已完成 (2026-03-25)  
 > **实现优先级**: P0 (高)  
-> **风险等级**: 中 (涉及 completion 语义收紧，可能误杀)
+> **风险等级**: 中 (涉及 completion 语义收紧，可能误杀)  
+> **实现日期**: 2026-03-25 (audit-only → enforce 全切)
 
 ---
 
@@ -462,6 +463,7 @@ if os.environ.get("DISABLE_COMPLETION_VALIDATOR") == "1":
 
 | 日期 | 版本 | 变更 | 作者 |
 |------|------|------|------|
+| 2026-03-25 | v1.1 | **P0 全切 enforce 模式**: validator 结果接入 receipt 主判定链，`blocked_completion`/`gate_required`/`validator_error` → `receipt_status=failed` | Zoe |
 | 2026-03-25 | v1.0 | 初始设计锚定 | Zoe |
 
 ---

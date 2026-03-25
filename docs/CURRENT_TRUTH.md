@@ -17,6 +17,8 @@
 
 **更新**: 2026-03-25 - **事故归因证据链审计完成**: 完成《事故归因证据链审计报告》(`docs/review/incident-causality-audit-2026-03-25.md`)，审计 cleanup/completion/callback/validator 四条证据链。**主因定位**: (1) Validator 是 audit-only 模式不拦截，(2) Completion receipt status 不包含 validator 结果，(3) Validator 白名单可能误伤。**修复优先级**: P0-Validator 结果冒泡到 receipt status / enforce 模式灰度测试。详见审计报告。
 
+**更新**: 2026-03-25 - **P0 Validator 全切完成 (enforce 模式)**: Validator 结果已接入 `completion_receipt` 主判定链，从 audit-only 切换到 enforce 模式。核心变更：(1) `_determine_receipt_status()` 接入 validator 结果，(2) `blocked_completion`/`gate_required`/`validator_error` 映射为 `receipt_status=failed`，(3) 白名单保持最小收紧 (`explore/list/check/scan/audit`)，(4) 新增 12 个集成测试 + 21 个现有测试全部通过。受影响文件：`completion_validator_rules.py` (mode=enforce)、`completion_receipt.py` (接入 validator)、`test_completion_receipt_validator_integration.py` (新增)。详见 commit。
+
 **更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
 
 **更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)

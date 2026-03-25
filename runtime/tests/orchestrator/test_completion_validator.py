@@ -425,10 +425,16 @@ class TestValidatorConfig(unittest.TestCase):
     
     def test_config_defaults(self):
         """测试配置默认值"""
-        self.assertEqual(VALIDATOR_CONFIG["mode"], "audit_only")
+        # P0 全切 (2026-03-25): enforce 模式
+        self.assertEqual(VALIDATOR_CONFIG["mode"], "enforce")
         self.assertIn("explore", VALIDATOR_CONFIG["whitelist_labels"])
         self.assertEqual(VALIDATOR_CONFIG["through_threshold"], 3)
         self.assertTrue(VALIDATOR_CONFIG["fallback_on_error"])
+    
+    def test_config_enforce_mode(self):
+        """测试 enforce 模式配置"""
+        # P0 全切后，mode 应该是 enforce
+        self.assertEqual(VALIDATOR_CONFIG["mode"], "enforce")
 
 
 if __name__ == "__main__":

@@ -293,15 +293,44 @@ class CompletionReceiptKernel:
     def _determine_receipt_status(
         self,
         execution: SpawnExecutionArtifact,
+        validation_result: Optional[CompletionValidationResult] = None,
     ) -> tuple[ReceiptStatus, str]:
         """
-        根据 execution status 决定 receipt status。
+        根据 execution status + validator 结果决定 receipt status。
+        
+        P0 全切 (2026-03-25): Validator 结果接入主判定链
+        - accepted_completion → 可继续按成功路径处理
+        - blocked_completion → receipt status 不得再是 completed successfully
+        - gate_required → receipt status 进入 gate/blocked 语义
+        - validator_error → 保守 fallback (不静默当成功)
         
         Returns:
             (receipt_status, receipt_reason)
         """
         exec_status = execution.spawn_execution_status
         
+        # ========== P0 全切：Validator 结果接入主判定链 ==========
+        if validation_result is not None:
+            val_status = validation_result.status
+            val_reason = validation_result.reason
+            
+            if val_status == "blocked_completion":
+                # 无效完成：不能标记为 completed，必须拦截
+                return "failed", f"Validator blocked: {val_reason}"
+            
+            elif val_status == "gate_required":
+                # 需要人工审查：标记为 failed，等待 gate 决策
+                return "failed", f"Validator gate required: {val_reason}"
+            
+            elif val_status == "validator_error":
+                # Validator 内部错误：保守 fallback，不静默当成功
+                # 如果 execution 本身是 started/success，降级为 failed 并记录 error
+                return "failed", f"Validator error (conservative fallback): {val_reason}"
+            
+            # accepted_completion: 继续按 execution status 判断
+            # whitelisted: 继续按 execution status 判断
+        
+        # ========== 原有逻辑 (validator accepted/whitelisted 时) ==========
         if exec_status == "started":
             # 执行已开始，假设完成（当前阶段模拟）
             return "completed", "Execution started and completed (simulated)"
@@ -426,22 +455,19 @@ class CompletionReceiptKernel:
         receipt_id = _generate_receipt_id()
         dedupe_key = _generate_receipt_dedupe_key(execution.execution_id, execution.spawn_id)
         
-        # 决定 receipt status
-        receipt_status, receipt_reason = self._determine_receipt_status(execution)
-        
         # 提取 result summary
         result_summary = self._extract_result_summary(execution)
         
         # 提取 business result
         business_result = self._extract_business_result(execution)
         
-        # ========== Subtask Completion Validator (v1 audit-only) ==========
+        # ========== Subtask Completion Validator (P0 全切：enforce 模式) ==========
         validation_result: Optional[CompletionValidationResult] = None
         try:
             # 提取 output 用于验证
             output, exit_code, artifacts, label = self._extract_output_for_validation(execution)
             
-            # 执行验证 (audit-only 模式：只记录不拦截)
+            # 执行验证 (enforce 模式：实际拦截无效 completion)
             if output:  # 只有有输出时才验证
                 validation_result = validate_subtask_completion(
                     output=output,
@@ -453,7 +479,7 @@ class CompletionReceiptKernel:
                     audit=True,
                 )
         except Exception as e:
-            # Validator 错误不影响主流程 (fallback 到原逻辑)
+            # Validator 错误：保守 fallback，记录 error 并继续
             validation_result = CompletionValidationResult(
                 status="validator_error",
                 reason=str(e),
@@ -461,6 +487,9 @@ class CompletionReceiptKernel:
                 metadata={"error": True, "error_message": str(e)},
             )
         # ========== End Validator ==========
+        
+        # 决定 receipt status (P0 全切：接入 validator 结果)
+        receipt_status, receipt_reason = self._determine_receipt_status(execution, validation_result)
         
         # Build ContinuationContract (P0-1 Batch 5: unified continuation semantics)
         continuation = build_receipt_continuation_contract(

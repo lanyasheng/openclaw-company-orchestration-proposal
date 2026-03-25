@@ -40,8 +40,8 @@ __all__ = [
 # ========== 配置 ==========
 
 VALIDATOR_CONFIG: Dict[str, Any] = {
-    "mode": "audit_only",  # audit_only | enforce
-    "whitelist_labels": ["explore", "list", "check", "scan", "audit"],
+    "mode": "enforce",  # audit_only | enforce (P0 全切：2026-03-25)
+    "whitelist_labels": ["explore", "list", "check", "scan", "audit"],  # 收紧：高抽象任务需显式白名单
     "through_threshold": 3,  # Through 分数阈值
     "fallback_on_error": True,  # validator 错误时 fallback 到原逻辑
     "min_output_length": 100,  # 最小输出长度
