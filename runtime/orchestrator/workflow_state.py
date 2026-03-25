@@ -76,9 +76,11 @@ class TaskEntry:
     error: Optional[str] = None
     max_retries: int = 0
     retry_count: int = 0
+    callback_result: Optional[Dict[str, Any]] = None
+    execution_metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "task_id": self.task_id,
             "label": self.label,
             "executor": self.executor,
@@ -92,6 +94,11 @@ class TaskEntry:
             "max_retries": self.max_retries,
             "retry_count": self.retry_count,
         }
+        if self.callback_result:
+            d["callback_result"] = self.callback_result
+        if self.execution_metadata:
+            d["execution_metadata"] = self.execution_metadata
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> TaskEntry:
@@ -109,6 +116,8 @@ class TaskEntry:
             error=data.get("error"),
             max_retries=int(data.get("max_retries", 0)),
             retry_count=int(data.get("retry_count", 0)),
+            callback_result=data.get("callback_result"),
+            execution_metadata=dict(data.get("execution_metadata") or {}),
         )
 
 

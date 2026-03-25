@@ -78,6 +78,12 @@ class BatchExecutor:
                         result.result if isinstance(result.result, str)
                         else json.dumps(result.result) if result.result else ""
                     )
+                    task.callback_result = {
+                        "verdict": "PASS",
+                        "raw": result.result,
+                    }
+                    task.execution_metadata["completed_by"] = "subagent"
+                    task.execution_metadata["subagent_status"] = result.status
                     self._sync_to_state_machine(
                         task.task_id, batch.batch_id, "completed",
                         result={"verdict": "PASS", "summary": task.result_summary},
@@ -91,6 +97,12 @@ class BatchExecutor:
                     task.status = "failed"
                     task.completed_at = _iso_now()
                     task.error = result.error or result.status
+                    task.callback_result = {
+                        "verdict": "FAIL",
+                        "error": task.error,
+                    }
+                    task.execution_metadata["completed_by"] = "subagent"
+                    task.execution_metadata["subagent_status"] = result.status
                     self._sync_to_state_machine(
                         task.task_id, batch.batch_id, "failed",
                         result={"error": task.error},
