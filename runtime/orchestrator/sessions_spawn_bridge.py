@@ -71,6 +71,9 @@ from subagent_executor import (
     TERMINAL_STATES,
 )
 
+# Lineage tracking integration (minimal slice)
+from lineage import create_lineage_record, LineageRecord
+
 __all__ = [
     "APIExecutionStatus",
     "APIExecutionResult",
@@ -365,6 +368,7 @@ class SessionsSpawnAPIExecution:
     dedupe_key: str = ""
     policy_evaluation: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    lineage_id: Optional[str] = None  # Lineage tracking (minimal slice)
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -384,6 +388,7 @@ class SessionsSpawnAPIExecution:
             "dedupe_key": self.dedupe_key,
             "policy_evaluation": self.policy_evaluation,
             "metadata": self.metadata,
+            "lineage_id": self.lineage_id,  # Lineage tracking (minimal slice)
         }
     
     @classmethod
@@ -409,6 +414,7 @@ class SessionsSpawnAPIExecution:
             dedupe_key=data.get("dedupe_key", ""),
             policy_evaluation=data.get("policy_evaluation"),
             metadata=data.get("metadata", {}),
+            lineage_id=data.get("lineage_id"),  # Lineage tracking (minimal slice)
         )
     
     def write(self) -> Path:
@@ -686,6 +692,28 @@ class SessionsSpawnBridge:
                 "allowed_tools": result.metadata.get("allowed_tools"),
             }
             
+            # Minimal lineage tracking (slice 1): 创建 parent-child lineage record
+            # parent_id = dispatch_id (from metadata), child_id = actual_task_id
+            dispatch_id = metadata.get("dispatch_id")
+            if dispatch_id:
+                try:
+                    lineage_record: LineageRecord = create_lineage_record(
+                        parent_id=dispatch_id,
+                        child_id=actual_task_id,
+                        batch_id=metadata.get("batch_id"),  # optional
+                        relation_type="spawn",
+                        metadata={
+                            "source": "sessions_spawn_bridge",
+                            "request_id": metadata.get("request_id"),
+                            "spawn_id": metadata.get("spawn_id"),
+                        },
+                    )
+                    # 将 lineage_id 附加到 api_response 中，供 execute() 方法使用
+                    api_response["lineage_id"] = lineage_record.lineage_id
+                except Exception as e:
+                    # Lineage 创建失败不影响主流程（optional）
+                    api_response["lineage_error"] = f"Failed to create lineage: {str(e)}"
+            
             return True, None, api_response
             
         except Exception as e:
@@ -777,6 +805,11 @@ class SessionsSpawnBridge:
         execution_id = _generate_execution_id()
         dedupe_key = _generate_api_execution_dedupe_key(request.request_id)
         
+        # Extract lineage_id from api_result if available
+        lineage_id = None
+        if api_result and api_result.api_response:
+            lineage_id = api_result.api_response.get("lineage_id")
+        
         artifact = SessionsSpawnAPIExecution(
             execution_id=execution_id,
             source_request_id=request.request_id,
@@ -799,6 +832,7 @@ class SessionsSpawnBridge:
                 "safe_mode": self.policy.safe_mode,
                 "should_execute_real": policy_eval.get("should_execute_real", False),
             },
+            lineage_id=lineage_id,  # Lineage tracking (minimal slice)
         )
         
         # 5. Write artifact
