@@ -21,6 +21,8 @@
 
 **更新**: 2026-03-25 - **P0 极小切片 01: Lineage 数据结构 + 最小接线已实现**: 新增 `lineage.py` 模块 (parent_id/child_id/batch_id/lineage_id/relation_type/created_at + 序列化/反序列化)，最小接线到 `sessions_spawn_bridge.py` 的 `_call_via_python_api()` 路径，7 个测试全部通过 (数据结构/CRUD/便捷函数/接线/向后兼容)。受影响文件：`lineage.py` (新增)、`sessions_spawn_bridge.py` (集成 lineage_id)、`test_lineage.py` (新增 7 测试)。详见 commit。
 
+**更新**: 2026-03-25 - **P0 极小切片 02: Fan-in Readiness Check 最小实现已实现**: 在 `lineage.py` 中新增 `check_fanin_readiness()` 函数，基于 batch_id 查询所有 child lineage + closeout 状态，判断是否 ready to fan-in。6 个测试全部通过 (无 lineage/全部完成/部分完成/incomplete closeout/最小接线/回归测试)。受影响文件：`lineage.py` (新增函数)、`test_lineage_fanin_readiness.py` (新增 6 测试)、`test_lineage.py` (清理 pytest warning)。详见 commit。
+
 **更新**: 2026-03-24 - P0 Batch 4: Failure Closeout Guarantee 已实现 (失败场景兜底 + 测试覆盖)
 
 **更新**: 2026-03-24 - P0 Batch 3: Coding Issue Lane Baseline 已实现 (schema + 测试 + 最小链路)

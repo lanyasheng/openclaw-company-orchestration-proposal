@@ -78,7 +78,6 @@ def test_lineage_record_serialization():
     assert record3.parent_id == record.parent_id
     
     print("  ✓ PASS: LineageRecord serialization/deserialization")
-    return True
 
 
 def test_lineage_record_defaults():
@@ -97,7 +96,6 @@ def test_lineage_record_defaults():
     assert len(record.created_at) > 0  # created_at is a string
     
     print("  ✓ PASS: LineageRecord default values")
-    return True
 
 
 def test_lineage_store_crud():
@@ -186,7 +184,6 @@ def test_lineage_store_crud():
             assert len(by_batch_helper) == 1
             
             print("  ✓ PASS: LineageStore CRUD operations")
-            return True
             
         finally:
             # 恢复原始目录
@@ -229,7 +226,6 @@ def test_lineage_convenience_functions():
             assert len(by_batch) == 1
             
             print("  ✓ PASS: Lineage convenience functions")
-            return True
             
         finally:
             lineage_module.LINEAGE_STORE_DIR = original_dir
@@ -251,7 +247,6 @@ def test_lineage_relation_types():
         assert record.relation_type == rel_type
     
     print("  ✓ PASS: Lineage relation types")
-    return True
 
 
 def test_lineage_minimal_wiring():
@@ -303,11 +298,9 @@ def test_lineage_minimal_wiring():
         assert artifact2.lineage_id == "lineage_test123"
         
         print("  ✓ PASS: Minimal wiring to sessions_spawn_bridge")
-        return True
         
     except ImportError as e:
-        print(f"  ✗ FAIL: Cannot import sessions_spawn_bridge: {e}")
-        return False
+        raise AssertionError(f"Cannot import sessions_spawn_bridge: {e}")
 
 
 def test_lineage_backward_compatibility():
@@ -364,47 +357,3 @@ def test_lineage_backward_compatibility():
     assert artifact_old.lineage_id is None
     
     print("  ✓ PASS: Backward compatibility (lineage_id=None)")
-    return True
-
-
-def run_all_tests():
-    """运行所有测试"""
-    print("=" * 60)
-    print("Lineage 数据结构 + 最小接线测试")
-    print("=" * 60)
-    
-    tests = [
-        test_lineage_record_serialization,
-        test_lineage_record_defaults,
-        test_lineage_store_crud,
-        test_lineage_convenience_functions,
-        test_lineage_relation_types,
-        test_lineage_minimal_wiring,
-        test_lineage_backward_compatibility,
-    ]
-    
-    passed = 0
-    failed = 0
-    
-    for test in tests:
-        try:
-            if test():
-                passed += 1
-            else:
-                failed += 1
-        except Exception as e:
-            print(f"  ✗ FAIL: {test.__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    
-    print("=" * 60)
-    print(f"测试结果：{passed} passed, {failed} failed")
-    print("=" * 60)
-    
-    return failed == 0
-
-
-if __name__ == "__main__":
-    success = run_all_tests()
-    sys.exit(0 if success else 1)

@@ -38,6 +38,7 @@ __all__ = [
     "get_lineage_by_parent",
     "get_lineage_by_child",
     "get_lineage_by_batch",
+    "check_fanin_readiness",
     "LINEAGE_STORE_DIR",
 ]
 
@@ -405,6 +406,110 @@ def get_lineage_by_batch(batch_id: str) -> List[LineageRecord]:
         LineageRecord 列表
     """
     return _get_default_store().get_by_batch(batch_id)
+
+
+def check_fanin_readiness(batch_id: str) -> Dict[str, Any]:
+    """
+    检查 batch 是否 ready to fan-in
+    
+    基于 lineage 和 closeout 状态判断：
+    1. 查询该 batch 的所有 lineage records
+    2. 检查每个 child 是否有 closeout 且状态为 complete
+    3. 返回 readiness 判定结果
+    
+    这是极小切片实现，只做状态查询，不触发任何动作。
+    
+    Args:
+        batch_id: 批次 ID
+    
+    Returns:
+        Dict with:
+        - ready: bool - 是否 ready to fan-in
+        - reason: str - 判定原因
+        - total_children: int - 子任务总数
+        - completed_children: int - 已完成的子任务数
+        - pending_children: List[str] - 未完成的子任务 ID 列表
+        - details: Dict - 详细信息
+    
+    Example:
+        >>> result = check_fanin_readiness("batch_001")
+        >>> if result["ready"]:
+        ...     proceed_to_fanin()
+    """
+    # 查询该 batch 的所有 lineage records
+    records = get_lineage_by_batch(batch_id)
+    
+    if not records:
+        return {
+            "ready": False,
+            "reason": "No lineage records found for batch",
+            "total_children": 0,
+            "completed_children": 0,
+            "pending_children": [],
+            "details": {"batch_id": batch_id, "error": "no_lineage"},
+        }
+    
+    # 提取所有 child IDs
+    child_ids = [r.child_id for r in records]
+    total_children = len(child_ids)
+    
+    # 检查每个 child 的 closeout 状态
+    completed_children = 0
+    pending_children = []
+    child_details = {}
+    
+    try:
+        from closeout_tracker import get_closeout
+        
+        for child_id in child_ids:
+            closeout = get_closeout(child_id)
+            
+            if closeout is None:
+                # 没有 closeout 记录
+                pending_children.append(child_id)
+                child_details[child_id] = {"status": "no_closeout"}
+            elif closeout.closeout_status == "complete":
+                # closeout 已完成
+                completed_children += 1
+                child_details[child_id] = {
+                    "status": "complete",
+                    "closeout_id": closeout.closeout_id,
+                }
+            else:
+                # closeout 存在但未完成
+                pending_children.append(child_id)
+                child_details[child_id] = {
+                    "status": closeout.closeout_status,
+                    "closeout_id": closeout.closeout_id,
+                }
+    
+    except ImportError:
+        # closeout_tracker 不可用时，退化到只检查 lineage
+        # 假设所有有 lineage 的 child 都是 pending
+        pending_children = child_ids.copy()
+        child_details = {cid: {"status": "unknown_no_closeout_module"} for cid in child_ids}
+    
+    # 判定是否 ready
+    ready = len(pending_children) == 0 and total_children > 0
+    
+    if ready:
+        reason = f"All {total_children} children completed"
+    elif total_children == 0:
+        reason = "No children in batch"
+    else:
+        reason = f"{len(pending_children)}/{total_children} children pending"
+    
+    return {
+        "ready": ready,
+        "reason": reason,
+        "total_children": total_children,
+        "completed_children": completed_children,
+        "pending_children": pending_children,
+        "details": {
+            "batch_id": batch_id,
+            "children": child_details,
+        },
+    }
 
 
 # CLI 入口
