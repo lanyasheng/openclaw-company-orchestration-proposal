@@ -74,6 +74,8 @@ class TaskEntry:
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     error: Optional[str] = None
+    max_retries: int = 0
+    retry_count: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -87,6 +89,8 @@ class TaskEntry:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "error": self.error,
+            "max_retries": self.max_retries,
+            "retry_count": self.retry_count,
         }
 
     @classmethod
@@ -103,6 +107,8 @@ class TaskEntry:
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
             error=data.get("error"),
+            max_retries=int(data.get("max_retries", 0)),
+            retry_count=int(data.get("retry_count", 0)),
         )
 
 

@@ -487,13 +487,30 @@ class SubagentExecutor:
         
         使用 start_new_session=True 创建新会话，进程组 ID = pid。
         """
+        global _active_subagent_count
+
         runner_script = Path(self.cwd) / "scripts" / "run_subagent_claude_v1.sh"
         
         if not runner_script.exists():
-            cmd = [
-                sys.executable, "-c",
-                f"print('Simulated subagent execution for task: {task}')"
-            ]
+            test_mode = os.environ.get("OPENCLAW_TEST_MODE", "0") == "1" or BYPASS_FORK_GUARD
+            if test_mode:
+                cmd = [
+                    sys.executable, "-c",
+                    f"import json,sys; json.dump({{'status':'completed','result':'test_ok'}},sys.stdout)"
+                ]
+            else:
+                _update_task_status(
+                    task_id, "failed",
+                    error=f"Runner script not found: {runner_script}. "
+                          f"Set OPENCLAW_TEST_MODE=1 for test simulation.",
+                )
+                with _active_subagent_count_lock:
+                    _active_subagent_count -= 1
+                if not BYPASS_FORK_GUARD:
+                    _global_semaphore.release()
+                    with _semaphore_holders_lock:
+                        _semaphore_holders.pop(task_id, None)
+                return
         else:
             cmd = [
                 "bash", str(runner_script),
@@ -511,11 +528,10 @@ class SubagentExecutor:
                 cwd=self.cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                start_new_session=True,  # 创建新会话，pgid = pid
+                start_new_session=True,
                 env=child_env,
             )
             
-            # pgid = pid（因为 start_new_session=True）
             pgid = process.pid
             
             _update_task_status(
@@ -527,7 +543,6 @@ class SubagentExecutor:
                 },
             )
             
-            # 启动后台线程监控进程结束，释放信号量
             if not BYPASS_FORK_GUARD:
                 threading.Thread(
                     target=self._monitor_process_and_release,
@@ -541,7 +556,6 @@ class SubagentExecutor:
                 with _semaphore_holders_lock:
                     _semaphore_holders.pop(task_id, None)
             with _active_subagent_count_lock:
-                global _active_subagent_count
                 _active_subagent_count -= 1
             _update_task_status(
                 task_id, "failed",

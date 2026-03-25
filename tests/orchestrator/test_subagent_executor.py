@@ -23,6 +23,8 @@ from pathlib import Path
 orchestrator_path = Path(__file__).parent.parent.parent / "runtime" / "orchestrator"
 sys.path.insert(0, str(orchestrator_path))
 
+os.environ.setdefault("OPENCLAW_TEST_MODE", "1")
+
 from subagent_executor import (
     SubagentConfig,
     SubagentResult,

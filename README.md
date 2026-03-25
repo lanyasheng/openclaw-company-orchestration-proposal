@@ -1,307 +1,320 @@
-# OpenClaw Company Orchestration — Multi-Agent Workflow Control Plane
+# OpenClaw Orchestration — Multi-Agent Batch DAG Control Plane
 
-> **One CLI**, **one JSON state file**, **batched parallel tasks**, **fan-in review**, **automatic or gated continuation**. LangGraph when available; polling loop otherwise.
+> **One CLI · One JSON truth · Batched DAG · Fan-in review · Gated continuation**
 
-[中文版 README](README_CN.md) · [Operations](docs/OPERATIONS.md) · [Current truth](docs/CURRENT_TRUTH.md)
+[中文版](README_CN.md) · [Operations Guide](docs/OPERATIONS.md)
 
 ---
 
-## What This Is
+## The Problem
 
-A **control-plane** orchestrator for OpenClaw-style multi-agent work:
+When you use OpenClaw (Claude Code) with subagents, you face a coordination gap:
 
-1. **Plan** — Validate batch DAG (`depends_on`), topological sort, emit `workflow_state_*.json`.
-2. **Execute** — Per batch, dispatch parallel tasks via `SubagentExecutor` (subprocess / runner script).
-3. **Review** — Apply `fan_in_policy` (`all_success` | `any_success` | `majority`) and optional **gate** heuristics.
-4. **Advance** — `proceed` (next batch), `gate` (pause for human), or `stop` (workflow failed).
+- **No batch control** — subagents run one-by-one or ad-hoc; no way to dispatch 5 tasks in parallel, wait for all/any/majority, then decide what's next.
+- **No persistence** — if the process dies, you lose track of what ran, what succeeded, what to resume.
+- **No policy** — no fan-in rules (all must pass? majority enough?), no gate checkpoints for human review, no retry strategy.
+- **No DAG** — tasks have dependencies (B depends on A), but you manage order manually.
 
-OpenClaw keeps policy, channels, and spawn semantics; this runtime is the **batch DAG + persistence + continuation** layer.
+This project fills that gap with a **thin, opinionated control plane**.
+
+---
+
+## What This Is (and Isn't)
+
+**IS:** A batch DAG orchestrator that sits **above** OpenClaw's subagent execution.
+
+```
+You define:   config.json (batches, tasks, dependencies, policies)
+You run:      orchestrator-cli plan → run → show → resume
+You get:      Parallel execution, fan-in review, gated continuation, crash recovery
+```
+
+**ISN'T:** An agent framework. We don't define agents, tools, or prompts. CrewAI, AutoGen, LangGraph define *what agents do*. We define *when they run, how results are collected, and what happens next*.
+
+---
+
+## Architecture
+
+```mermaid
+graph TD
+  subgraph Control["Control Plane"]
+    CLI["cli.py<br/>plan | run | show | resume"]
+    TP["TaskPlanner<br/>DAG validate · topo sort"]
+    WS["WorkflowState<br/>unified data model"]
+  end
+
+  subgraph Engines["Execution Engines"]
+    LG["WorkflowGraph<br/>(LangGraph + SQLite checkpoint)"]
+    WL["WorkflowLoop<br/>(polling fallback)"]
+  end
+
+  subgraph Runtime["Per-Batch Runtime"]
+    BE["BatchExecutor<br/>parallel dispatch · monitor · retry"]
+    SE["TaskExecutorBase<br/>pluggable executor interface"]
+    BR["BatchReviewer<br/>fan-in policy · gate check"]
+  end
+
+  subgraph Executors["Executor Backends"]
+    SAE["SubagentExecutor<br/>(OpenClaw native)"]
+    HTTP["HttpWorkerExecutor<br/>(template)"]
+    CUSTOM["YourExecutor<br/>(implement interface)"]
+  end
+
+  subgraph Persistence["Single Source of Truth"]
+    JSON[("workflow_state_*.json<br/>atomic write · fsync")]
+    CK[("checkpoint.db<br/>LangGraph durable state")]
+  end
+
+  CLI -->|plan| TP
+  TP --> WS --> JSON
+  CLI -->|run / resume| LG
+  CLI -->|no langgraph| WL
+  LG & WL --> BE
+  LG & WL --> BR
+  BE --> SE
+  SE --> SAE & HTTP & CUSTOM
+  LG --> CK
+  BE & BR --> WS
+
+  style JSON fill:#2d5a3d,stroke:#4a9,color:#fff
+  style CK fill:#2d4a5a,stroke:#49a,color:#fff
+```
+
+### Key Design Decisions
+
+| Decision | Why |
+|----------|-----|
+| **JSON file as truth** | Human-readable, `git diff`-able, survives process crash. No database needed. |
+| **Dual engine** | LangGraph (with SQLite checkpoint) when available; pure-Python polling loop as zero-dependency fallback. Same state file, same semantics. |
+| **Pluggable executor** | `TaskExecutorBase` interface — swap SubagentExecutor for HTTP workers, LangChain agents, or anything that can start/poll. |
+| **Fan-in as first-class** | `all_success`, `any_success`, `majority` — the reviewer decides per batch, not hardcoded. |
+| **Gate = human checkpoint** | Heuristic triggers (e.g. `NEEDS_REVIEW` in output) pause the workflow. CLI `resume` continues. |
+
+---
+
+## Workflow Lifecycle
+
+```mermaid
+flowchart LR
+  A["plan<br/><i>DAG validate · topo sort</i>"] --> B["dispatch<br/><i>parallel execute</i>"]
+  B --> C["monitor<br/><i>poll + retry</i>"]
+  C --> D["review<br/><i>fan-in + gate</i>"]
+  D -->|proceed| E{"next batch?"}
+  E -->|yes| B
+  E -->|no| F["✓ completed"]
+  D -->|gate| G["⏸ gate_blocked<br/><i>resume to continue</i>"]
+  D -->|stop| H["✗ failed"]
+  G -->|resume| B
+```
+
+### State Machine
+
+```
+pending → running → completed
+                  → failed
+                  → gate_blocked → running (resume)
+```
 
 ---
 
 ## Quick Start
 
 ```bash
-python3 runtime/orchestrator/cli.py plan "My goal" config.json
-python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace /path/to/workspace
+pip install langgraph langgraph-checkpoint-sqlite  # optional but recommended
+
+# 1. Plan — validate DAG, create state file
+python3 runtime/orchestrator/cli.py plan "Analyze codebase" config.json
+
+# 2. Run — execute all batches
+python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace /path/to/project
+
+# 3. Check status
 python3 runtime/orchestrator/cli.py show workflow_state_wf_xxx.json
+
+# 4. Resume (if gate_blocked or recovering from crash)
 python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
 ```
 
-- **`run`** uses **`workflow_graph.py` (LangGraph)** if `langgraph` is importable; else **`workflow_loop.py`** (poll + sleep). Same state file and semantics.
-
 ---
 
-## 1. Architecture Overview
-
-```mermaid
-graph TD
-  subgraph Entry["CLI"]
-    CLI[cli.py]
-  end
-  subgraph Plan["Create"]
-    TP[TaskPlanner]
-    WS[workflow_state.py]
-  end
-  subgraph Engines["Run / resume"]
-    LG[workflow_graph<br/>LangGraph]
-    WL[workflow_loop<br/>polling fallback]
-  end
-  subgraph Runtime["Per-batch runtime"]
-    BE[BatchExecutor]
-    SE[SubagentExecutor]
-    BR[BatchReviewer]
-  end
-  subgraph Truth["Persistence"]
-    JSON[(workflow_state.json)]
-  end
-
-  CLI -->|plan| TP
-  TP --> WS
-  WS --> JSON
-  CLI -->|run / resume| LG
-  CLI -->|no LangGraph dep| WL
-  LG --> BE
-  LG --> BR
-  WL --> BE
-  WL --> BR
-  BE --> SE
-  LG --> WS
-  WL --> WS
-  WS --> JSON
-```
-
----
-
-## 2. Workflow Lifecycle
-
-```mermaid
-flowchart TD
-  subgraph Boot["Bootstrap"]
-    A[Create config batches] --> B[TaskPlanner: DAG validate + topo sort]
-    B --> C[write workflow_state.json]
-  end
-  subgraph Loop["Batch loop"]
-    D[check_batch]
-    E[dispatch tasks]
-    F[monitor terminals]
-    G[review fan-in + gate]
-    H[advance decision]
-    D --> E --> F --> G --> H
-  end
-  subgraph Out["Outcomes"]
-    H -->|proceed| D
-    H -->|gate| I[gate_blocked]
-    H -->|stop| J[failed]
-    H -->|no next batch| K[completed]
-  end
-  C --> D
-```
-
----
-
-## 3. WorkflowState Machine
-
-Workflow-level status in `workflow_state.py`:
-
-```mermaid
-stateDiagram-v2
-  [*] --> pending
-  pending --> running
-  running --> completed
-  running --> failed
-  running --> gate_blocked
-  gate_blocked --> running: resume
-  completed --> [*]
-  failed --> [*]
-```
-
----
-
-## 4. `workflow_state.json` Data Shape
+## Data Model: `workflow_state.json`
 
 ```mermaid
 graph LR
-  subgraph Root["WorkflowState"]
-    WID[workflow_id]
-    ST[status]
-    PLN[plan]
-    BAT[batches]
-    SUM[context_summary]
-    ART[artifact_chain]
+  subgraph WS["WorkflowState"]
+    WID["workflow_id"]
+    ST["status"]
+    CTX["context_summary<br/><i>LLM recovery context</i>"]
   end
-  subgraph Batch["each BatchEntry"]
-    BID[batch_id]
-    DEP[depends_on]
-    FAN[fan_in_policy]
-    TSK[tasks]
-    CON[continuation]
+
+  subgraph B["BatchEntry"]
+    BID["batch_id"]
+    DEP["depends_on"]
+    FAN["fan_in_policy"]
+    CON["continuation<br/><i>decision · reason · next</i>"]
   end
-  subgraph Task["each TaskEntry"]
-    TID[task_id]
-    LBL[label]
-    EXE[executor]
-    TST[status]
-    RS[result_summary]
+
+  subgraph T["TaskEntry"]
+    TID["task_id"]
+    LBL["label"]
+    EXE["executor"]
+    TST["status"]
+    RET["max_retries / retry_count"]
+    RS["result_summary"]
   end
-  BAT --> Batch
-  TSK --> Task
+
+  WS --> B --> T
 ```
 
-`plan` holds `total_batches`, `current_batch_index`, `description`. `continuation` stores `ContinuationDecision`: `decision` ∈ `proceed` | `gate` | `stop`, `stopped_because`, `next_batch`, `decided_at`.
+One file. All state. Human-readable JSON with `fsync` for crash safety.
 
 ---
 
-## 5. Typical Two-Batch Execution (Sequence)
+## Onboarding a New Scenario
+
+### Step 1: Define `config.json`
+
+```json
+[
+  {
+    "batch_id": "collect",
+    "label": "Data Collection",
+    "tasks": [
+      {"task_id": "t1", "label": "Source A", "max_retries": 2},
+      {"task_id": "t2", "label": "Source B", "max_retries": 2}
+    ],
+    "depends_on": [],
+    "fan_in_policy": "any_success"
+  },
+  {
+    "batch_id": "synthesize",
+    "label": "Merge Results",
+    "tasks": [{"task_id": "t3", "label": "Synthesize findings"}],
+    "depends_on": ["collect"],
+    "fan_in_policy": "all_success"
+  }
+]
+```
+
+### Step 2: Provide a Runner Script
+
+`SubagentExecutor` calls `<workspace>/scripts/run_subagent_claude_v1.sh <task_prompt> <label>`. This is your execution backend — it receives the task, runs the agent, returns JSON result.
+
+### Step 3: Customize Policies (Optional)
+
+- **Fan-in per batch**: `all_success` (default), `any_success`, `majority`
+- **Gate conditions**: Override `BatchReviewer._check_gate_conditions` for custom approval triggers
+- **Retry**: Set `max_retries` per task for automatic retry on failure
+- **Custom executor**: Implement `TaskExecutorBase` for non-subagent backends
+
+### Step 4: Run
+
+```bash
+python3 runtime/orchestrator/cli.py plan "My workflow" config.json
+python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace ./my-project
+```
+
+---
+
+## Positioning vs Other Frameworks
+
+| Framework | Focus | How We Differ |
+|-----------|-------|---------------|
+| **LangGraph** | General stateful agent graphs | We **embed** LangGraph as one engine; we add batch DAG semantics, fan-in policies, and file-based truth on top |
+| **Deer-Flow** | Research workflow: plan → research → report | Shared concept: `SubagentExecutor` design. We extend with configurable fan-in, retry, and gate policies |
+| **CrewAI** | Role-based agent teams | We are a **control plane**, not an agent definition framework |
+| **AutoGen / AG2** | Conversational multi-agent protocols | We orchestrate **batched parallel workers**, not message-passing conversations |
+| **Temporal** | Durable workflow engine at scale | We are **single-process + JSON checkpoint** — no server cluster needed |
+| **Google ADK** | Code-first agent toolkit | We focus on **when and how to dispatch**, not agent capabilities. ADK agents could run under our executor |
+
+**Summary:** We are a thin, opinionated batch DAG control plane. Other frameworks define what agents *are*. We define how agents *coordinate*.
+
+---
+
+## Two-Batch Execution Sequence
 
 ```mermaid
 sequenceDiagram
   participant CLI as cli.py
   participant PL as TaskPlanner
-  participant G as LangGraph / loop
+  participant G as Engine
   participant BE as BatchExecutor
   participant SE as SubagentExecutor
   participant BR as BatchReviewer
   participant F as workflow_state.json
 
   CLI->>PL: plan(description, config)
-  PL->>F: atomic save
+  PL->>F: atomic write
 
   CLI->>G: run(state_path)
   loop Batch 1
-    G->>G: check_batch
-    G->>BE: execute_batch
-    BE->>SE: execute_async per task
-    G->>BE: monitor_batch
-    BE->>SE: get_result
-    G->>BR: review
+    G->>BE: execute_batch(tasks)
+    BE->>SE: execute_async × N
+    G->>BE: monitor_batch (poll + retry)
+    BE->>SE: get_result per task
+    G->>BR: review(fan_in_policy)
     BR-->>G: proceed
-    G->>F: save + context_summary
+    G->>F: save state + context_summary
   end
   loop Batch 2
     G->>BE: execute_batch
     G->>BE: monitor_batch
     G->>BR: review
     BR-->>G: proceed / gate / stop
-    G->>F: save
+    G->>F: save state
   end
 ```
 
 ---
 
-## 6. Positioning vs Other Frameworks
+## Crash Recovery
 
-| Framework | What it optimizes for | This repo |
-|-----------|----------------------|-----------|
-| **LangGraph** | General stateful graphs, checkpoints, interrupts | **Embedded** as Engine A; we define **batch / fan-in / gate** semantics and **JSON** as source of truth |
-| **Deer-Flow** (ByteDance) | Research workflow: plan → research → report, with human-in-the-loop review | Shared concept: **SubagentExecutor design** (task_id / timeout / status / hot state). We extend with **batch DAG** and **fan-in policies** |
-| **CrewAI** | Role-based crews, high-level agent teams | **File-backed control plane** + subprocess execution; no crew/role DSL |
-| **AutoGen / AG2** | Conversational multi-agent protocols | **Batch DAG + policies** over **spawned workers**, not message-centric agents |
-| **Temporal** | Durable workflows, workers, retries at scale | **Single-process** orchestrator + **JSON checkpoint**; no Temporal server/cluster |
-| **Dify** | Low-code apps, RAG, chat flows | **Code-first** OpenClaw integration; not a visual app builder |
-| **Google ADK** | Code-first agent toolkit with tools + memory | We focus on **orchestration control** not **agent capability**; ADK agents could be task executors under our planner |
+```bash
+# See where it stopped
+python3 runtime/orchestrator/cli.py show workflow_state_wf_xxx.json
 
-**Summary:** We are a **thin, opinionated control plane** (batches, fan-in, gates, one state file) that can **ride LangGraph** for graph execution or **degrade** to a simple loop.
+# Resume from exactly where it left off
+python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
+```
 
----
-
-## 7. Onboarding a New Scenario
-
-1. **`config.json`** — Array of batch objects:
-   - `batch_id`, `label`, `tasks[]` with `task_id`, `label`, optional `executor` (default `subagent`)
-   - `depends_on`: list of prior `batch_id` (DAG; cycles rejected)
-2. **`fan_in_policy`** per batch: `all_success` (default), `any_success`, `majority`
-3. **Gate (optional)** — Extend `BatchReviewer._check_gate_conditions` (default: substring `NEEDS_REVIEW` in `result_summary` triggers `gate`)
-4. **Runner** — `SubagentExecutor` expects `<workspace>/scripts/run_subagent_claude_v1.sh` (arguments: task prompt, label). If missing, a **simulated** `python -c print(...)` runs (for tests)
-
-Then: `plan` → `run` with `--workspace` pointing at the tree that contains `scripts/`.
+- **JSON state** survives any crash (atomic write + fsync)
+- **LangGraph checkpoint** (SQLite) survives process restart
+- **Watchdog** (`watchdog.py`) can auto-detect stalled workflows and mark them for resume
 
 ---
 
-## 8. Honest Assessment — What Works and What Doesn't
+## Repository Structure
 
-### What Works
+| Directory | Purpose | Status |
+|-----------|---------|--------|
+| `runtime/orchestrator/` | **v2 core** — workflow state, planner, executors, engines, CLI | Active |
+| `tests/orchestrator/` | Test suite (781 tests, all passing) | Active |
+| `docs/` | Operations guide, architecture docs | Active |
+| `examples/` | Sample configs and payloads | Active |
+| `schemas/` | JSON schemas for contracts | Active |
+| `scripts/` | Helper scripts, runner entry point | Active |
+| `plugins/` | OpenClaw plugins (e.g. human-gate) | Active |
+| `archive/` | Historical POCs and old docs | Archived |
+| `orchestration_runtime/` | v1 runtime (deprecated) | Deprecated |
 
-| Capability | Status | Evidence |
-|------------|--------|----------|
-| DAG batch planning | Working | Kahn's algorithm, cycle detection, topo sort — all tested |
-| Unified state file | Working | Atomic write with fsync, load/save roundtrip tested |
-| Fan-in review | Working | all_success / any_success / majority — all tested |
-| Gate conditions | Working | NEEDS_REVIEW detection → gate_blocked → resume |
-| LangGraph integration | Working | 5-node StateGraph with MemorySaver, 4 graph tests pass |
-| Context recovery | Working | `context_summary` auto-generated, persisted in state file |
-| CLI entry point | Working | plan / run / show / resume — all functional |
+### v2 Core Files (the Main Chain)
 
-### What Doesn't Work Yet (Honest Gaps)
-
-| Area | Current Reality | What's Needed |
-|------|----------------|---------------|
-| **Real task execution** | `SubagentExecutor` falls back to `python -c print(...)` when `run_subagent_claude_v1.sh` is missing. Tasks "succeed" but do nothing. | Real runner script or adapter interface for different execution backends |
-| **Monitor cross-process state** | `batch_executor.monitor_batch` creates a new `SubagentExecutor` each call. Hot state lives in process memory (`_background_tasks`), so monitor relies on file-based state that may lag. | Share executor instance or guarantee file persistence before monitor reads |
-| **Automatic recovery** | Recovery requires manual `resume` CLI call. No watchdog, no cron, no external trigger. | Watchdog process or systemd service that auto-resumes `gate_blocked` / crashed workflows |
-| **Checkpointing** | LangGraph `MemorySaver` is in-memory only — lost on process restart | SQLite / Redis checkpointer for durable graph state |
-| **Retries** | Task failure → batch `stop`. No retry policy, no exponential backoff | Configurable retry count per task/batch with backoff |
-| **Scale-out** | Single process, single machine | Worker queue (Redis/RabbitMQ) + multiple executor processes |
-| **Observability** | Logs + JSON file, no structured tracing | OpenTelemetry spans or at minimum structured log events |
-| **Agent abstraction** | Task = label string sent to `SubagentExecutor` | Typed task schemas, tool allowlists per task, result validation |
-| **Human-in-the-loop** | Gate + CLI resume | Web UI for approval, SLA timers, escalation |
-| **End-to-end automation** | Depends on external trigger to start `run` | Webhook / event-driven trigger integration |
-
-### State Recovery — How It Actually Works
-
-**Where state is recorded:**
-- `workflow_state_<id>.json` — the single truth file. Contains all batch/task status, continuation decisions, and `context_summary`.
-- `~/.openclaw/shared-context/subagent_states/<task_id>.json` — per-task SubagentExecutor state (PID, exit code, hot state). Managed by `subagent_executor.py`.
-- LangGraph `MemorySaver` — in-memory checkpoint. **Lost on process restart.**
-
-**How to recover:**
-1. `cli.py show <state.json>` — see where the workflow stopped
-2. `cli.py resume <state.json>` — if `gate_blocked`, sets status to `running` and re-enters the loop
-3. For crashed workflows: manually set `status` to `running` in the JSON file, then `resume`
-
-**What's NOT automated:**
-- No watchdog detects a crashed orchestrator and restarts it
-- No scheduler triggers `resume` after a timeout
-- LangGraph checkpoint is lost on restart (MemorySaver is in-memory)
-- If the state file is corrupted, there's no recovery mechanism
-
----
-
-## Example `config.json`
-
-```json
-[
-  {
-    "batch_id": "b0",
-    "label": "Collect",
-    "tasks": [
-      {"task_id": "t1", "label": "Source A"},
-      {"task_id": "t2", "label": "Source B"}
-    ],
-    "depends_on": []
-  },
-  {
-    "batch_id": "b1",
-    "label": "Synthesize",
-    "tasks": [{"task_id": "t3", "label": "Merge findings"}],
-    "depends_on": ["b0"],
-    "fan_in_policy": "all_success"
-  }
-]
+```
+runtime/orchestrator/
+├── workflow_state.py      # Unified data model (WorkflowState, BatchEntry, TaskEntry)
+├── task_planner.py        # DAG validation, topological sort, state file creation
+├── batch_executor.py      # Parallel task dispatch, monitoring, retry logic
+├── batch_reviewer.py      # Fan-in evaluation (all/any/majority) + gate conditions
+├── workflow_graph.py      # LangGraph engine with SQLite checkpoint
+├── workflow_loop.py       # Polling fallback engine (zero dependencies)
+├── subagent_executor.py   # OpenClaw subagent process management
+├── executor_interface.py  # Pluggable executor abstract base
+├── watchdog.py            # Stall detection and auto-resume marking
+└── cli.py                 # Unified CLI entry point
 ```
 
 ---
 
-## References
+## License
 
-- **State model:** `runtime/orchestrator/workflow_state.py`
-- **Engines:** `workflow_graph.py`, `workflow_loop.py`
-- **Planning:** `task_planner.py`
-- **Execution / review:** `batch_executor.py`, `batch_reviewer.py`, `subagent_executor.py`
-- **CLI:** `runtime/orchestrator/cli.py`
-
----
-
-## License / Monorepo Note
-
-This repository is the **OpenClaw company orchestration** monorepo (`docs/`, `runtime/`, `tests/`). See `docs/CURRENT_TRUTH.md` for the live boundary of what is “default main chain” vs historical docs.
+MIT. This repository is the OpenClaw company orchestration monorepo.

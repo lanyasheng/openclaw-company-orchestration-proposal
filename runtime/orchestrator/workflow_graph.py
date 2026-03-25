@@ -13,10 +13,17 @@ Graph structure:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
+
+try:
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    _HAS_SQLITE_SAVER = True
+except ImportError:
+    _HAS_SQLITE_SAVER = False
 
 from workflow_state import (
     WorkflowState,
@@ -205,9 +212,15 @@ def _route_after_advance(gs: GraphState) -> str:
     return END
 
 
-def build_workflow_graph(checkpointer=None):
+def _default_checkpointer(db_path: str | None = None):
+    if db_path and _HAS_SQLITE_SAVER:
+        return SqliteSaver.from_conn_string(db_path)
+    return MemorySaver()
+
+
+def build_workflow_graph(checkpointer=None, db_path: str | None = None):
     if checkpointer is None:
-        checkpointer = MemorySaver()
+        checkpointer = _default_checkpointer(db_path)
 
     graph = StateGraph(GraphState)
     graph.add_node("check_batch", node_check_batch)
@@ -232,11 +245,15 @@ def run_workflow(
     workspace_dir: str = ".",
     timeout_seconds: int = 900,
     thread_id: str = "default",
+    checkpoint_db: str | None = None,
 ) -> WorkflowState:
     if state_path:
         save_workflow_state(workflow_state, state_path)
 
-    graph = build_workflow_graph()
+    if checkpoint_db is None and state_path:
+        checkpoint_db = str(Path(state_path).with_suffix(".checkpoint.db"))
+
+    graph = build_workflow_graph(db_path=checkpoint_db)
     initial: GraphState = {
         "workflow": workflow_state.to_dict(),
         "state_path": state_path,
