@@ -170,8 +170,7 @@ def test_operator_runbook_exists():
     print("Test 3: Operator runbook file exists")
     print("=" * 60)
     
-    # 使用绝对路径
-    runbook_path = Path("/Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal/runtime/orchestrator/examples/trading_roundtable_operator_runbook_v1.md")
+    runbook_path = Path(__file__).resolve().parents[2] / "runtime" / "orchestrator" / "examples" / "trading_roundtable_operator_runbook_v1.md"
     
     assert runbook_path.exists(), f"Operator runbook not found at {runbook_path}"
     assert runbook_path.stat().st_size > 0, "Operator runbook is empty"

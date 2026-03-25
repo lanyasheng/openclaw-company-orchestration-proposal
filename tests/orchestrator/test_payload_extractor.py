@@ -21,15 +21,18 @@ if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
 from payload_extractor import extract_payloads, _merge_first_non_empty
-from state_machine import create_task, get_state, STATE_DIR  # type: ignore
+import state_machine
+from state_machine import create_task, get_state  # type: ignore
 from datetime import datetime
 
 
 @pytest.fixture(autouse=True)
 def isolated_state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """隔离的测试环境"""
+    """隔离的测试环境 — 直接 patch 模块级 STATE_DIR 避免 import 顺序问题"""
+    import state_machine
     state_dir = tmp_path / "shared-context" / "job-status"
     state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(state_machine, "STATE_DIR", state_dir)
     monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
     return state_dir
 
@@ -73,13 +76,12 @@ class TestMergeFirstNonEmpty:
 def _create_task_with_result(task_id: str, batch_id: str, result: dict):
     """Helper: 创建任务并设置结果"""
     create_task(task_id=task_id, batch_id=batch_id)
-    # 更新任务状态添加结果
-    state_path = STATE_DIR / f"{task_id}.json"
+    state_path = state_machine.STATE_DIR / f"{task_id}.json"
     if state_path.exists():
-        state = json.loads(state_path.read_text())
-        state["result"] = result
-        state["state"] = "callback_received"
-        state_path.write_text(json.dumps(state, indent=2))
+        task_state = json.loads(state_path.read_text())
+        task_state["result"] = result
+        task_state["state"] = "callback_received"
+        state_path.write_text(json.dumps(task_state, indent=2))
 
 
 class TestExtractPayloads:
