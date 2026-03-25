@@ -194,10 +194,12 @@ sequenceDiagram
 | Framework | What it optimizes for | This repo |
 |-----------|----------------------|-----------|
 | **LangGraph** | General stateful graphs, checkpoints, interrupts | **Embedded** as Engine A; we define **batch / fan-in / gate** semantics and **JSON** as source of truth |
+| **Deer-Flow** (ByteDance) | Research workflow: plan → research → report, with human-in-the-loop review | Shared concept: **SubagentExecutor design** (task_id / timeout / status / hot state). We extend with **batch DAG** and **fan-in policies** |
 | **CrewAI** | Role-based crews, high-level agent teams | **File-backed control plane** + subprocess execution; no crew/role DSL |
 | **AutoGen / AG2** | Conversational multi-agent protocols | **Batch DAG + policies** over **spawned workers**, not message-centric agents |
 | **Temporal** | Durable workflows, workers, retries at scale | **Single-process** orchestrator + **JSON checkpoint**; no Temporal server/cluster |
 | **Dify** | Low-code apps, RAG, chat flows | **Code-first** OpenClaw integration; not a visual app builder |
+| **Google ADK** | Code-first agent toolkit with tools + memory | We focus on **orchestration control** not **agent capability**; ADK agents could be task executors under our planner |
 
 **Summary:** We are a **thin, opinionated control plane** (batches, fan-in, gates, one state file) that can **ride LangGraph** for graph execution or **degrade** to a simple loop.
 
@@ -216,19 +218,52 @@ Then: `plan` → `run` with `--workspace` pointing at the tree that contains `sc
 
 ---
 
-## 8. Known Gaps (vs Mature Orchestrators)
+## 8. Honest Assessment — What Works and What Doesn't
 
-| Area | Today | Typical gap vs LangGraph / CrewAI / Temporal |
-|------|--------|-----------------------------------------------|
-| **Checkpointing** | LangGraph `MemorySaver` in-process | No distributed / DB-backed graph store |
-| **Retries & sagas** | Task failures → batch review → `stop` | No automatic retry policies, compensations |
-| **Scale-out** | Single orchestrator process | No worker pool / queue integration |
-| **Observability** | Logs + JSON file | No first-class traces/metrics UI |
-| **Agent abstraction** | Task = label string + executor | No built-in role/crew/tool schemas |
-| **Human-in-the-loop** | Gate + `resume` CLI | No rich approval UI or SLA timers |
-| **Versioning** | Implicit in repo | No workflow definition registry / migration |
+### What Works
 
-These are intentional **thin-plane** tradeoffs; closing them is product/engineering follow-up.
+| Capability | Status | Evidence |
+|------------|--------|----------|
+| DAG batch planning | Working | Kahn's algorithm, cycle detection, topo sort — all tested |
+| Unified state file | Working | Atomic write with fsync, load/save roundtrip tested |
+| Fan-in review | Working | all_success / any_success / majority — all tested |
+| Gate conditions | Working | NEEDS_REVIEW detection → gate_blocked → resume |
+| LangGraph integration | Working | 5-node StateGraph with MemorySaver, 4 graph tests pass |
+| Context recovery | Working | `context_summary` auto-generated, persisted in state file |
+| CLI entry point | Working | plan / run / show / resume — all functional |
+
+### What Doesn't Work Yet (Honest Gaps)
+
+| Area | Current Reality | What's Needed |
+|------|----------------|---------------|
+| **Real task execution** | `SubagentExecutor` falls back to `python -c print(...)` when `run_subagent_claude_v1.sh` is missing. Tasks "succeed" but do nothing. | Real runner script or adapter interface for different execution backends |
+| **Monitor cross-process state** | `batch_executor.monitor_batch` creates a new `SubagentExecutor` each call. Hot state lives in process memory (`_background_tasks`), so monitor relies on file-based state that may lag. | Share executor instance or guarantee file persistence before monitor reads |
+| **Automatic recovery** | Recovery requires manual `resume` CLI call. No watchdog, no cron, no external trigger. | Watchdog process or systemd service that auto-resumes `gate_blocked` / crashed workflows |
+| **Checkpointing** | LangGraph `MemorySaver` is in-memory only — lost on process restart | SQLite / Redis checkpointer for durable graph state |
+| **Retries** | Task failure → batch `stop`. No retry policy, no exponential backoff | Configurable retry count per task/batch with backoff |
+| **Scale-out** | Single process, single machine | Worker queue (Redis/RabbitMQ) + multiple executor processes |
+| **Observability** | Logs + JSON file, no structured tracing | OpenTelemetry spans or at minimum structured log events |
+| **Agent abstraction** | Task = label string sent to `SubagentExecutor` | Typed task schemas, tool allowlists per task, result validation |
+| **Human-in-the-loop** | Gate + CLI resume | Web UI for approval, SLA timers, escalation |
+| **End-to-end automation** | Depends on external trigger to start `run` | Webhook / event-driven trigger integration |
+
+### State Recovery — How It Actually Works
+
+**Where state is recorded:**
+- `workflow_state_<id>.json` — the single truth file. Contains all batch/task status, continuation decisions, and `context_summary`.
+- `~/.openclaw/shared-context/subagent_states/<task_id>.json` — per-task SubagentExecutor state (PID, exit code, hot state). Managed by `subagent_executor.py`.
+- LangGraph `MemorySaver` — in-memory checkpoint. **Lost on process restart.**
+
+**How to recover:**
+1. `cli.py show <state.json>` — see where the workflow stopped
+2. `cli.py resume <state.json>` — if `gate_blocked`, sets status to `running` and re-enters the loop
+3. For crashed workflows: manually set `status` to `running` in the JSON file, then `resume`
+
+**What's NOT automated:**
+- No watchdog detects a crashed orchestrator and restarts it
+- No scheduler triggers `resume` after a timeout
+- LangGraph checkpoint is lost on restart (MemorySaver is in-memory)
+- If the state file is corrupted, there's no recovery mechanism
 
 ---
 
