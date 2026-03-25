@@ -31,6 +31,13 @@ from task_registration import (
     get_registration,
 )
 
+# P0-5 Batch C: SubagentExecutor integration for dispatch execution
+from subagent_executor import (
+    SubagentConfig,
+    SubagentExecutor,
+    TERMINAL_STATES,
+)
+
 __all__ = [
     "DispatchStatus",
     "DispatchPolicy",
@@ -341,9 +348,12 @@ class DispatchExecutor:
     """
     Dispatch executor — 执行 dispatch 并生成 artifact。
     
+    P0-5 Batch C (2026-03-25): Integrated SubagentExecutor for real dispatch execution.
+    
     提供：
     - generate_dispatch_artifact(): 生成 dispatch artifact
     - execute_dispatch(): 执行 dispatch（写入 artifact + 可选执行 intent）
+    - _execute_dispatch_intent(): 实际启动 subagent 执行 dispatch intent（新增）
     """
     
     def __init__(self, selector: Optional[AutoDispatchSelector] = None):
@@ -467,7 +477,9 @@ class DispatchExecutor:
         existing_dispatches: Optional[List[DispatchArtifact]] = None,
     ) -> DispatchArtifact:
         """
-        执行 dispatch：评估 policy -> 生成 artifact -> 写入文件。
+        执行 dispatch：评估 policy -> 生成 artifact -> 写入文件 -> (可选) 启动 subagent 执行。
+        
+        P0-5 Batch C (2026-03-25): Integrated SubagentExecutor for real dispatch execution.
         
         Args:
             record: Task registration record
@@ -495,8 +507,75 @@ class DispatchExecutor:
                     "dispatch_time": artifact.dispatch_time,
                 },
             )
+            
+            # P0-5 Batch C: Execute dispatch intent via SubagentExecutor
+            # This actually starts the subagent to execute the dispatched task
+            if artifact.execution_intent and "recommended_spawn" in artifact.execution_intent:
+                subagent_task_id = self._execute_dispatch_intent(
+                    record=record,
+                    dispatch_id=artifact.dispatch_id,
+                    execution_intent=artifact.execution_intent,
+                )
+                # Update artifact with subagent task info
+                artifact.metadata["subagent_task_id"] = subagent_task_id
+                artifact.metadata["execution_started"] = True
+                artifact.write()
         
         return artifact
+    
+    def _execute_dispatch_intent(
+        self,
+        record: TaskRegistrationRecord,
+        dispatch_id: str,
+        execution_intent: Dict[str, Any],
+    ) -> str:
+        """
+        P0-5 Batch C (2026-03-25): Execute dispatch intent via SubagentExecutor.
+        
+        This method actually starts a subagent to execute the dispatched task.
+        
+        Args:
+            record: Task registration record
+            dispatch_id: Dispatch ID
+            execution_intent: Execution intent from dispatch artifact
+        
+        Returns:
+            subagent_task_id: Subagent task ID for tracking
+        """
+        recommended_spawn = execution_intent.get("recommended_spawn", {})
+        
+        # Extract spawn parameters
+        task = recommended_spawn.get("task", "")
+        runtime = recommended_spawn.get("runtime", "subagent")
+        cwd = recommended_spawn.get("cwd", str(Path.home() / ".openclaw" / "workspace"))
+        metadata = recommended_spawn.get("metadata", {})
+        
+        # Generate label from dispatch_id
+        label = f"dispatch-{dispatch_id.replace('dispatch_', '')}"
+        
+        # Create SubagentConfig
+        subagent_config = SubagentConfig(
+            label=label,
+            runtime="subagent" if runtime == "subagent" else "acp",
+            timeout_seconds=metadata.get("timeout_seconds", 1800),
+            allowed_tools=metadata.get("allowed_tools"),
+            cwd=cwd,
+            metadata={
+                **metadata,
+                "source": "auto_dispatch",
+                "dispatch_id": dispatch_id,
+                "registration_id": record.registration_id,
+                "task_id": record.task_id,
+            },
+        )
+        
+        # Create SubagentExecutor
+        executor = SubagentExecutor(config=subagent_config, cwd=cwd)
+        
+        # Start subagent asynchronously
+        task_id = executor.execute_async(task)
+        
+        return task_id
 
 
 def select_ready_tasks(
