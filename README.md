@@ -1,211 +1,272 @@
-# OpenClaw Orchestration Control Plane
+# OpenClaw Company Orchestration — Multi-Agent Workflow Control Plane
 
-> Multi-agent workflow orchestration for OpenClaw — one chain, one state file, automatic batch-to-batch advancement.
+> **One CLI**, **one JSON state file**, **batched parallel tasks**, **fan-in review**, **automatic or gated continuation**. LangGraph when available; polling loop otherwise.
 
-[中文文档](README_CN.md)
+[中文版 README](README_CN.md) · [Operations](docs/OPERATIONS.md) · [Current truth](docs/CURRENT_TRUTH.md)
 
-## What It Does
+---
 
-After one agent task finishes, what happens next? This framework answers that question with a structured control plane:
+## What This Is
 
-1. **Decompose** — break a goal into ordered batches of parallel tasks
-2. **Execute** — dispatch tasks to SubagentExecutor in parallel
-3. **Review** — evaluate batch results with configurable fan-in policies
-4. **Advance** — automatically proceed to the next batch, or stop at a gate
+A **control-plane** orchestrator for OpenClaw-style multi-agent work:
 
-```
-TaskPlanner → BatchExecutor → BatchReviewer → advance → next batch → ...
-```
+1. **Plan** — Validate batch DAG (`depends_on`), topological sort, emit `workflow_state_*.json`.
+2. **Execute** — Per batch, dispatch parallel tasks via `SubagentExecutor` (subprocess / runner script).
+3. **Review** — Apply `fan_in_policy` (`all_success` | `any_success` | `majority`) and optional **gate** heuristics.
+4. **Advance** — `proceed` (next batch), `gate` (pause for human), or `stop` (workflow failed).
+
+OpenClaw keeps policy, channels, and spawn semantics; this runtime is the **batch DAG + persistence + continuation** layer.
+
+---
 
 ## Quick Start
 
 ```bash
-# 1. Create a workflow
-python3 runtime/orchestrator/cli.py plan "Trading analysis" config.json
-
-# 2. Run it (auto-detects LangGraph or falls back to polling loop)
-python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json
-
-# 3. Check status
+python3 runtime/orchestrator/cli.py plan "My goal" config.json
+python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace /path/to/workspace
 python3 runtime/orchestrator/cli.py show workflow_state_wf_xxx.json
-
-# 4. Resume after interruption or gate
 python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
 ```
 
-### Example config.json
+- **`run`** uses **`workflow_graph.py` (LangGraph)** if `langgraph` is importable; else **`workflow_loop.py`** (poll + sleep). Same state file and semantics.
+
+---
+
+## 1. Architecture Overview
+
+```mermaid
+graph TD
+  subgraph Entry["CLI"]
+    CLI[cli.py]
+  end
+  subgraph Plan["Create"]
+    TP[TaskPlanner]
+    WS[workflow_state.py]
+  end
+  subgraph Engines["Run / resume"]
+    LG[workflow_graph<br/>LangGraph]
+    WL[workflow_loop<br/>polling fallback]
+  end
+  subgraph Runtime["Per-batch runtime"]
+    BE[BatchExecutor]
+    SE[SubagentExecutor]
+    BR[BatchReviewer]
+  end
+  subgraph Truth["Persistence"]
+    JSON[(workflow_state.json)]
+  end
+
+  CLI -->|plan| TP
+  TP --> WS
+  WS --> JSON
+  CLI -->|run / resume| LG
+  CLI -->|no LangGraph dep| WL
+  LG --> BE
+  LG --> BR
+  WL --> BE
+  WL --> BR
+  BE --> SE
+  LG --> WS
+  WL --> WS
+  WS --> JSON
+```
+
+---
+
+## 2. Workflow Lifecycle
+
+```mermaid
+flowchart TD
+  subgraph Boot["Bootstrap"]
+    A[Create config batches] --> B[TaskPlanner: DAG validate + topo sort]
+    B --> C[write workflow_state.json]
+  end
+  subgraph Loop["Batch loop"]
+    D[check_batch]
+    E[dispatch tasks]
+    F[monitor terminals]
+    G[review fan-in + gate]
+    H[advance decision]
+    D --> E --> F --> G --> H
+  end
+  subgraph Out["Outcomes"]
+    H -->|proceed| D
+    H -->|gate| I[gate_blocked]
+    H -->|stop| J[failed]
+    H -->|no next batch| K[completed]
+  end
+  C --> D
+```
+
+---
+
+## 3. WorkflowState Machine
+
+Workflow-level status in `workflow_state.py`:
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending
+  pending --> running
+  running --> completed
+  running --> failed
+  running --> gate_blocked
+  gate_blocked --> running: resume
+  completed --> [*]
+  failed --> [*]
+```
+
+---
+
+## 4. `workflow_state.json` Data Shape
+
+```mermaid
+graph LR
+  subgraph Root["WorkflowState"]
+    WID[workflow_id]
+    ST[status]
+    PLN[plan]
+    BAT[batches]
+    SUM[context_summary]
+    ART[artifact_chain]
+  end
+  subgraph Batch["each BatchEntry"]
+    BID[batch_id]
+    DEP[depends_on]
+    FAN[fan_in_policy]
+    TSK[tasks]
+    CON[continuation]
+  end
+  subgraph Task["each TaskEntry"]
+    TID[task_id]
+    LBL[label]
+    EXE[executor]
+    TST[status]
+    RS[result_summary]
+  end
+  BAT --> Batch
+  TSK --> Task
+```
+
+`plan` holds `total_batches`, `current_batch_index`, `description`. `continuation` stores `ContinuationDecision`: `decision` ∈ `proceed` | `gate` | `stop`, `stopped_because`, `next_batch`, `decided_at`.
+
+---
+
+## 5. Typical Two-Batch Execution (Sequence)
+
+```mermaid
+sequenceDiagram
+  participant CLI as cli.py
+  participant PL as TaskPlanner
+  participant G as LangGraph / loop
+  participant BE as BatchExecutor
+  participant SE as SubagentExecutor
+  participant BR as BatchReviewer
+  participant F as workflow_state.json
+
+  CLI->>PL: plan(description, config)
+  PL->>F: atomic save
+
+  CLI->>G: run(state_path)
+  loop Batch 1
+    G->>G: check_batch
+    G->>BE: execute_batch
+    BE->>SE: execute_async per task
+    G->>BE: monitor_batch
+    BE->>SE: get_result
+    G->>BR: review
+    BR-->>G: proceed
+    G->>F: save + context_summary
+  end
+  loop Batch 2
+    G->>BE: execute_batch
+    G->>BE: monitor_batch
+    G->>BR: review
+    BR-->>G: proceed / gate / stop
+    G->>F: save
+  end
+```
+
+---
+
+## 6. Positioning vs Other Frameworks
+
+| Framework | What it optimizes for | This repo |
+|-----------|----------------------|-----------|
+| **LangGraph** | General stateful graphs, checkpoints, interrupts | **Embedded** as Engine A; we define **batch / fan-in / gate** semantics and **JSON** as source of truth |
+| **CrewAI** | Role-based crews, high-level agent teams | **File-backed control plane** + subprocess execution; no crew/role DSL |
+| **AutoGen / AG2** | Conversational multi-agent protocols | **Batch DAG + policies** over **spawned workers**, not message-centric agents |
+| **Temporal** | Durable workflows, workers, retries at scale | **Single-process** orchestrator + **JSON checkpoint**; no Temporal server/cluster |
+| **Dify** | Low-code apps, RAG, chat flows | **Code-first** OpenClaw integration; not a visual app builder |
+
+**Summary:** We are a **thin, opinionated control plane** (batches, fan-in, gates, one state file) that can **ride LangGraph** for graph execution or **degrade** to a simple loop.
+
+---
+
+## 7. Onboarding a New Scenario
+
+1. **`config.json`** — Array of batch objects:
+   - `batch_id`, `label`, `tasks[]` with `task_id`, `label`, optional `executor` (default `subagent`)
+   - `depends_on`: list of prior `batch_id` (DAG; cycles rejected)
+2. **`fan_in_policy`** per batch: `all_success` (default), `any_success`, `majority`
+3. **Gate (optional)** — Extend `BatchReviewer._check_gate_conditions` (default: substring `NEEDS_REVIEW` in `result_summary` triggers `gate`)
+4. **Runner** — `SubagentExecutor` expects `<workspace>/scripts/run_subagent_claude_v1.sh` (arguments: task prompt, label). If missing, a **simulated** `python -c print(...)` runs (for tests)
+
+Then: `plan` → `run` with `--workspace` pointing at the tree that contains `scripts/`.
+
+---
+
+## 8. Known Gaps (vs Mature Orchestrators)
+
+| Area | Today | Typical gap vs LangGraph / CrewAI / Temporal |
+|------|--------|-----------------------------------------------|
+| **Checkpointing** | LangGraph `MemorySaver` in-process | No distributed / DB-backed graph store |
+| **Retries & sagas** | Task failures → batch review → `stop` | No automatic retry policies, compensations |
+| **Scale-out** | Single orchestrator process | No worker pool / queue integration |
+| **Observability** | Logs + JSON file | No first-class traces/metrics UI |
+| **Agent abstraction** | Task = label string + executor | No built-in role/crew/tool schemas |
+| **Human-in-the-loop** | Gate + `resume` CLI | No rich approval UI or SLA timers |
+| **Versioning** | Implicit in repo | No workflow definition registry / migration |
+
+These are intentional **thin-plane** tradeoffs; closing them is product/engineering follow-up.
+
+---
+
+## Example `config.json`
 
 ```json
 [
   {
     "batch_id": "b0",
-    "label": "Data collection",
+    "label": "Collect",
     "tasks": [
-      {"task_id": "t1", "label": "Collect A-share data"},
-      {"task_id": "t2", "label": "Collect HK data"}
+      {"task_id": "t1", "label": "Source A"},
+      {"task_id": "t2", "label": "Source B"}
     ],
     "depends_on": []
   },
   {
     "batch_id": "b1",
-    "label": "Analysis",
-    "tasks": [
-      {"task_id": "t3", "label": "Cross-market trend analysis"}
-    ],
+    "label": "Synthesize",
+    "tasks": [{"task_id": "t3", "label": "Merge findings"}],
     "depends_on": ["b0"],
     "fan_in_policy": "all_success"
   }
 ]
 ```
 
-## Architecture
+---
 
-```
-cli.py                          ← single entry point
-  │
-  ├── task_planner.py           ← DAG validation + topological sort
-  │     └── workflow_state.py   ← unified state model
-  │
-  ├── workflow_graph.py         ← LangGraph StateGraph (recommended)
-  │   (or workflow_loop.py)     ← polling fallback (no langgraph dep)
-  │     │
-  │     ├── batch_executor.py   ← parallel SubagentExecutor dispatch
-  │     │     └── subagent_executor.py
-  │     │
-  │     └── batch_reviewer.py   ← fan-in evaluation + gate conditions
-  │
-  └── workflow_state.py         ← load / save / query
-```
+## References
 
-### Single Source of Truth
+- **State model:** `runtime/orchestrator/workflow_state.py`
+- **Engines:** `workflow_graph.py`, `workflow_loop.py`
+- **Planning:** `task_planner.py`
+- **Execution / review:** `batch_executor.py`, `batch_reviewer.py`, `subagent_executor.py`
+- **CLI:** `runtime/orchestrator/cli.py`
 
-All state lives in one file: `workflow_state_<id>.json`
+---
 
-```
-workflow_state.json
-├── workflow_id, status         # global state
-├── plan.current_batch_index    # which batch is active
-├── batches[]                   # each batch's full state
-│   ├── tasks[]                 # each task's result and status
-│   └── continuation            # review decision (proceed/gate/stop)
-└── context_summary             # LLM semantic recovery after context compression
-```
+## License / Monorepo Note
 
-### Execution Engines
-
-| Engine | File | When |
-|--------|------|------|
-| **LangGraph** | `workflow_graph.py` | `langgraph` installed — automatic checkpointing, conditional routing, interrupt/resume |
-| **WorkflowLoop** | `workflow_loop.py` | No langgraph — equivalent functionality via polling |
-
-Both share the same underlying modules. The CLI auto-detects which to use.
-
-## Core Concepts
-
-### Continuation Contract
-
-Every batch completion produces an explicit decision:
-
-```python
-ContinuationDecision(
-    stopped_because="all tasks completed",
-    decision="proceed",       # proceed | gate | stop
-    next_batch="b1",
-    decided_at="2026-03-25T10:05:00Z"
-)
-```
-
-### Fan-in Policies
-
-| Policy | Rule | Use Case |
-|--------|------|----------|
-| `all_success` | Every task must complete | Critical workflows |
-| `any_success` | At least one task succeeds | Exploratory research |
-| `majority` | >50% tasks succeed | Voting / consensus |
-
-### Gate Conditions
-
-If any task result contains `NEEDS_REVIEW`, the batch triggers a gate — the workflow pauses until a human approves and runs `resume`.
-
-### DAG Dependencies
-
-Batches can declare dependencies. The planner validates the DAG (cycle detection via Kahn's algorithm) and orders batches topologically.
-
-### Context Recovery
-
-`context_summary` is auto-generated after each state change. When an LLM agent's context window compresses, it can read this field to understand where the workflow left off — no need to replay the full history.
-
-## Python API
-
-```python
-from task_planner import TaskPlanner
-from workflow_graph import run_workflow
-from workflow_state import save_workflow_state, load_workflow_state
-
-# Plan
-planner = TaskPlanner()
-state = planner.plan("My workflow", batches_config)
-save_workflow_state(state, "state.json")
-
-# Run
-result = run_workflow(state, "state.json", workspace_dir=".")
-
-# Resume
-from workflow_graph import resume_workflow
-result = resume_workflow("state.json")
-```
-
-## Testing
-
-```bash
-pip install pytest langgraph
-
-# Run all tests
-PYTHONPATH=runtime/orchestrator:runtime/scripts pytest tests/orchestrator/ -q
-
-# v2 tests only
-PYTHONPATH=runtime/orchestrator:runtime/scripts pytest tests/orchestrator/test_workflow_v2.py -v
-```
-
-**781 tests passing** — 34 v2 tests (state, planner, reviewer, LangGraph graph) + 747 v1 tests.
-
-## Project Structure
-
-```
-runtime/orchestrator/
-├── cli.py                  # CLI entry point
-├── workflow_state.py       # Unified state model
-├── workflow_graph.py       # LangGraph engine
-├── workflow_loop.py        # Polling engine (fallback)
-├── task_planner.py         # DAG planner
-├── batch_executor.py       # Parallel dispatch
-├── batch_reviewer.py       # Fan-in + gate
-├── subagent_executor.py    # SubagentExecutor wrapper
-├── state_machine.py        # v1 task state (compat)
-├── orchestrator.py         # v1 callback handler (compat)
-└── ...                     # v1 modules (preserved for reference)
-
-tests/orchestrator/
-├── test_workflow_v2.py     # v2 test suite
-└── ...                     # v1 tests
-
-docs/
-├── CURRENT_TRUTH.md        # Current system state
-├── OPERATIONS.md           # Operations guide
-└── ...                     # Design documents
-```
-
-## Why This Exists
-
-Most multi-agent frameworks (LangGraph, CrewAI, AutoGen) focus on agent-to-agent communication or graph execution. They don't answer:
-
-- **Who owns the task?** Owner/Executor decoupling separates business judgment from execution.
-- **What happens after completion?** Continuation Contract makes every transition explicit.
-- **How do you recover after context compression?** `context_summary` provides semantic recovery.
-- **How do you safely auto-advance?** Gate conditions + fan-in policies, not just "run the next node."
-
-This framework is a **control plane** that sits above the execution layer. It can use LangGraph as its execution engine while adding orchestration semantics that LangGraph doesn't provide out of the box.
-
-## License
-
-MIT
+This repository is the **OpenClaw company orchestration** monorepo (`docs/`, `runtime/`, `tests/`). See `docs/CURRENT_TRUTH.md` for the live boundary of what is “default main chain” vs historical docs.
