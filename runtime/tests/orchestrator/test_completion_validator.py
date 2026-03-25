@@ -32,6 +32,7 @@ from completion_validator_rules import (
     has_intermediate_state_keywords,
     has_intermediate_keywords,
     has_test_pass_evidence,
+    _match_whitelist,
 )
 from completion_validator import (
     validate_subtask_completion,
@@ -91,6 +92,43 @@ class TestThroughRules(unittest.TestCase):
         # T6 反向：完成输出不应包含中间状态关键词
         self.assertFalse(has_intermediate_keywords("完成实现"))
         self.assertFalse(has_intermediate_keywords("所有测试通过"))
+
+
+class TestWhitelistMatch(unittest.TestCase):
+    """测试白名单匹配逻辑"""
+    
+    def test_prefix_match(self):
+        """测试前缀匹配"""
+        # 应该匹配：label 以 whitelist 开头
+        self.assertTrue(_match_whitelist("explore-repo", "explore", "prefix"))
+        self.assertTrue(_match_whitelist("explore_task", "explore", "prefix"))
+        self.assertTrue(_match_whitelist("explore", "explore", "prefix"))
+        self.assertTrue(_match_whitelist("audit-task", "audit", "prefix"))
+        self.assertTrue(_match_whitelist("scan-repo", "scan", "prefix"))
+        
+        # 不应该匹配：whitelist 在 label 中间但后面不是连字符/下划线
+        self.assertFalse(_match_whitelist("checklist-task", "check", "prefix"))
+        self.assertFalse(_match_whitelist("re-explore", "explore", "prefix"))
+        
+        # 应该匹配：whitelist 在中间且后跟连字符
+        self.assertTrue(_match_whitelist("code-audit-task", "audit", "prefix"))
+        self.assertTrue(_match_whitelist("repo-scan-job", "scan", "prefix"))
+    
+    def test_exact_match(self):
+        """测试精确匹配"""
+        # 应该匹配：完全相同
+        self.assertTrue(_match_whitelist("explore", "explore", "exact"))
+        self.assertTrue(_match_whitelist("audit", "audit", "exact"))
+        
+        # 不应该匹配：不完全相同
+        self.assertFalse(_match_whitelist("explore-repo", "explore", "exact"))
+        self.assertFalse(_match_whitelist("audit-task", "audit", "exact"))
+    
+    def test_case_insensitive(self):
+        """测试大小写不敏感"""
+        self.assertTrue(_match_whitelist("EXPLORE-repo", "explore", "prefix"))
+        self.assertTrue(_match_whitelist("explore-REPO", "Explore", "prefix"))
+        self.assertTrue(_match_whitelist("Audit-Task", "AUDIT", "prefix"))
 
 
 class TestBlockRules(unittest.TestCase):
@@ -297,8 +335,9 @@ if __name__ == "__main__":
         self.assertNotEqual(status, "error")
     
     def test_TC7_whitelist_skip(self):
-        """TC7: 白名单任务跳过 → 直接 through"""
-        output = "Just exploring files..."
+        """TC7: 白名单任务跳过 → 直接 through (满足基本条件)"""
+        # 白名单任务需要满足基本条件：输出长度 >= 100，无未处理错误
+        output = "Just exploring files in the repository structure. " * 3  # > 100 chars
         
         # 使用白名单 label
         status, reason, score, metadata = validate_completion(
@@ -310,6 +349,95 @@ if __name__ == "__main__":
         self.assertEqual(status, "accepted")
         self.assertEqual(reason, "whitelisted")
         self.assertTrue(metadata.get("whitelisted"))
+    
+    def test_TC7b_whitelist_prefix_match(self):
+        """TC7b: 白名单前缀匹配逻辑"""
+        output = "Just exploring files in the repository structure. " * 3
+        
+        # 应该匹配：前缀匹配
+        status, reason, score, metadata = validate_completion(
+            output=output,
+            exit_code=0,
+            label="explore-task-123",
+        )
+        self.assertEqual(status, "accepted")
+        self.assertTrue(metadata.get("whitelisted"))
+        
+        # 应该匹配：whitelist 在中间且后跟连字符
+        status, reason, score, metadata = validate_completion(
+            output=output,
+            exit_code=0,
+            label="code-audit-task",
+        )
+        self.assertEqual(status, "accepted")
+        self.assertTrue(metadata.get("whitelisted"))
+        
+        # 不应该匹配：whitelist 在中间但后面不是连字符
+        status, reason, score, metadata = validate_completion(
+            output=output,
+            exit_code=0,
+            label="checklist-task",  # "check" 在 "checklist" 中，但后面是 "l"
+        )
+        # "check" 已从白名单移除，所以不会匹配
+        # 输出太短会被 B6 拦截
+        self.assertEqual(status, "blocked")
+    
+    def test_TC7c_whitelist_removed_labels(self):
+        """TC7c: 已移除的白名单 label (list/check) 不再自动通过"""
+        output = "Just listing files..."  # 短输出
+        
+        # "list" 和 "check" 已从白名单移除
+        status, reason, score, metadata = validate_completion(
+            output=output,
+            exit_code=0,
+            label="list-files",
+        )
+        # 不再自动通过，会被 B6 拦截 (输出太短)
+        self.assertEqual(status, "blocked")
+        self.assertIn("B6", reason)
+        
+        status, reason, score, metadata = validate_completion(
+            output=output,
+            exit_code=0,
+            label="check-status",
+        )
+        self.assertEqual(status, "blocked")
+    
+    def test_TC7d_whitelist_min_checks(self):
+        """TC7d: 白名单任务也要满足基本质量检查"""
+        # 白名单任务但输出太短 → B6 拦截
+        short_output = "exploring..."
+        status, reason, score, metadata = validate_completion(
+            output=short_output,
+            exit_code=0,
+            label="explore-task",
+        )
+        self.assertEqual(status, "blocked")
+        self.assertEqual(reason, "B6_empty_output")
+        self.assertTrue(metadata.get("whitelisted"))  # 仍标记为白名单
+        self.assertFalse(metadata.get("whitelist_override"))  # 但白名单未覆盖
+        
+        # 白名单任务但有未处理错误 → B4 拦截
+        error_output = "Exploring files...\n\nTraceback (most recent call last):\n  File 'test.py', line 1\nError: Something went wrong"
+        status, reason, score, metadata = validate_completion(
+            output=error_output,
+            exit_code=0,
+            label="audit-task",
+        )
+        self.assertEqual(status, "blocked")
+        self.assertEqual(reason, "B4_unhandled_error")
+        self.assertTrue(metadata.get("whitelisted"))
+        
+        # 白名单任务且满足基本条件 → 通过
+        good_output = "Exploring the repository structure to understand the codebase. " * 3
+        status, reason, score, metadata = validate_completion(
+            output=good_output,
+            exit_code=0,
+            label="scan-repo",
+        )
+        self.assertEqual(status, "accepted")
+        self.assertTrue(metadata.get("whitelisted"))
+        self.assertTrue(metadata.get("whitelist_min_checks_passed"))
     
     def test_TC8_empty_output_blocked(self):
         """TC8: 空输出 → blocked"""
@@ -427,14 +555,33 @@ class TestValidatorConfig(unittest.TestCase):
         """测试配置默认值"""
         # P0 全切 (2026-03-25): enforce 模式
         self.assertEqual(VALIDATOR_CONFIG["mode"], "enforce")
+        # 收紧后的白名单 (2026-03-25): 只保留 explore/audit/scan
         self.assertIn("explore", VALIDATOR_CONFIG["whitelist_labels"])
+        self.assertIn("audit", VALIDATOR_CONFIG["whitelist_labels"])
+        self.assertIn("scan", VALIDATOR_CONFIG["whitelist_labels"])
+        # list/check 已移除
+        self.assertNotIn("list", VALIDATOR_CONFIG["whitelist_labels"])
+        self.assertNotIn("check", VALIDATOR_CONFIG["whitelist_labels"])
         self.assertEqual(VALIDATOR_CONFIG["through_threshold"], 3)
         self.assertTrue(VALIDATOR_CONFIG["fallback_on_error"])
+        # 新增配置
+        self.assertEqual(VALIDATOR_CONFIG["whitelist_match_mode"], "prefix")
+        self.assertIn("B4", VALIDATOR_CONFIG["whitelist_min_checks"])
+        self.assertIn("B6", VALIDATOR_CONFIG["whitelist_min_checks"])
     
     def test_config_enforce_mode(self):
         """测试 enforce 模式配置"""
         # P0 全切后，mode 应该是 enforce
         self.assertEqual(VALIDATOR_CONFIG["mode"], "enforce")
+    
+    def test_config_whitelist_tightening(self):
+        """测试白名单收紧配置"""
+        # 白名单 label 数量从 5 个减少到 3 个
+        self.assertEqual(len(VALIDATOR_CONFIG["whitelist_labels"]), 3)
+        # 匹配模式是前缀匹配
+        self.assertEqual(VALIDATOR_CONFIG["whitelist_match_mode"], "prefix")
+        # 白名单任务也要进行基本质量检查
+        self.assertTrue(len(VALIDATOR_CONFIG["whitelist_min_checks"]) > 0)
 
 
 if __name__ == "__main__":

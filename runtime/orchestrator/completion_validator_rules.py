@@ -41,7 +41,9 @@ __all__ = [
 
 VALIDATOR_CONFIG: Dict[str, Any] = {
     "mode": "enforce",  # audit_only | enforce (P0 全切：2026-03-25)
-    "whitelist_labels": ["explore", "list", "check", "scan", "audit"],  # 收紧：高抽象任务需显式白名单
+    "whitelist_labels": ["explore", "audit", "scan"],  # 收紧：减少 label，移除过宽的 list/check
+    "whitelist_match_mode": "prefix",  # prefix | exact (prefix: label 以 whitelist 开头)
+    "whitelist_min_checks": ["B4", "B6"],  # 白名单任务也要检查：B4(未处理错误), B6(空输出)
     "through_threshold": 3,  # Through 分数阈值
     "fallback_on_error": True,  # validator 错误时 fallback 到原逻辑
     "min_output_length": 100,  # 最小输出长度
@@ -238,6 +240,49 @@ def has_unhandled_error(output: str) -> bool:
 # ========== 主验证函数 ==========
 
 
+def _match_whitelist(label: str, whitelist_label: str, mode: str = "prefix") -> bool:
+    """
+    白名单匹配逻辑
+    
+    Args:
+        label: 任务标签
+        whitelist_label: 白名单 label
+        mode: 匹配模式 ("prefix" | "exact")
+    
+    Returns:
+        bool: 是否匹配
+    """
+    label_lower = label.lower()
+    whitelist_lower = whitelist_label.lower()
+    
+    if mode == "exact":
+        return label_lower == whitelist_lower
+    else:  # prefix (默认)
+        # 前缀匹配：label 以 whitelist 开头，且 whitelist 后面是连字符/下划线或 label 结束
+        # 例如：whitelist="explore" 匹配 "explore-repo" / "explore_task" / "explore"
+        # 但不匹配 "checklist" (check 后面是 l，不是连字符/下划线)
+        if label_lower.startswith(whitelist_lower):
+            # 如果 label 刚好等于 whitelist，匹配
+            if len(label_lower) == len(whitelist_lower):
+                return True
+            # 如果 whitelist 后面是连字符/下划线，匹配
+            next_char = label_lower[len(whitelist_lower)]
+            if next_char in "-_":
+                return True
+            # 否则不匹配 (如 "checklist" 中 "check" 后面是 "l")
+            return False
+        
+        # 也允许 whitelist 在 label 中间，但必须前面和后面都是连字符/下划线
+        # 例如：whitelist="audit" 匹配 "code-audit-task"
+        idx = label_lower.find(whitelist_lower)
+        if idx > 0 and idx + len(whitelist_lower) < len(label_lower):
+            prev_char = label_lower[idx - 1]
+            next_char = label_lower[idx + len(whitelist_lower)]
+            if prev_char in "-_" and next_char in "-_":
+                return True
+        return False
+
+
 def validate_completion(
     output: str,
     exit_code: int = 0,
@@ -265,13 +310,44 @@ def validate_completion(
     
     try:
         # 检查白名单
+        whitelist_matched = None
+        match_mode = VALIDATOR_CONFIG.get("whitelist_match_mode", "prefix")
+        whitelist_min_checks = VALIDATOR_CONFIG.get("whitelist_min_checks", [])
+        
         if label:
             for whitelist_label in VALIDATOR_CONFIG.get("whitelist_labels", []):
-                if whitelist_label.lower() in label.lower():
-                    return "accepted", "whitelisted", 0, {
-                        "whitelisted": True,
-                        "whitelist_label": whitelist_label,
-                    }
+                if _match_whitelist(label, whitelist_label, match_mode):
+                    whitelist_matched = whitelist_label
+                    break
+        
+        # 白名单任务：只进行基本质量检查 (B4 未处理错误，B6 空输出)
+        if whitelist_matched:
+            # B6: 空输出检查 (白名单也要满足)
+            if len(output.strip()) < VALIDATOR_CONFIG.get("min_output_length", 100):
+                return "blocked", "B6_empty_output", 0, {
+                    "blocked": True,
+                    "block_reason": "B6_empty_output",
+                    "whitelisted": True,
+                    "whitelist_label": whitelist_matched,
+                    "whitelist_override": False,
+                }
+            
+            # B4: 未处理错误检查 (白名单也要满足)
+            if has_unhandled_error(output):
+                return "blocked", "B4_unhandled_error", 0, {
+                    "blocked": True,
+                    "block_reason": "B4_unhandled_error",
+                    "whitelisted": True,
+                    "whitelist_label": whitelist_matched,
+                    "whitelist_override": False,
+                }
+            
+            # 通过白名单检查
+            return "accepted", "whitelisted", 0, {
+                "whitelisted": True,
+                "whitelist_label": whitelist_matched,
+                "whitelist_min_checks_passed": True,
+            }
         
         # 先检查 Block 规则
         blocked = False
