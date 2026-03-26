@@ -280,10 +280,14 @@ class ExecutionHandoff:
     - task: 任务描述
     - workdir: 工作目录
     - timeout_seconds: 超时时间
+    - scenario: 场景标识 (P0-3 Batch 9: 用于 auto-trigger allowlist 检查)
+    - owner: 任务所有者 (P0-3 Batch 9: 用于 auto-trigger allowlist 检查)
     - continuation_context: continuation 上下文 (用于 subagent 唤醒)
     - metadata: 额外元数据
     
     这是从 planning handoff 到 execution 的桥梁。
+    
+    P0-3 Batch 9 (2026-03-26): 添加 scenario/owner 字段，确保 auto-trigger allowlist 检查能正常工作。
     """
     handoff_id: str
     dispatch_id: str
@@ -291,6 +295,8 @@ class ExecutionHandoff:
     task: str
     workdir: Optional[str] = None
     timeout_seconds: int = 3600
+    scenario: str = ""
+    owner: str = ""
     continuation_context: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     
@@ -670,6 +676,8 @@ def build_execution_handoff(
     - timeout_seconds: 超时时间
     
     返回：ExecutionHandoff
+    
+    P0-3 Batch 9 (2026-03-26): 从 planning_handoff 复制 scenario/owner 字段，确保 auto-trigger allowlist 检查能正常工作。
     """
     # 推导 runtime
     if runtime is None:
@@ -687,6 +695,10 @@ def build_execution_handoff(
         "continuation_contract": planning_handoff.continuation_contract,
     }
     
+    # P0-3 Batch 9: 从 planning_handoff 复制 scenario/owner 字段
+    scenario = planning_handoff.scenario
+    owner = planning_handoff.owner
+    
     return ExecutionHandoff(
         handoff_id=planning_handoff.handoff_id,
         dispatch_id=dispatch_id,
@@ -694,10 +706,14 @@ def build_execution_handoff(
         task=planning_handoff.task_preview or planning_handoff.continuation_contract.get("next_step", ""),
         workdir=None,  # 可以从 metadata 进一步提取
         timeout_seconds=timeout_seconds,
+        scenario=scenario,
+        owner=owner,
         continuation_context=continuation_context,
         metadata={
             "created_from": "planning_handoff",
             "created_at": _iso_now(),
+            "scenario": scenario,
+            "owner": owner,
         },
     )
 

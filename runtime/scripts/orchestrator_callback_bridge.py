@@ -149,6 +149,7 @@ def _handle_complete(args: argparse.Namespace) -> Dict[str, Any]:
                 receipt_kernel = CompletionReceiptKernel()
                 
                 # 构建简化的 execution artifact（用于创建 receipt）
+                # P0-3 Batch 9: 从 execution_handoff 提取 scenario/owner 字段，确保 auto-trigger allowlist 检查能正常工作
                 exec_artifact = SpawnExecutionArtifact(
                     execution_id=execution_id,
                     spawn_id=execution_handoff.get('spawn_id', ''),
@@ -162,12 +163,16 @@ def _handle_complete(args: argparse.Namespace) -> Dict[str, Any]:
                         "runtime": execution_handoff.get('runtime', 'subagent'),
                         "task": execution_handoff.get('task', ''),
                         "workdir": execution_handoff.get('workdir'),
+                        "scenario": execution_handoff.get('scenario', ''),
+                        "owner": execution_handoff.get('owner', ''),
                     },
                     dedupe_key=f"exec_dedupe:{execution_handoff.get('spawn_id', '')}:{execution_handoff.get('dispatch_id', '')}",
                     metadata={
                         "created_from": "execution_handoff",
                         "handoff_id": execution_handoff.get('handoff_id', ''),
                         "auto_execute_integration": True,
+                        "scenario": execution_handoff.get('scenario', ''),
+                        "owner": execution_handoff.get('owner', ''),
                     },
                 )
                 

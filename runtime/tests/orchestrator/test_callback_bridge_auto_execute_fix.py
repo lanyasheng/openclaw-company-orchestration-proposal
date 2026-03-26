@@ -101,6 +101,97 @@ def test_create_receipt_and_request():
     }
 
 
+def test_scenario_propagation_for_auto_trigger():
+    """
+    P0-3 Batch 9: 测试 scenario 字段在 completion_receipt -> spawn_request -> auto_trigger 链中正确传播
+    
+    验证点：
+    1. execution artifact 包含 scenario/owner 字段
+    2. completion receipt 从 execution 提取 scenario/owner
+    3. spawn request 从 receipt 提取 scenario/owner
+    4. auto-trigger allowlist 检查能看到 scenario
+    """
+    from datetime import datetime
+    
+    # 1. 创建包含 scenario/owner 的 execution artifact
+    exec_artifact = SpawnExecutionArtifact(
+        execution_id="exec_test_scenario_20260326",
+        spawn_id=None,
+        dispatch_id="disp_test_scenario",
+        registration_id=None,
+        task_id="tsk_test_scenario",
+        spawn_execution_status="started",
+        spawn_execution_reason="Test scenario propagation",
+        spawn_execution_time=datetime.now().isoformat(),
+        spawn_execution_target={
+            "runtime": "subagent",
+            "task": "测试场景传播",
+            "workdir": "/tmp",
+            "scenario": "current_channel_architecture_roundtable",  # 关键字段
+            "owner": "main",  # 关键字段
+        },
+        dedupe_key="test_scenario_dedupe",
+        execution_payload={},
+        execution_result=None,
+        policy_evaluation=None,
+        metadata={
+            "created_from": "test",
+            "auto_execute_integration": True,
+            "scenario": "current_channel_architecture_roundtable",
+            "owner": "main",
+        },
+    )
+    
+    # 2. 创建 receipt
+    receipt_kernel = CompletionReceiptKernel()
+    receipt = receipt_kernel.emit_receipt(exec_artifact)
+    
+    # 验证 receipt 包含 scenario/owner
+    receipt_scenario = receipt.metadata.get("scenario", "")
+    receipt_owner = receipt.metadata.get("owner", "")
+    print(f"✓ Receipt scenario: {receipt_scenario}")
+    print(f"✓ Receipt owner: {receipt_owner}")
+    
+    assert receipt_scenario == "current_channel_architecture_roundtable", \
+        f"Expected scenario in receipt, got '{receipt_scenario}'"
+    assert receipt_owner == "main", f"Expected owner in receipt, got '{receipt_owner}'"
+    
+    # 3. 创建 request (这会触发 auto-trigger)
+    request = prepare_spawn_request(receipt.receipt_id)
+    
+    # 验证 request 包含 scenario/owner
+    request_scenario = request.metadata.get("scenario", "")
+    request_owner = request.metadata.get("owner", "")
+    print(f"✓ Request scenario: {request_scenario}")
+    print(f"✓ Request owner: {request_owner}")
+    
+    assert request_scenario == "current_channel_architecture_roundtable", \
+        f"Expected scenario in request, got '{request_scenario}'"
+    assert request_owner == "main", f"Expected owner in request, got '{request_owner}'"
+    
+    # 4. 验证 auto-trigger 结果
+    auto_trigger_result = request.metadata.get("auto_trigger_result")
+    if auto_trigger_result:
+        triggered = auto_trigger_result.get("triggered", False)
+        reason = auto_trigger_result.get("reason", "")
+        print(f"✓ Auto-trigger result: triggered={triggered}")
+        print(f"  Reason: {reason}")
+        
+        # 验证 scenario 不再为空（修复前是 "Scenario '' is not in allowlist"）
+        if not triggered and "Scenario ''" in reason:
+            raise AssertionError(f"Scenario field is still empty in auto-trigger check: {reason}")
+    else:
+        print("⚠ Auto-trigger result not in metadata (auto-trigger may be disabled)")
+    
+    return {
+        "receipt_id": receipt.receipt_id,
+        "request_id": request.request_id,
+        "receipt_scenario": receipt_scenario,
+        "request_scenario": request_scenario,
+        "auto_trigger_result": auto_trigger_result,
+    }
+
+
 def main():
     print("=" * 60)
     print("Testing orchestrator_callback_bridge.py auto-execute fix")
@@ -109,13 +200,25 @@ def main():
     test_prepare_spawn_request_import()
     result = test_create_receipt_and_request()
     
+    print("\n" + "=" * 60)
+    print("Testing scenario propagation for auto-trigger allowlist")
+    print("=" * 60)
+    
+    scenario_result = test_scenario_propagation_for_auto_trigger()
+    
     print("=" * 60)
     print("Test Summary:")
-    print(f"  Receipt ID: {result['receipt_id']}")
-    print(f"  Request ID: {result['request_id']}")
-    print(f"  Request Status: {result['request_status']}")
+    print(f"  [Test 1] Receipt ID: {result['receipt_id']}")
+    print(f"  [Test 1] Request ID: {result['request_id']}")
+    print(f"  [Test 1] Request Status: {result['request_status']}")
     if result['auto_trigger_result']:
-        print(f"  Auto-trigger: triggered={result['auto_trigger_result'].get('triggered')}")
+        print(f"  [Test 1] Auto-trigger: triggered={result['auto_trigger_result'].get('triggered')}")
+    
+    print(f"  [Test 2] Receipt scenario: {scenario_result['receipt_scenario']}")
+    print(f"  [Test 2] Request scenario: {scenario_result['request_scenario']}")
+    if scenario_result['auto_trigger_result']:
+        print(f"  [Test 2] Auto-trigger: triggered={scenario_result['auto_trigger_result'].get('triggered')}")
+    
     print("=" * 60)
     print("✓ All tests passed")
     return 0
