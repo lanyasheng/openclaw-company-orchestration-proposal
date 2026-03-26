@@ -252,6 +252,43 @@ class TestExecutionHandoff:
         assert execution.runtime == "subagent"
         assert execution.task == "Default test"  # 从 next_step 推导
         assert execution.timeout_seconds == 3600  # 默认值
+    
+    def test_execution_handoff_scenario_owner_serialization(self):
+        """测试：ExecutionHandoff.to_dict()/from_dict() 正确传播 scenario/owner（P0-3 Batch 9）"""
+        # 构建带有 scenario/owner 的 execution handoff
+        planning = build_planning_handoff(
+            source_type="dispatch_plan",
+            source_id="dispatch_test",
+            continuation_contract={
+                "stopped_because": "test",
+                "next_step": "Test step",
+                "next_owner": "trading",
+            },
+            scenario="channel_roundtable_auto",
+            adapter="channel_roundtable",
+            owner="channel",
+            backend_preference="subagent",
+        )
+        
+        execution = build_execution_handoff(planning)
+        
+        # 验证对象本身包含 scenario/owner
+        assert execution.scenario == "channel_roundtable_auto"
+        assert execution.owner == "channel"
+        
+        # 验证 to_dict() 包含 scenario/owner
+        d = execution.to_dict()
+        assert d.get("scenario") == "channel_roundtable_auto"
+        assert d.get("owner") == "channel"
+        
+        # 验证 from_dict() 正确读取 scenario/owner
+        restored = ExecutionHandoff.from_dict(d)
+        assert restored.scenario == "channel_roundtable_auto"
+        assert restored.owner == "channel"
+        
+        # 验证 metadata 中也包含 scenario/owner（用于 auto-trigger allowlist 检查）
+        assert execution.metadata.get("scenario") == "channel_roundtable_auto"
+        assert execution.metadata.get("owner") == "channel"
 
 
 class TestHandoffConversion:

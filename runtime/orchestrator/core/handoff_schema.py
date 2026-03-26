@@ -309,6 +309,8 @@ class ExecutionHandoff:
             "task": self.task,
             "workdir": self.workdir,
             "timeout_seconds": self.timeout_seconds,
+            "scenario": self.scenario,
+            "owner": self.owner,
             "continuation_context": self.continuation_context,
             "metadata": self.metadata,
         }
@@ -322,6 +324,8 @@ class ExecutionHandoff:
             task=data.get("task", ""),
             workdir=data.get("workdir"),
             timeout_seconds=data.get("timeout_seconds", 3600),
+            scenario=data.get("scenario", ""),
+            owner=data.get("owner", ""),
             continuation_context=data.get("continuation_context"),
             metadata=data.get("metadata", {}),
         )
