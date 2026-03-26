@@ -142,8 +142,8 @@ def _handle_complete(args: argparse.Namespace) -> Dict[str, Any]:
                 
                 execution_id = f"exec_{execution_handoff.get('dispatch_id', 'unknown')[-12:]}"
                 
-                # 导入 emit_request（自动触发 consumption → execution 链）
-                from sessions_spawn_request import emit_request, get_spawn_request  # type: ignore
+                # 导入 prepare_spawn_request（自动触发 consumption → execution 链）
+                from sessions_spawn_request import prepare_spawn_request, get_spawn_request  # type: ignore
                 
                 # 1. 创建 completion receipt
                 receipt_kernel = CompletionReceiptKernel()
@@ -174,9 +174,9 @@ def _handle_complete(args: argparse.Namespace) -> Dict[str, Any]:
                 # 2. 创建 receipt
                 receipt = receipt_kernel.emit_receipt(exec_artifact)
                 
-                # 3. 显式调用 emit_request（会自动触发 auto_trigger_consumption → execution）
-                # 注意：emit_request 内部已包含 auto-trigger 调用（P0-3 Batch 8 修复）
-                request = emit_request(receipt.receipt_id)
+                # 3. 调用 prepare_spawn_request（会自动触发 auto_trigger_consumption → execution）
+                # 注意：prepare_spawn_request 内部已包含 auto-trigger 调用（V8 新增）
+                request = prepare_spawn_request(receipt.receipt_id)
                 
                 # 4. 检查 auto-trigger 结果
                 auto_trigger_result = request.metadata.get("auto_trigger_result", {})
