@@ -106,8 +106,9 @@ cli.py (唯一入口)
 1. **首次了解** → [`../README.md`](../README.md)(仓库总览 + 快速开始)
 2. **当前真值** → 本页(`CURRENT_TRUTH.md`)
 3. **设计背景** → [`executive-summary.md`](executive-summary.md)(5 分钟方案总览)
-4. **其他频道** → [`quickstart/quickstart-other-channels.md`](quickstart/quickstart-other-channels.md)(非 trading 场景)
-5. **Completion Validator 设计** → [`plans/subtask-completion-validator-design-2026-03-25.md`](plans/subtask-completion-validator-design-2026-03-25.md)(设计锚点)
+4. **非 Trading 模板** → [`non-trading-roundtable-template.md`](non-trading-roundtable-template.md)(默认模板 + E2E 证据)
+5. **其他频道** → [`quickstart/quickstart-other-channels.md`](quickstart/quickstart-other-channels.md)(非 trading 场景)
+6. **Completion Validator 设计** → [`plans/subtask-completion-validator-design-2026-03-25.md`](plans/subtask-completion-validator-design-2026-03-25.md)(设计锚点)
 
 ### Runtime 入口
 ```bash

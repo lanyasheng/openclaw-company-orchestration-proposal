@@ -86,12 +86,19 @@ CHANNEL_PACKET_REQUIRED_FIELDS = [
     "generated_at",
 ]
 
+# E2E verified channels (non-trading)
 CURRENT_ARCHITECTURE_DEFAULT_ALLOW_CHANNEL_IDS = {
-    "1483883339701158102",
+    "1483883339701158102",  # current_channel_architecture_roundtable (Channel 1)
+    "1475854028855443607",  # ainews channel (Channel 2 - E2E verified 2026-03-26)
 }
 CURRENT_ARCHITECTURE_DEFAULT_ALLOW_SCENARIO = "current_channel_architecture_roundtable"
 CURRENT_ARCHITECTURE_DEFAULT_ALLOW_TOPIC = "Temporal vs LangGraph｜OpenClaw 公司级编排架构"
 CURRENT_ARCHITECTURE_DEFAULT_ALLOW_OWNER = "main"
+
+# Second E2E channel config
+SECOND_E2E_CHANNEL_ID = "1475854028855443607"
+SECOND_E2E_SCENARIO = "ainews_content_roundtable"
+SECOND_E2E_OWNER = "ainews"
 
 
 def _ensure_runtime_dirs() -> None:
