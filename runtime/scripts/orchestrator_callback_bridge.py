@@ -151,11 +151,10 @@ def _handle_complete(args: argparse.Namespace) -> Dict[str, Any]:
                 # 构建简化的 execution artifact（用于创建 receipt）
                 exec_artifact = SpawnExecutionArtifact(
                     execution_id=execution_id,
-                    source_spawn_closure_id=None,  # 没有 spawn_closure
-                    source_dispatch_id=execution_handoff.get('dispatch_id', ''),
-                    source_spawn_id=None,
-                    source_registration_id=None,
-                    source_task_id=None,
+                    spawn_id=execution_handoff.get('spawn_id', ''),
+                    dispatch_id=execution_handoff.get('dispatch_id', ''),
+                    registration_id=execution_handoff.get('registration_id', ''),
+                    task_id=execution_handoff.get('task_id', ''),
                     spawn_execution_status="started",
                     spawn_execution_reason="Auto-triggered from execution_handoff",
                     spawn_execution_time=execution_handoff.get('metadata', {}).get('created_at'),
@@ -164,6 +163,7 @@ def _handle_complete(args: argparse.Namespace) -> Dict[str, Any]:
                         "task": execution_handoff.get('task', ''),
                         "workdir": execution_handoff.get('workdir'),
                     },
+                    dedupe_key=f"exec_dedupe:{execution_handoff.get('spawn_id', '')}:{execution_handoff.get('dispatch_id', '')}",
                     metadata={
                         "created_from": "execution_handoff",
                         "handoff_id": execution_handoff.get('handoff_id', ''),
