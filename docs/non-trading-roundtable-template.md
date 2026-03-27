@@ -347,7 +347,7 @@ CURRENT_ARCHITECTURE_DEFAULT_ALLOW_CHANNEL_IDS = {
 | 约束 | 说明 |
 |------|------|
 | `auto_execute=true` ≠ 自动绕过 gate | 仍会命中 human/business/runtime gate 就停 |
-| 默认 allowlist 仍精确 | 当前只对 `current_channel_architecture_roundtable` 场景放开 |
+| 默认 allowlist 仍精确 | 当前对 `current_channel_architecture_roundtable` / `ainews_content_roundtable` 场景放开 |
 | backend receipt ≠ business PASS | tmux completion report 只是诊断证据 |
 
 ### 5.2 建议首次运行
@@ -407,3 +407,41 @@ cat ~/.openclaw/shared-context/spawn_requests/auto_trigger_index.json 2>/dev/nul
 ---
 
 *End of Template Document*
+
+---
+
+## 8. E2E 验证记录
+
+### 8.1 ainews_content_roundtable 场景验证 (2026-03-27)
+
+**验证时间**: 2026-03-27 10:09 GMT+8
+
+**配置变更**:
+- 文件：`~/.openclaw/shared-context/spawn_requests/auto_trigger_real_exec_config.json`
+- 变更：添加 `ainews_content_roundtable` 到 allowlist
+
+**验证结果**:
+| 检查项 | 预期 | 实际 | 状态 |
+|--------|------|------|------|
+| api_execution_status | started | started | ✅ |
+| scenario | ainews_content_roundtable | ainews_content_roundtable | ✅ |
+| should_execute_real | true | true | ✅ |
+| api_execution_reason | API call successful | API call successful | ✅ |
+
+**Artifact 路径**:
+- api_execution: `~/.openclaw/shared-context/api_executions/exec_api_b4577a8be78d.json`
+- auto_trigger_index: `~/.openclaw/shared-context/spawn_requests/auto_trigger_index.json`
+
+**完整链路**:
+```
+dispatch → spawn_execution → completion_receipt → spawn_request 
+→ bridge_consumed → api_execution (✅ started)
+```
+
+**关键字段**:
+- `execution_id`: exec_api_b4577a8be78d
+- `childSessionKey`: task_b7d4819dabae
+- `runId`: task_b7d4819dabae
+- `pid`: 6068
+- `scenario`: ainews_content_roundtable
+- `owner`: ainews
