@@ -523,50 +523,67 @@ def _channel_seed_payload(
 
 
 def _trading_seed_payload(*, owner: str) -> Dict[str, Any]:
+    """
+    生成 Trading Roundtable 默认 seed payload。
+    
+    P0-3 Batch 12: Producer/Template Hardening
+    - 默认生成更完整的 packet 骨架，减少人工补字段需要
+    - 覆盖此前导致 blocked 的核心字段：input_config_path, repro.notes, tradability.*
+    - 保持占位值可被 subagent 执行结果覆盖
+    """
     return {
         "summary": "Trading roundtable 默认 contract 已生成；运行时应自动执行到 gate，而不是绕过 gate。",
         "trading_roundtable": {
             "packet": {
+                # Top-Level Packet Fields (9 个) - 全部提供有意义的默认值
                 "packet_version": "trading_phase1_packet_v1",
                 "phase_id": TRADING_PHASE_ID,
-                "candidate_id": "pending_candidate",
-                "run_label": "pending_run_label",
+                "candidate_id": "pending_candidate",  # subagent 应替换为实际标的 ID
+                "run_label": "pending_run_label",     # subagent 应替换为实际 run label
                 "input_config_path": "docs/plans/2026-03-20-trading-roundtable-phase1-input.md",
                 "generated_at": _iso_now(),
                 "owner": owner,
                 "overall_gate": "PENDING",
                 "primary_blocker": "pending_roundtable",
+                
+                # Artifact Truth Fields (10 个) - 提供完整骨架，subagent 执行后回填真实路径
                 "artifact": {
-                    "path": "TBD",
-                    "exists": False,
+                    "path": "artifacts/tradable_universe/pending_candidate.json",
+                    "exists": False,  # subagent 执行后应设为 True
                 },
                 "report": {
-                    "path": "TBD",
-                    "exists": False,
+                    "path": "tmp/trading_roundtable_report.json",
+                    "exists": False,  # subagent 执行后应设为 True
                 },
                 "commit": {
                     "repo": "workspace-trading",
-                    "git_commit": "TBD",
+                    "git_commit": "pending_commit",  # subagent 执行后应替换为实际 git commit hash
                 },
                 "test": {
-                    "commands": [],
-                    "summary": "pending",
+                    "commands": [
+                        "python3 research/run_fixed_candidate_acceptance.py --basket phase_a"
+                    ],
+                    "summary": "pending test execution",  # subagent 执行后应替换为实际测试结果
                 },
                 "repro": {
-                    "commands": [],
-                    "notes": "pending",
+                    "commands": [
+                        "cat tmp/trading_roundtable_report.json | jq '.stats'"
+                    ],
+                    "notes": "复现说明：运行上述命令查看报告统计信息；subagent 执行后应补充具体复现步骤和关键数据点",
                 },
+                
+                # Tradability Fields (10 个) - 提供完整骨架，subagent 执行后回填真实值
                 "tradability": {
-                    "annual_turnover": 0,
-                    "liquidity_flags": [],
-                    "gross_return": 0,
-                    "net_return": 0,
-                    "benchmark_return": 0,
-                    "scenario_verdict": "PENDING",
-                    "turnover_failure_reasons": [],
-                    "liquidity_failure_reasons": [],
-                    "net_vs_gross_failure_reasons": [],
-                    "summary": "pending packet truth",
+                    "annual_turnover": 0,  # subagent 应替换为实际年化换手率
+                    "liquidity_flags": [],  # subagent 应填充实际流动性标志
+                    "gross_return": 0,  # subagent 应替换为实际毛回报
+                    "net_return": 0,  # subagent 应替换为实际净回报
+                    "benchmark_return": 0,  # subagent 应替换为实际基准回报
+                    "scenario_verdict": "PENDING",  # subagent 执行后应设为 PASS/CONDITIONAL/FAIL
+                    "turnover_failure_reasons": [],  # subagent 应填充实际失败原因（如有）
+                    "liquidity_failure_reasons": [],  # subagent 应填充实际失败原因（如有）
+                    "net_vs_gross_failure_reasons": [],  # subagent 应填充实际失败原因（如有）
+                    "summary": "pending tradability analysis - subagent 应替换为实际 tradability 摘要，不得留空",
                 },
             },
             "roundtable": {
