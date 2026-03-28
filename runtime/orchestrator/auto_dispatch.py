@@ -430,6 +430,35 @@ class DispatchExecutor:
             },
         )
         
+        # ========== Observability Batch 2: Promise Anchor Verification ==========
+        # 验证 dispatch 是否包含有效承诺锚点（audit-only 模式）
+        try:
+            from hooks.hook_integrations import verify_dispatch_promise_anchor, log_anchor_violation
+            
+            anchor_ok, anchor_reason = verify_dispatch_promise_anchor(record, artifact.to_dict())
+            if not anchor_ok:
+                # 记录违规但不阻止 dispatch（audit-only）
+                log_anchor_violation(record.task_id, anchor_reason, {
+                    "registration_id": record.registration_id,
+                    "dispatch_id": dispatch_id,
+                    "dispatch_status": dispatch_status,
+                })
+                # 将锚点验证结果添加到 metadata
+                artifact.metadata["anchor_verification"] = {
+                    "verified": anchor_ok,
+                    "reason": anchor_reason,
+                    "violation_logged": True,
+                }
+            else:
+                artifact.metadata["anchor_verification"] = {
+                    "verified": True,
+                    "reason": anchor_reason,
+                }
+        except ImportError:
+            # Hook 模块不可用时不阻断主流程
+            pass
+        # ========== End Batch 2 Hook Integration ==========
+        
         return artifact
     
     def _build_execution_intent(
