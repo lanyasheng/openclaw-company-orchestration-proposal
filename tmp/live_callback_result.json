@@ -1,0 +1,613 @@
+{
+  "status": "processed",
+  "batch_id": "trading_live_verification_20260327_1412",
+  "task_id": "tsk_trading_live_verification_001",
+  "summary_path": "/Users/study/.openclaw/shared-context/orchestrator/summaries/batch-trading_live_verification_20260327_1412-summary.md",
+  "decision_path": "/Users/study/.openclaw/shared-context/orchestrator/decisions/dec_trading_live_verification_20260327_1412_20260327141502.json",
+  "dispatch_path": "/Users/study/.openclaw/shared-context/orchestrator/dispatches/disp_trading_live_verification_20260327_1412_20260327141502.json",
+  "reconciled_waiting_anomalies": [],
+  "ack_result": {
+    "ack_status": "fallback_recorded",
+    "delivery_status": "failed",
+    "reason": "fallback_receipt_recorded_after_timeout_60s",
+    "channel_id": "1483883339701158102",
+    "requester_session_key": "agent:main:discord:channel:1483883339701158102",
+    "message_sent": "⏸️ Trading Roundtable Completion Acknowledgement\n\n- Batch ID: `trading_live_verification_20260327_1412`\n- Scenario: trading_roundtable_phase1\n- Decision: fix_blocker\n- Roundtable Conclusion: N/A\n- Blocker: N/A\n- Dispatch Status: MANUAL_REVIEW_REQUIRED\n\n**Next Step**: freeze phase1 packet v1 by backfilling missing truth fields before any further continuation\n\n**Action Required**: Empty result detected: packet is empty - cannot proceed without artifact/report/test truth; Decision fix_blocker is not auto-dispatchable\n\n---\n- Summary: `/Users/study/.openclaw/shared-context/orchestrator/summaries/batch-trading_live_verification_20260327_1412-summary.md`\n- Decision: `/Users/study/.openclaw/shared-context/orchestrator/decisions/dec_trading_live_verification_20260327_1412_20260327141502.json`\n- Dispatch Plan: `/Users/study/.openclaw/shared-context/orchestrator/dispatches/disp_trading_live_verification_20260327_1412_20260327141502.json`",
+    "receipt_path": "/Users/study/.openclaw/shared-context/orchestrator/ack_receipts/ack-trading_roundtable-trading_live_verification_20260327_1412-20260327141602.md",
+    "audit_file": "/Users/study/.openclaw/shared-context/orchestrator/ack_audit/ack-trading_roundtable-trading_live_verification_20260327_1412-20260327141602.json",
+    "closeout_guarantee": {
+      "guarantee_id": "guarantee_08896f4ee253",
+      "guarantee_status": "fallback_needed",
+      "internal_completed": true,
+      "ack_delivered": false,
+      "user_visible_closeout": false,
+      "fallback_triggered": true,
+      "fallback_reason": "Ack not delivered (ack_status=fallback_recorded, dispatch_status=skipped)",
+      "guarantee_path": "/Users/study/.openclaw/shared-context/orchestrator/closeout_guarantees/guarantee-trading_live_verification_20260327_1412.json"
+    }
+  },
+  "partial_closeout": {
+    "contract_version": "partial_closeout_v1",
+    "completed_scope": [
+      {
+        "item_id": "tsk_trading_live_verification_001",
+        "description": "Task tsk_trading_live_verification_001: completed",
+        "status": "completed",
+        "metadata": {
+          "state": "callback_received",
+          "verdict": null
+        }
+      }
+    ],
+    "remaining_scope": [
+      {
+        "item_id": "fix_blocker_1",
+        "description": "Resolve blocker: unknown",
+        "status": "blocked",
+        "metadata": {
+          "blocker_type": "unknown",
+          "completion_criteria": ""
+        }
+      },
+      {
+        "item_id": "missing_packet_version",
+        "description": "Fill missing field: packet_version",
+        "status": "not_started",
+        "metadata": {
+          "field_type": "packet_completeness"
+        }
+      },
+      {
+        "item_id": "missing_phase_id",
+        "description": "Fill missing field: phase_id",
+        "status": "not_started",
+        "metadata": {
+          "field_type": "packet_completeness"
+        }
+      },
+      {
+        "item_id": "missing_candidate_id",
+        "description": "Fill missing field: candidate_id",
+        "status": "not_started",
+        "metadata": {
+          "field_type": "packet_completeness"
+        }
+      }
+    ],
+    "stop_reason": "blocked",
+    "dispatch_readiness": "blocked",
+    "next_candidates": [],
+    "original_task_id": null,
+    "original_batch_id": "trading_live_verification_20260327_1412",
+    "metadata": {
+      "decision_action": "fix_blocker",
+      "decision_reason": "EMPTY_RESULT_BLOCKED: packet is empty",
+      "adapter": "trading_roundtable",
+      "continuation_contract": {
+        "contract_version": "continuation_contract_v1",
+        "stopped_because": "roundtable_gate_conditional_blocker_unknown",
+        "next_step": "EMPTY_RESULT_BLOCKED: packet is empty",
+        "next_owner": "trading",
+        "metadata": {
+          "decision_action": "fix_blocker",
+          "roundtable_conclusion": "",
+          "roundtable_blocker": ""
+        }
+      },
+      "stopped_because": "roundtable_gate_conditional_blocker_unknown",
+      "next_step": "EMPTY_RESULT_BLOCKED: packet is empty",
+      "next_owner": "trading"
+    }
+  },
+  "next_task_registrations": [],
+  "has_remaining_work": true,
+  "dispatch_plan": {
+    "dispatch_id": "disp_trading_live_verification_20260327_1412_20260327141502",
+    "batch_id": "trading_live_verification_20260327_1412",
+    "scenario": "trading_roundtable_phase1",
+    "adapter": "trading_roundtable",
+    "decision_id": "dec_trading_live_verification_20260327_1412_20260327141502",
+    "status": "skipped",
+    "reason": "Empty result detected: packet is empty - cannot proceed without artifact/report/test truth; Decision fix_blocker is not auto-dispatchable",
+    "backend": "subagent",
+    "timeout_policy": {
+      "backend": "subagent",
+      "timeout_total_seconds": 3600,
+      "timeout_stall_seconds": 600,
+      "stall_grace_seconds": 60
+    },
+    "backend_plan": {
+      "backend": "subagent",
+      "commands": {
+        "start": "python3 scripts/orchestrator_dispatch_bridge.py start --dispatch disp_trading_live_verification_20260327_1412_20260327141502",
+        "status": "python3 scripts/orchestrator_dispatch_bridge.py status --dispatch disp_trading_live_verification_20260327_1412_20260327141502"
+      },
+      "workdir": null,
+      "observable_intermediate_state": false,
+      "notes": [
+        "Subagent runtime execution",
+        "No intermediate state observation",
+        "Completion reported via callback"
+      ]
+    },
+    "skip_reasons": [
+      {
+        "code": "empty_result_blocked",
+        "message": "Empty result detected: packet is empty - cannot proceed without artifact/report/test truth"
+      },
+      {
+        "code": "decision_not_auto_dispatchable",
+        "message": "Decision fix_blocker is not auto-dispatchable"
+      }
+    ],
+    "continuation": {
+      "mode": "packet_freeze",
+      "task_preview": "freeze phase1 packet v1 by backfilling missing truth fields before any further continuation",
+      "next_round_goal": "turn the current roundtable output into a complete phase1 packet v1 with all required truth fields",
+      "rationale": "packet/closure is incomplete, so the next actionable hop is packet freeze instead of broader follow-up",
+      "review_required": true,
+      "required_actions": [
+        "fill missing fields: packet_version, phase_id, candidate_id, run_label, input_config_path, generated_at, owner, overall_gate, primary_blocker, conclusion, blocker, owner, next_step, completion_criteria, artifact.path, artifact.exists, report.path, report.exists, commit.repo, commit.git_commit, test.commands, test.summary, repro.commands, repro.notes, tradability.annual_turnover, tradability.liquidity_flags, tradability.gross_return, tradability.net_return, tradability.benchmark_return, tradability.scenario_verdict, tradability.turnover_failure_reasons, tradability.liquidity_failure_reasons, tradability.net_vs_gross_failure_reasons, tradability.summary, empty_result: packet is empty",
+        "persist artifact/report/commit/test/repro truth paths in the frozen packet",
+        "re-run gate review only after the packet is complete"
+      ],
+      "completion_criteria": "produce the smallest verifiable continuation artifact"
+    },
+    "continuation_contract": {
+      "contract_version": "continuation_contract_v1",
+      "stopped_because": "continuation_requested",
+      "next_step": "freeze phase1 packet v1 by backfilling missing truth fields before any further continuation",
+      "next_owner": "main",
+      "metadata": {
+        "source": "dispatch_plan",
+        "dispatch_id": "disp_trading_live_verification_20260327_1412_20260327141502",
+        "batch_id": "trading_live_verification_20260327_1412",
+        "scenario": "trading_roundtable_phase1",
+        "adapter": "trading_roundtable"
+      }
+    },
+    "planning_artifact": {
+      "artifact_version": "planning_artifact_v1",
+      "artifact_id": "plan_5588ffcf5863",
+      "problem_reframing": {
+        "problem_statement": "EMPTY_RESULT_BLOCKED: packet is empty",
+        "root_cause": null,
+        "context": "",
+        "success_criteria": [
+          "Decision action 'fix_blocker' completed"
+        ],
+        "metadata": {}
+      },
+      "scope_review": {
+        "in_scope": [
+          "Fix blocker: unknown",
+          "Complete phase1 packet/roundtable closure"
+        ],
+        "out_of_scope": [],
+        "dependencies": [],
+        "constraints": [],
+        "metadata": {}
+      },
+      "engineering_review": null,
+      "execution_plan": {
+        "phases": [],
+        "milestones": [],
+        "estimated_duration": "",
+        "owner": "main",
+        "metadata": {}
+      },
+      "metadata": {
+        "decision_action": "fix_blocker",
+        "batch_id": "trading_live_verification_20260327_1412",
+        "scenario": "trading_roundtable_phase1"
+      },
+      "created_at": "2026-03-27T14:15:02.577860"
+    },
+    "orchestration_contract": {
+      "enabled": true,
+      "task_tier": "plain",
+      "adapter": "trading_roundtable",
+      "scenario": "trading_roundtable_phase1",
+      "batch_key": "trading_live_verification_20260327_1412",
+      "flow_id": null,
+      "owner": null,
+      "backend_preference": "subagent",
+      "callback_payload_schema": "trading_roundtable.v1.callback",
+      "auto_execute": true,
+      "entrypoint": {},
+      "gate_policy": {},
+      "channel": {},
+      "session": {
+        "requester_session_key": "agent:main:discord:channel:1483883339701158102"
+      },
+      "metadata": {},
+      "source": "explicit:orchestration_contract",
+      "execution_profile": "generic_subagent",
+      "executor": "subagent"
+    },
+    "safety_gates": {
+      "allow_auto_dispatch": true,
+      "auto_dispatch_source": "explicit",
+      "default_auto_dispatch_eligible": false,
+      "default_auto_dispatch_status": "not_ready",
+      "default_auto_dispatch_blockers": [
+        "packet_incomplete",
+        "artifact_truth_not_verified",
+        "decision_fix_blocker_requires_manual_gate",
+        "roundtable_not_pass",
+        "roundtable_blocker_present",
+        "overall_gate_not_pass",
+        "primary_blocker_present",
+        "tradability_not_pass",
+        "continuation_mode_packet_freeze_not_whitelist_safe"
+      ],
+      "default_auto_dispatch_criteria": [
+        {
+          "name": "roundtable_conclusion_pass",
+          "field": "roundtable.conclusion",
+          "expected": "PASS",
+          "actual": "N/A",
+          "passed": false
+        },
+        {
+          "name": "roundtable_blocker_none",
+          "field": "roundtable.blocker",
+          "expected": "none",
+          "actual": "N/A",
+          "passed": false
+        },
+        {
+          "name": "packet_overall_gate_pass",
+          "field": "packet.overall_gate",
+          "expected": "PASS",
+          "actual": "N/A",
+          "passed": false
+        },
+        {
+          "name": "packet_primary_blocker_none",
+          "field": "packet.primary_blocker",
+          "expected": "none",
+          "actual": "N/A",
+          "passed": false
+        },
+        {
+          "name": "tradability_scenario_verdict_pass",
+          "field": "packet.tradability.scenario_verdict",
+          "expected": "PASS",
+          "actual": "N/A",
+          "passed": false
+        },
+        {
+          "name": "batch_timeout_count_zero",
+          "field": "batch.timeout",
+          "expected": 0,
+          "actual": 0,
+          "passed": true
+        },
+        {
+          "name": "batch_failed_count_zero",
+          "field": "batch.failed",
+          "expected": 0,
+          "actual": 0,
+          "passed": true
+        },
+        {
+          "name": "truth_paths_complete",
+          "field": "packet.artifact/report/test/repro truth paths",
+          "expected": "complete + exists=true",
+          "actual": "missing_fields=packet_version,phase_id,candidate_id,run_label,input_config_path,generated_at,owner,overall_gate,primary_blocker,conclusion,blocker,owner,next_step,completion_criteria,artifact.path,artifact.exists,report.path,report.exists,commit.repo,commit.git_commit,test.commands,test.summary,repro.commands,repro.notes,tradability.annual_turnover,tradability.liquidity_flags,tradability.gross_return,tradability.net_return,tradability.benchmark_return,tradability.scenario_verdict,tradability.turnover_failure_reasons,tradability.liquidity_failure_reasons,tradability.net_vs_gross_failure_reasons,tradability.summary,empty_result: packet is empty; artifact.exists is not true; report.exists is not true; test.commands is empty; repro.commands is empty",
+          "passed": false
+        },
+        {
+          "name": "continuation_mode_whitelisted",
+          "field": "continuation.mode",
+          "expected": "advance_phase_handoff",
+          "actual": "packet_freeze",
+          "passed": false
+        }
+      ],
+      "batch_timeout_count": 0,
+      "batch_failed_count": 0,
+      "packet_complete": false,
+      "roundtable_conclusion": null,
+      "business_terminal_source": "canonical_callback",
+      "backend_terminal_role": "diagnostic_only"
+    },
+    "recommended_spawn": {
+      "runtime": "subagent",
+      "task_preview": "freeze phase1 packet v1 by backfilling missing truth fields before any further continuation",
+      "task": "freeze phase1 packet v1 by backfilling missing truth fields before any further continuation",
+      "dispatch_id": "disp_trading_live_verification_20260327_1412_20260327141502",
+      "dispatch_path": "/tmp/dispatch_disp_trading_live_verification_20260327_1412_20260327141502.json"
+    },
+    "parent_message": "⏭️ SKIP adapter=trading_roundtable scenario=trading_roundtable_phase1 batch=trading_live_verification_20260327_1412 decision=fix_blocker backend=subagent\nRead dispatch plan: /tmp/dispatch_disp_trading_live_verification_20260327_1412_20260327141502.json\nManual confirmation required before continuation.",
+    "timestamp": "2026-03-27T14:15:02.577867",
+    "artifacts": {},
+    "canonical_callback": {
+      "required": true,
+      "business_terminal_source": "scripts/orchestrator_callback_bridge.py complete",
+      "callback_payload_schema": "trading_roundtable.v1.callback",
+      "callback_envelope_schema": "canonical_callback_envelope.v1",
+      "backend_terminal_role": "diagnostic_only",
+      "report_role": "evidence_only_until_callback",
+      "operator_runbook": "examples/trading_roundtable_operator_runbook_v1.md",
+      "closeout_chain_required": true,
+      "closeout_chain_steps": [
+        "acceptance_check",
+        "runtime_closeout",
+        "git_closeout",
+        "git_push",
+        "next_batch_dispatch"
+      ],
+      "push_required_before_next_batch": true
+    }
+  },
+  "handoff_schema": {
+    "planning_handoff": {
+      "handoff_version": "handoff_schema_v1",
+      "handoff_id": "handoff_e874dd95261c",
+      "source_type": "dispatch_plan",
+      "source_id": "disp_trading_live_verification_20260327_1412_20260327141502",
+      "continuation_contract": {
+        "contract_version": "continuation_contract_v1",
+        "stopped_because": "continuation_requested",
+        "next_step": "freeze phase1 packet v1 by backfilling missing truth fields before any further continuation",
+        "next_owner": "main",
+        "metadata": {
+          "source": "dispatch_plan",
+          "dispatch_id": "disp_trading_live_verification_20260327_1412_20260327141502",
+          "batch_id": "trading_live_verification_20260327_1412",
+          "scenario": "trading_roundtable_phase1",
+          "adapter": "trading_roundtable"
+        }
+      },
+      "scenario": "trading_roundtable_phase1",
+      "adapter": "trading_roundtable",
+      "owner": null,
+      "executor": "subagent",
+      "backend_preference": "subagent",
+      "execution_profile": "generic_subagent",
+      "task_preview": "freeze phase1 packet v1 by backfilling missing truth fields before any further continuation",
+      "safety_gates": {
+        "allow_auto_dispatch": true,
+        "auto_dispatch_source": "explicit",
+        "default_auto_dispatch_eligible": false,
+        "default_auto_dispatch_status": "not_ready",
+        "default_auto_dispatch_blockers": [
+          "packet_incomplete",
+          "artifact_truth_not_verified",
+          "decision_fix_blocker_requires_manual_gate",
+          "roundtable_not_pass",
+          "roundtable_blocker_present",
+          "overall_gate_not_pass",
+          "primary_blocker_present",
+          "tradability_not_pass",
+          "continuation_mode_packet_freeze_not_whitelist_safe"
+        ],
+        "default_auto_dispatch_criteria": [
+          {
+            "name": "roundtable_conclusion_pass",
+            "field": "roundtable.conclusion",
+            "expected": "PASS",
+            "actual": "N/A",
+            "passed": false
+          },
+          {
+            "name": "roundtable_blocker_none",
+            "field": "roundtable.blocker",
+            "expected": "none",
+            "actual": "N/A",
+            "passed": false
+          },
+          {
+            "name": "packet_overall_gate_pass",
+            "field": "packet.overall_gate",
+            "expected": "PASS",
+            "actual": "N/A",
+            "passed": false
+          },
+          {
+            "name": "packet_primary_blocker_none",
+            "field": "packet.primary_blocker",
+            "expected": "none",
+            "actual": "N/A",
+            "passed": false
+          },
+          {
+            "name": "tradability_scenario_verdict_pass",
+            "field": "packet.tradability.scenario_verdict",
+            "expected": "PASS",
+            "actual": "N/A",
+            "passed": false
+          },
+          {
+            "name": "batch_timeout_count_zero",
+            "field": "batch.timeout",
+            "expected": 0,
+            "actual": 0,
+            "passed": true
+          },
+          {
+            "name": "batch_failed_count_zero",
+            "field": "batch.failed",
+            "expected": 0,
+            "actual": 0,
+            "passed": true
+          },
+          {
+            "name": "truth_paths_complete",
+            "field": "packet.artifact/report/test/repro truth paths",
+            "expected": "complete + exists=true",
+            "actual": "missing_fields=packet_version,phase_id,candidate_id,run_label,input_config_path,generated_at,owner,overall_gate,primary_blocker,conclusion,blocker,owner,next_step,completion_criteria,artifact.path,artifact.exists,report.path,report.exists,commit.repo,commit.git_commit,test.commands,test.summary,repro.commands,repro.notes,tradability.annual_turnover,tradability.liquidity_flags,tradability.gross_return,tradability.net_return,tradability.benchmark_return,tradability.scenario_verdict,tradability.turnover_failure_reasons,tradability.liquidity_failure_reasons,tradability.net_vs_gross_failure_reasons,tradability.summary,empty_result: packet is empty; artifact.exists is not true; report.exists is not true; test.commands is empty; repro.commands is empty",
+            "passed": false
+          },
+          {
+            "name": "continuation_mode_whitelisted",
+            "field": "continuation.mode",
+            "expected": "advance_phase_handoff",
+            "actual": "packet_freeze",
+            "passed": false
+          }
+        ],
+        "batch_timeout_count": 0,
+        "batch_failed_count": 0,
+        "packet_complete": false,
+        "roundtable_conclusion": null,
+        "business_terminal_source": "canonical_callback",
+        "backend_terminal_role": "diagnostic_only"
+      },
+      "metadata": {
+        "dispatch_plan_status": "skipped",
+        "decision_id": "dec_trading_live_verification_20260327_1412_20260327141502",
+        "batch_id": "trading_live_verification_20260327_1412",
+        "created_at": "2026-03-27T14:15:02.578244"
+      },
+      "created_at": "2026-03-27T14:15:02.578244"
+    },
+    "registration_handoff": {
+      "handoff_version": "handoff_schema_v1",
+      "handoff_id": "handoff_e874dd95261c",
+      "registration_id": "reg_3f008ff53bb8",
+      "task_id": "task_f188368af310",
+      "batch_id": "trading_live_verification_20260327_1412",
+      "proposed_task": {
+        "task_type": "continuation",
+        "title": "Continuation: freeze phase1 packet v1 by backfilling missing tru",
+        "description": "freeze phase1 packet v1 by backfilling missing truth fields before any further continuation",
+        "owner": null,
+        "source": {
+          "handoff_id": "handoff_e874dd95261c",
+          "source_type": "dispatch_plan",
+          "source_id": "disp_trading_live_verification_20260327_1412_20260327141502"
+        },
+        "context": {
+          "adapter": "trading_roundtable",
+          "scenario": "trading_roundtable_phase1",
+          "stopped_because": "continuation_requested"
+        },
+        "continuation": {
+          "stopped_because": "continuation_requested",
+          "next_step": "freeze phase1 packet v1 by backfilling missing truth fields before any further continuation",
+          "next_owner": "main"
+        }
+      },
+      "source_closeout": null,
+      "truth_anchor": {
+        "anchor_type": "handoff_id",
+        "anchor_value": "handoff_e874dd95261c",
+        "metadata": {
+          "source_type": "dispatch_plan",
+          "source_id": "disp_trading_live_verification_20260327_1412_20260327141502",
+          "adapter": "trading_roundtable",
+          "scenario": "trading_roundtable_phase1"
+        }
+      },
+      "registration_status": "registered",
+      "ready_for_auto_dispatch": true,
+      "readiness": {
+        "eligible": false,
+        "status": "blocked",
+        "blockers": [
+          "packet_complete=False"
+        ],
+        "criteria": [
+          "registration_status == 'registered'",
+          "safety_gates.allow_auto_dispatch == True",
+          "batch_has_timeout_tasks == False",
+          "batch_has_failed_tasks == False",
+          "packet_complete == True"
+        ],
+        "safety_gates_snapshot": {
+          "allow_auto_dispatch": true,
+          "batch_has_timeout_tasks": null,
+          "batch_has_failed_tasks": null,
+          "packet_complete": false
+        }
+      },
+      "metadata": {
+        "created_from": "planning_handoff",
+        "created_at": "2026-03-27T14:15:02.578275"
+      }
+    }
+  },
+  "registration": {
+    "registration_id": "reg_3f008ff53bb8",
+    "task_id": "task_f188368af310",
+    "registration_status": "registered",
+    "ready_for_auto_dispatch": true
+  },
+  "closeout": {
+    "closeout_id": "closeout_0114840cb4d2",
+    "closeout_status": "incomplete",
+    "push_required": true,
+    "push_status": "blocked",
+    "closeout_path": "/Users/study/.openclaw/shared-context/orchestrator/closeouts/closeout-trading_live_verification_20260327_1412.json",
+    "continuation_contract": {
+      "contract_version": "continuation_contract_v1",
+      "stopped_because": "continuation_requested",
+      "next_step": "freeze phase1 packet v1 by backfilling missing truth fields before any further continuation",
+      "next_owner": "main",
+      "metadata": {
+        "source": "dispatch_plan",
+        "dispatch_id": "disp_trading_live_verification_20260327_1412_20260327141502",
+        "batch_id": "trading_live_verification_20260327_1412",
+        "scenario": "trading_roundtable_phase1",
+        "adapter": "trading_roundtable"
+      }
+    }
+  },
+  "closeout_gate": {
+    "allowed": true,
+    "reason": "Previous batch test_batch_20260327133758 closeout gate passed",
+    "previous_batch_id": "test_batch_20260327133758",
+    "previous_closeout_status": "complete",
+    "previous_push_status": "not_required",
+    "previous_push_required": false
+  },
+  "preflight_validation": {
+    "preflight_status": "incomplete",
+    "preflight_complete": false,
+    "preflight_missing_fields": [
+      "packet_version",
+      "phase_id",
+      "candidate_id",
+      "run_label",
+      "input_config_path",
+      "generated_at",
+      "owner",
+      "overall_gate",
+      "primary_blocker",
+      "conclusion",
+      "blocker",
+      "owner",
+      "next_step",
+      "completion_criteria"
+    ],
+    "checked_at": "callback_entry"
+  },
+  "ack_guard": {
+    "status": "present",
+    "ack_status": "fallback_recorded",
+    "receipt_path": "/Users/study/.openclaw/shared-context/orchestrator/ack_receipts/ack-trading_roundtable-trading_live_verification_20260327_1412-20260327141602.md"
+  },
+  "contract_resolution": {
+    "enabled": true,
+    "task_tier": "plain",
+    "adapter": "trading_roundtable",
+    "scenario": null,
+    "batch_key": "trading_live_verification_20260327_1412",
+    "flow_id": null,
+    "owner": null,
+    "backend_preference": "subagent",
+    "callback_payload_schema": "trading_roundtable.v1.callback",
+    "auto_execute": true,
+    "entrypoint": {},
+    "gate_policy": {},
+    "channel": {},
+    "session": {
+      "requester_session_key": "agent:main:discord:channel:1483883339701158102"
+    },
+    "metadata": {},
+    "source": "explicit:orchestration_contract"
+  }
+}

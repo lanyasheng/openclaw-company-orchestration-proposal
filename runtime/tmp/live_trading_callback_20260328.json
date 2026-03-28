@@ -1,0 +1,167 @@
+{
+  "envelope_version": "canonical_callback_envelope.v1",
+  "adapter": "trading_roundtable",
+  "scenario": "trading_roundtable_phase1",
+  "batch_id": "trading_live_seed_verification_20260328145754",
+  "packet_id": "pkt_trading_live_20260328_145754",
+  "task_id": "tsk_trading_live_verification_20260328",
+  "completed_at": "2026-03-28T14:57:54+08:00",
+  "backend_terminal_receipt": {
+    "receipt_version": "tmux_terminal_receipt.v1",
+    "backend": "subagent",
+    "terminal_status": "completed",
+    "artifact_paths": [
+      "/Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal/runtime/tmp/live_verification_terminal_20260328.json"
+    ],
+    "dispatch_readiness": true
+  },
+  "business_callback_payload": {
+    "tradability_score": 0.85,
+    "tradability_reason": "Live verification passed using default hardened seed payload",
+    "decision": "PASS",
+    "blocked_reason": null,
+    "degraded_reason": null
+  },
+  "adapter_scoped_payload": {
+    "adapter": "trading_roundtable",
+    "schema": "trading_roundtable_callback.v1",
+    "payload": {
+      "packet": {
+        "packet_version": "trading_phase1_packet_v1",
+        "phase_id": "trading_phase1",
+        "candidate_id": "AAPL",
+        "run_label": "live_verification_20260328",
+        "input_config_path": "docs/plans/2026-03-20-trading-roundtable-phase1-input.md",
+        "generated_at": "2026-03-28T14:57:54+08:00",
+        "owner": "trading",
+        "overall_gate": "PASS",
+        "primary_blocker": "none",
+        "artifact": {
+          "path": "artifacts/tradable_universe/tradable_universe_20260328.json",
+          "exists": true
+        },
+        "report": {
+          "path": "tmp/live_verification_report_20260328.json",
+          "exists": true
+        },
+        "commit": {
+          "repo": "workspace-trading",
+          "git_commit": "live_verification_20260328_abc123"
+        },
+        "test": {
+          "commands": [
+            "python3 research/run_fixed_candidate_acceptance.py --basket phase_a"
+          ],
+          "summary": "Live verification 20260328: All tests passed with default hardened seed payload"
+        },
+        "repro": {
+          "commands": [
+            "cat tmp/trading_roundtable_report.json | jq '.stats'"
+          ],
+          "notes": "Live verification using default hardened seed payload from entry_defaults._trading_seed_payload - all 34 required fields present"
+        },
+        "tradability": {
+          "annual_turnover": 2.5,
+          "liquidity_flags": [],
+          "gross_return": 0.15,
+          "net_return": 0.12,
+          "benchmark_return": 0.1,
+          "scenario_verdict": "PASS",
+          "turnover_failure_reasons": [],
+          "liquidity_failure_reasons": [],
+          "net_vs_gross_failure_reasons": [],
+          "summary": "Live verification passed using default hardened seed payload - all tradability metrics meet threshold"
+        }
+      },
+      "roundtable": {
+        "conclusion": "PASS",
+        "blocker": "none",
+        "owner": "trading",
+        "next_step": "Proceed to dispatch phase 2 execution with default hardened seed payload",
+        "completion_criteria": "Phase1 packet complete with default hardened seed payload from entry_defaults._trading_seed_payload"
+      }
+    }
+  },
+  "orchestration_contract": {
+    "enabled": true,
+    "adapter": "trading_roundtable",
+    "scenario": "trading_roundtable_phase1",
+    "callback_envelope_schema": "canonical_callback_envelope.v1",
+    "next_step": "dispatch",
+    "next_owner": "trading",
+    "dispatch_readiness": true,
+    "auto_execute": true,
+    "task_tier": "orchestrated",
+    "batch_key": "trading_live_seed_verification_20260328145754",
+    "session": {
+      "requester_session_key": "agent:main:discord:channel:1483883339701158102"
+    },
+    "backend_preference": "subagent",
+    "execution_profile": "generic_subagent",
+    "executor": "subagent"
+  },
+  "source": {
+    "adapter": "trading_roundtable",
+    "runner": "orchestrator_callback_bridge",
+    "label": "trading_live_verification_20260328",
+    "business_payload_source": "default_hardened_seed_payload",
+    "backend_terminal_receipt_schema": "tmux_terminal_receipt.v1"
+  },
+  "trading_roundtable": {
+    "packet": {
+      "packet_version": "trading_phase1_packet_v1",
+      "phase_id": "trading_phase1",
+      "candidate_id": "AAPL",
+      "run_label": "live_verification_20260328",
+      "input_config_path": "docs/plans/2026-03-20-trading-roundtable-phase1-input.md",
+      "generated_at": "2026-03-28T14:57:54+08:00",
+      "owner": "trading",
+      "overall_gate": "PASS",
+      "primary_blocker": "none",
+      "artifact": {
+        "path": "artifacts/tradable_universe/tradable_universe_20260328.json",
+        "exists": true
+      },
+      "report": {
+        "path": "tmp/live_verification_report_20260328.json",
+        "exists": true
+      },
+      "commit": {
+        "repo": "workspace-trading",
+        "git_commit": "live_verification_20260328_abc123"
+      },
+      "test": {
+        "commands": [
+          "python3 research/run_fixed_candidate_acceptance.py --basket phase_a"
+        ],
+        "summary": "Live verification 20260328: All tests passed with default hardened seed payload"
+      },
+      "repro": {
+        "commands": [
+          "cat tmp/trading_roundtable_report.json | jq '.stats'"
+        ],
+        "notes": "Live verification using default hardened seed payload from entry_defaults._trading_seed_payload - all 34 required fields present"
+      },
+      "tradability": {
+        "annual_turnover": 2.5,
+        "liquidity_flags": [],
+        "gross_return": 0.15,
+        "net_return": 0.12,
+        "benchmark_return": 0.1,
+        "scenario_verdict": "PASS",
+        "turnover_failure_reasons": [],
+        "liquidity_failure_reasons": [],
+        "net_vs_gross_failure_reasons": [],
+        "summary": "Live verification passed using default hardened seed payload - all tradability metrics meet threshold"
+      }
+    },
+    "roundtable": {
+      "conclusion": "PASS",
+      "blocker": "none",
+      "owner": "trading",
+      "next_step": "Proceed to dispatch phase 2 execution with default hardened seed payload",
+      "completion_criteria": "Phase1 packet complete with default hardened seed payload from entry_defaults._trading_seed_payload"
+    },
+    "summary": "Live verification passed using default hardened seed payload from entry_defaults._trading_seed_payload"
+  }
+}

@@ -287,3 +287,58 @@ PYTHONPATH=runtime/orchestrator:runtime/scripts python3 -m pytest tests/orchestr
 ## License
 
 MIT
+
+---
+
+## 🔍 Observability & 透明度
+
+> **Batch 1-3 已实现** (2026-03-28)
+
+### 核心能力
+
+- **状态卡系统**: 每个任务一张卡，实时追踪进度
+- **统一索引**: 按 owner/scenario 快速查询
+- **任务看板**: 按 stage 分组显示所有任务
+- **tmux 集成**: tmux session 自动注册到索引
+- **行为约束**: "承诺即执行"钩子，防止空承诺
+
+### 快速开始
+
+```bash
+# 1. 查看所有任务
+python3 scripts/sync-tmux-observability.py list
+
+# 2. 生成任务看板
+python3 -c "
+from observability_card import generate_board_snapshot
+import json
+print(json.dumps(generate_board_snapshot()['summary'], indent=2))
+"
+
+# 3. 查询特定任务
+python3 -c "
+from observability_card import get_card
+import json
+card = get_card('task_xxx')
+print(json.dumps(card.to_dict(), indent=2))
+"
+```
+
+### 什么时候用 tmux？
+
+| 场景 | 推荐后端 | 理由 |
+|------|----------|------|
+| **<30min 短任务** | `subagent` | Token 效率高，自动超时 |
+| **>30min 长任务** | `tmux` | 可监控中间进度 |
+| **需要看过程** | `tmux` | 实时看到 AI 在干什么 |
+| **容易卡住的任务** | `tmux` | 可随时接管 |
+| **编码/重构** | `tmux` | 需要看文件修改 |
+| **简单 callback** | `subagent` | 不需要中间状态 |
+
+### 完整文档
+
+- **设计方案**: `docs/observability-transparency-design-2026-03-28.md`
+- **tmux 接入指南**: `docs/tmux-integration-guide.md`
+- **Batch 1-3 报告**: `docs/observability-batch{1,2,3}-completion-report.md`
+
+---

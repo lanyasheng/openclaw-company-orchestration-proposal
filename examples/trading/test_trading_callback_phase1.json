@@ -1,0 +1,149 @@
+{
+  "_comment": "=== Test Trading Callback for Config Validation ===",
+  "_description": "用于验证 auto_trigger_config 中 trading_roundtable_phase1 白名单修复是否生效",
+  "_created_at": "2026-03-27T12:30:00+08:00",
+  "_purpose": "生成新的 trading request 验证配置层修复，避免使用历史 artifact",
+  
+  "envelope_version": "canonical_callback_envelope.v1",
+  "adapter": "trading_roundtable",
+  "scenario": "trading_roundtable_phase1",
+  "batch_id": "trading_batch_validation_001",
+  "packet_id": "pkt_validation_001_round_1",
+  "task_id": "tsk_validation_001",
+  "completed_at": "2026-03-27T12:30:00Z",
+  
+  "backend_terminal_receipt": {
+    "receipt_version": "tmux_terminal_receipt.v1",
+    "backend": "tmux",
+    "terminal_status": "completed",
+    "artifact_paths": [
+      "runtime/orchestrator/summaries/batch-trading_batch_validation_001-summary.md",
+      "runtime/orchestrator/decisions/batch-trading_batch_validation_001-decision.json",
+      "runtime/orchestrator/dispatches/batch-trading_batch_validation_001-dispatch_plan.json",
+      "runtime/orchestrator/terminal.json"
+    ],
+    "run_handle": {
+      "run_id": "run_validation_001",
+      "child_session_key": "agent:main:subagent:trading-validation-001",
+      "pid": 99999,
+      "exit_code": 0
+    },
+    "dispatch_readiness": true
+  },
+  
+  "business_callback_payload": {
+    "tradability_score": 0.85,
+    "tradability_reason": "验证配置修复：信号强度足够，basket 覆盖率>80%，无重大 blocker",
+    "decision": "PASS",
+    "blocked_reason": null,
+    "degraded_reason": null,
+    "trading_roundtable": {
+      "candidate_id": "AAPL",
+      "signal_type": "long",
+      "timeframe": "1h",
+      "basket_ref": "tech_stocks_basket_v1",
+      "gate_result": {
+        "packet_completeness": true,
+        "tradability_threshold": true,
+        "artifact_minimum": true
+      }
+    }
+  },
+  
+  "adapter_scoped_payload": {
+    "adapter": "trading_roundtable",
+    "schema": "trading_roundtable_callback.v1",
+    "payload": {
+      "packet": {
+        "packet_version": "trading_roundtable_v1",
+        "packet_id": "pkt_validation_001_round_1",
+        "batch_id": "trading_batch_validation_001",
+        "scenario": "trading_roundtable_phase1",
+        "owner": "trading",
+        "generated_at": "2026-03-27T12:30:00Z",
+        
+        "candidate_id": "AAPL",
+        "signal_type": "long",
+        "timeframe": "1h",
+        "basket_ref": "tech_stocks_basket_v1",
+        
+        "input_config_path": "docs/plans/2026-03-20-trading-roundtable-phase1-input.md",
+        "overall_gate": "PASS",
+        "primary_blocker": "none",
+        
+        "tradability_score": 0.85,
+        "tradability_reason": "信号强度足够，basket 覆盖率>80%",
+        "artifact_paths": [
+          "runtime/orchestrator/summaries/batch-trading_batch_validation_001-summary.md",
+          "runtime/orchestrator/decisions/batch-trading_batch_validation_001-decision.json"
+        ],
+        "terminal_status": "completed",
+        "acceptance_ready": true,
+        
+        "artifact": {
+          "path": "runtime/orchestrator/summaries/batch-trading_batch_validation_001-summary.md",
+          "exists": true
+        },
+        "report": {
+          "path": "runtime/orchestrator/decisions/batch-trading_batch_validation_001-decision.json",
+          "exists": true
+        },
+        "commit": {
+          "repo": "openclaw-company-orchestration-proposal",
+          "git_commit": "validation_test"
+        },
+        "test": {
+          "commands": ["echo validation_test"],
+          "summary": "validation passed"
+        },
+        "repro": {
+          "commands": ["echo validation_repro"],
+          "notes": "Validation test for auto_trigger_config fix"
+        },
+        "tradability": {
+          "annual_turnover": 0,
+          "liquidity_flags": [],
+          "gross_return": 0,
+          "net_return": 0,
+          "benchmark_return": 0,
+          "scenario_verdict": "PASS",
+          "turnover_failure_reasons": [],
+          "liquidity_failure_reasons": [],
+          "net_vs_gross_failure_reasons": [],
+          "summary": "ok"
+        }
+      },
+      
+      "roundtable": {
+        "conclusion": "PASS",
+        "blocker": "none",
+        "owner": "trading",
+        "next_step": "Validate auto_trigger_config fix for trading_roundtable_phase1",
+        "completion_criteria": "New trading request generated without allowlist rejection",
+        "summary": "Trading callback validation test for config fix verification"
+      }
+    }
+  },
+  
+  "orchestration_contract": {
+    "callback_envelope_schema": "canonical_callback_envelope.v1",
+    "next_step": "acceptance_check",
+    "next_owner": "main/operator",
+    "dispatch_readiness": true,
+    "gate_config_ref": "~/.openclaw/shared-context/gate_config.json",
+    "closeout_requirements": {
+      "acceptance_checklist": true,
+      "git_closeout": false,
+      "push_required": false
+    }
+  },
+  
+  "source": {
+    "adapter": "trading_roundtable",
+    "runner": "test_validation",
+    "label": "trading_batch_validation_001",
+    "business_payload_source": "test_trading_callback_phase1.json",
+    "backend_terminal_receipt_schema": "tmux_terminal_receipt.v1",
+    "business_callback_schema": "trading_roundtable_callback.v1"
+  }
+}
