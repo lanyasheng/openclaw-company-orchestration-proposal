@@ -15,6 +15,8 @@
 - ✅ 不引入新的真值链
 - ✅ 轻量方案（TUI，无需浏览器）
 - ✅ 最小交付：一个可运行入口 + README + 验证脚本
+- ✅ dashboard 层派生 stale 标记（heartbeat / promised_eta / stage）
+- ✅ dashboard 读取前安全清理旧 demo/test 卡（显式 marker + TTL）
 
 ---
 
@@ -46,27 +48,40 @@ python runtime/orchestrator/dashboard.py --once
 
 # 方式 4: 导出 JSON 快照
 python runtime/orchestrator/dashboard.py --export /tmp/board-snapshot.json
+
+# 方式 5: 禁用自动 demo 清理（只查看）
+python runtime/orchestrator/dashboard.py --no-auto-cleanup --once
+
+# 方式 6: 调整 demo 清理 TTL（例如 48 小时）
+python runtime/orchestrator/dashboard.py --demo-ttl-hours 48 --once
+
+# 方式 7: 单独 dry-run 预览可清理 demo 卡
+python scripts/cleanup-observability-demo-cards.py --dry-run --ttl-hours 24
 ```
 
 ### 命令行选项
 
 ```
 usage: dashboard.py [-h] [--refresh REFRESH] [--once] [--export PATH] [--card-dir CARD_DIR]
+                    [--no-auto-cleanup] [--demo-ttl-hours DEMO_TTL_HOURS]
 
 编排系统可视化看板 - Batch 6
 
 选项:
-  -h, --help            显示帮助信息
-  --refresh, -r REFRESH 刷新间隔（秒），默认 5.0
-  --once, -o            单次快照模式（不刷新）
-  --export, -e PATH     导出 JSON 快照到指定路径
-  --card-dir, -d PATH   状态卡目录（默认：~/.openclaw/shared-context/observability/cards）
+  -h, --help                    显示帮助信息
+  --refresh, -r REFRESH         刷新间隔（秒），默认 5.0
+  --once, -o                    单次快照模式（不刷新）
+  --export, -e PATH             导出 JSON 快照到指定路径
+  --card-dir, -d PATH           状态卡目录（默认：~/.openclaw/shared-context/observability/cards）
+  --no-auto-cleanup             禁用旧 demo/test 卡自动清理
+  --demo-ttl-hours FLOAT        demo/test 卡自动清理 TTL（小时，默认 24）
 
 示例:
-  python dashboard.py                    # 实时看板（5 秒刷新）
-  python dashboard.py --refresh 10       # 10 秒刷新
-  python dashboard.py --once             # 单次快照
-  python dashboard.py --export out.json  # 导出 JSON
+  python dashboard.py                           # 实时看板（5 秒刷新）
+  python dashboard.py --refresh 10              # 10 秒刷新
+  python dashboard.py --once                    # 单次快照
+  python dashboard.py --export out.json         # 导出 JSON
+  python dashboard.py --no-auto-cleanup --once  # 禁用清理，只查看现状
 ```
 
 ---
@@ -77,9 +92,11 @@ usage: dashboard.py [-h] [--refresh REFRESH] [--once] [--export PATH] [--card-di
 
 显示：
 - 任务总数
-- 活跃任务数（running + dispatch）
+- 活跃任务数（running + dispatch + callback_received + closeout）
+- Stale 任务数
 - 完成任务数
 - 失败任务数
+- demo 清理结果（若启用）
 - 按 Owner 分组统计
 
 ### 2. 按阶段分组表
@@ -94,7 +111,7 @@ usage: dashboard.py [-h] [--refresh REFRESH] [--once] [--export PATH] [--card-di
 - failed
 - cancelled
 
-每个 stage 显示：任务数、任务 ID、Owner、心跳时间
+每个 stage 显示：任务数、任务 ID、Owner、心跳时间、stale/健康状态
 
 ### 3. 按 Owner 分组表
 
@@ -102,6 +119,7 @@ usage: dashboard.py [-h] [--refresh REFRESH] [--once] [--export PATH] [--card-di
 - 总数
 - Running 数量
 - Dispatch 数量
+- Stale 数量
 - Completed 数量
 - Failed 数量
 
@@ -113,6 +131,7 @@ usage: dashboard.py [-h] [--refresh REFRESH] [--once] [--export PATH] [--card-di
 - Owner（负责 agent）
 - Executor（执行后端）
 - Stage（当前阶段）
+- 状态（含 stale 标签）
 - 心跳（相对时间）
 - ETA（承诺完成时间）
 - Anchor（锚点信息）
