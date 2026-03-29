@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 # 添加 runtime 目录到路径
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "orchestrator"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "orchestrator"))
 
 from alert_dispatcher import (
     AlertDispatcher,
@@ -125,19 +125,36 @@ class TestCompletionAlert:
     
     def test_dispatch_completion_dry_run(self, tmp_path):
         """测试干跑模式"""
-        dispatcher = AlertDispatcher(channel="file", dry_run=True)
+        # Mock 目录
+        import alert_dispatcher
+        import alert_audit
+        original_state_dir = alert_dispatcher.ALERT_STATE_DIR
+        original_log_dir = alert_dispatcher.ALERT_LOG_DIR
+        original_audit_dir = alert_audit.ALERT_AUDIT_DIR
         
-        receipt = {
-            "receipt_id": "receipt_test_003",
-            "source_task_id": "task_test_003",
-            "receipt_status": "completed",
-        }
-        context = {"label": "test", "scenario": "custom", "owner": "main"}
+        alert_dispatcher.ALERT_STATE_DIR = tmp_path / "state"
+        alert_dispatcher.ALERT_LOG_DIR = tmp_path / "logs"
+        alert_audit.ALERT_AUDIT_DIR = tmp_path / "audits"
         
-        payload, result = dispatcher.dispatch_completion_alert(receipt, context)
-        
-        assert payload is not None
-        assert result.status == "dry_run"
+        try:
+            dispatcher = AlertDispatcher(channel="file", dry_run=True)
+            
+            receipt = {
+                "receipt_id": "receipt_test_003",
+                "source_task_id": "task_test_003",
+                "receipt_status": "completed",
+            }
+            context = {"label": "test", "scenario": "custom", "owner": "main"}
+            
+            payload, result = dispatcher.dispatch_completion_alert(receipt, context)
+            
+            assert payload is not None
+            assert result.status == "dry_run"
+        finally:
+            # 恢复原始目录
+            alert_dispatcher.ALERT_STATE_DIR = original_state_dir
+            alert_dispatcher.ALERT_LOG_DIR = original_log_dir
+            alert_audit.ALERT_AUDIT_DIR = original_audit_dir
 
 
 class TestTimeoutAlert:

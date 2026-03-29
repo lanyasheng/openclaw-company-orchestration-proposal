@@ -61,9 +61,18 @@ __all__ = [
     "AlertAuditRecord",
     "AuditType",
     "AUDIT_VERSION",
+    "ALERT_AUDIT_DIR",
 ]
 
 AUDIT_VERSION = "alert_audit_v1"
+
+# 审计目录
+ALERT_AUDIT_DIR = Path(
+    os.environ.get(
+        "OPENCLAW_ALERT_AUDIT_DIR",
+        Path.home() / ".openclaw" / "shared-context" / "alerts" / "audits",
+    )
+)
 
 # 审计类型
 AuditType = Literal[
@@ -348,8 +357,12 @@ class AlertAuditLogger:
         """
         records: List[AlertAuditRecord] = []
         
-        # 遍历所有审计文件
+        # 遍历所有审计文件（跳过索引文件）
         for audit_file in sorted(self.audit_dir.glob("audit_*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            # 跳过索引文件
+            if audit_file.name == "audit_index.json":
+                continue
+            
             if len(records) >= limit:
                 break
             

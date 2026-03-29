@@ -371,12 +371,22 @@ class AlertDispatcher:
         if dedupe_key not in state:
             return False
         
-        # 检查窗口内告警
+        # 检查窗口内告警（支持新旧格式兼容）
         cutoff = datetime.now() - timedelta(seconds=self.throttle_window_seconds)
-        recent_alerts = [
-            alert_id for alert_id in state[dedupe_key]
-            if datetime.fromisoformat(alert_id.split("_")[-1]) > cutoff
-        ]
+        recent_alerts = []
+        for entry in state[dedupe_key]:
+            if isinstance(entry, dict):
+                # 新格式：{"alert_id": ..., "timestamp": ...}
+                if datetime.fromisoformat(entry["timestamp"]) > cutoff:
+                    recent_alerts.append(entry)
+            else:
+                # 旧格式：alert_id 字符串（尝试解析）
+                try:
+                    if datetime.fromisoformat(entry.split("_")[-1]) > cutoff:
+                        recent_alerts.append(entry)
+                except (ValueError, IndexError):
+                    # 无法解析的旧格式，保留
+                    recent_alerts.append(entry)
         
         return len(recent_alerts) >= self.max_alerts_per_window
     
@@ -387,13 +397,15 @@ class AlertDispatcher:
         if dedupe_key not in state:
             state[dedupe_key] = []
         
-        state[dedupe_key].append(alert_id)
+        # 存储 (alert_id, timestamp) 元组
+        timestamp = _iso_now()
+        state[dedupe_key].append({"alert_id": alert_id, "timestamp": timestamp})
         
         # 清理过期条目
         cutoff = datetime.now() - timedelta(seconds=self.throttle_window_seconds)
         state[dedupe_key] = [
-            aid for aid in state[dedupe_key]
-            if datetime.fromisoformat(aid.split("_")[-1]) > cutoff
+            entry for entry in state[dedupe_key]
+            if datetime.fromisoformat(entry["timestamp"]) > cutoff
         ]
         
         self._save_throttle_state(state)

@@ -102,14 +102,14 @@ def _iso_now() -> str:
 def _format_duration(seconds: int) -> str:
     """格式化时长"""
     if seconds < 60:
-        return f"{seconds}秒"
+        return f"{seconds} 秒"
     elif seconds < 3600:
         minutes = seconds // 60
-        return f"{minutes}分钟"
+        return f"{minutes} 分钟"
     else:
         hours = seconds // 3600
         minutes = (seconds % 3600) // 60
-        return f"{hours}小时{minutes}分钟"
+        return f"{hours} 小时 {minutes} 分钟"
 
 
 def _translate_stage(stage: str) -> str:
@@ -192,16 +192,17 @@ class HumanReportRenderer:
 
 ### 结论
 
-任务 **{task_label}** 已超过承诺完成时间 **{overdue_minutes}分钟**。
+任务 **{task_label}** 已超过承诺完成时间 **{overdue_minutes} 分钟**。
 
 ### 证据
 
 - **承诺完成时间**: {promised_eta}
 - **当前时间**: {current_time}
-- **超时阈值**: {timeout_threshold}分钟
-- **已超时**: {overdue_minutes}分钟
+- **超时阈值**: {timeout_threshold} 分钟
+- **已超时**: {overdue_minutes} 分钟
 - **当前阶段**: {current_stage}
 - **最后心跳**: {last_heartbeat}
+- **场景**: {scenario}
 
 ### 动作
 
@@ -248,13 +249,13 @@ class HumanReportRenderer:
 
 ### 结论
 
-任务 **{task_label}** 疑似卡住，已超过 **{no_heartbeat_minutes}分钟** 无心跳更新。
+任务 **{task_label}** 疑似卡住，已超过 **{no_heartbeat_minutes} 分钟** 无心跳更新。
 
 ### 证据
 
 - **当前阶段**: {current_stage}
 - **最后心跳**: {last_heartbeat}
-- **无心跳时长**: {no_heartbeat_minutes}分钟
+- **无心跳时长**: {no_heartbeat_minutes} 分钟
 - **场景**: {scenario}
 
 ### 动作
@@ -369,6 +370,7 @@ class HumanReportRenderer:
             current_stage=_translate_stage(current_stage),
             last_heartbeat=last_heartbeat,
             owner=owner,
+            scenario=self._translate_scenario(scenario),
         )
         
         return alert

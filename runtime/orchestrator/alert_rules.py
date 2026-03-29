@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
@@ -263,8 +263,9 @@ class AlertRules:
                 timeout_minutes=threshold,
             )
         
-        # 检查是否超时
-        if current_time <= promised_eta:
+        # 检查是否超时（允许 threshold 分钟的宽限期）
+        deadline = promised_eta + timedelta(minutes=threshold)
+        if current_time <= deadline:
             return TimeoutCheck(
                 is_timeout=False,
                 reason="Not yet overdue",

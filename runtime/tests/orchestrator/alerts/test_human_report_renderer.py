@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 # 添加 runtime 目录到路径
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "orchestrator"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "orchestrator"))
 
 from human_report_renderer import (
     HumanReportRenderer,

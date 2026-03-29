@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 # 添加 runtime 目录到路径
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "orchestrator"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "orchestrator"))
 
 from alert_audit import (
     AlertAuditLogger,
@@ -386,8 +386,8 @@ class TestAlertAuditIntegration:
         assert "task_timeout" in stats["by_type"]
         assert "task_completed" in stats["by_type"]
         
-        # 5. 验证文件存在
-        audit_files = list(tmp_path.glob("audit_*.json"))
+        # 5. 验证文件存在（排除索引文件）
+        audit_files = [f for f in tmp_path.glob("audit_*.json") if f.name != "audit_index.json"]
         assert len(audit_files) == 2
         
         log_files = list(tmp_path.glob("logs-*.jsonl"))
