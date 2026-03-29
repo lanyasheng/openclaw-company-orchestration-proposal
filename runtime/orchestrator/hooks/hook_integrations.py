@@ -199,6 +199,7 @@ def check_promise_timeout(
 def enforce_completion_translation(
     receipt: Dict[str, Any],
     task_context: Dict[str, Any],
+    enforce_mode_override: Optional[str] = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """
     强制 completion receipt 包含翻译汇报。
@@ -213,9 +214,13 @@ def enforce_completion_translation(
     Args:
         receipt: Completion receipt artifact（字典形式）
         task_context: 任务上下文（scenario/label/task_id 等）
+        enforce_mode_override: 可选的 enforce mode 覆盖（"audit"/"warn"/"enforce"）
     
     Returns:
         (是否需要翻译，原因，翻译文本)
+    
+    Raises:
+        HookViolationError: enforce 模式下无法生成翻译时抛出
     """
     # 导入钩子模块
     try:
@@ -224,6 +229,7 @@ def enforce_completion_translation(
             check_completion_requires_translation,
             enforce_translation,
         )
+        from hooks.hook_exceptions import HookViolationError
     except ImportError:
         return False, "Hook module not available", None
     
@@ -235,15 +241,15 @@ def enforce_completion_translation(
     if not requirement.requires_translation:
         return False, requirement.reason, None
     
-    # 强制生成翻译
-    translation = hook.enforce(receipt, task_context)
+    # 强制生成翻译（支持 enforce mode）
+    translation = hook.enforce(receipt, task_context, enforce_mode_override=enforce_mode_override)
     
     # 验证翻译质量
-    passed, missing = hook.validate(translation)
-    
-    if not passed:
-        # 翻译质量不达标，记录违规
-        return True, f"Translation quality issue: {missing}", translation
+    if translation:
+        passed, missing = hook.validate(translation)
+        if not passed:
+            # 翻译质量不达标，记录违规
+            return True, f"Translation quality issue: {missing}", translation
     
     return True, "Translation enforced", translation
 

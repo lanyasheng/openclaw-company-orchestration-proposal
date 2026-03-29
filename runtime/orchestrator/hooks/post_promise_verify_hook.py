@@ -233,6 +233,7 @@ class PostPromiseVerifyHook:
         task_context: Dict[str, Any],
         dispatch_registry: Optional[Dict[str, Any]] = None,
         session_registry: Optional[Dict[str, Any]] = None,
+        enforce_mode_override: Optional[str] = None,
     ) -> PromiseAnchorCheck:
         """
         验证承诺是否有对应锚点
@@ -241,27 +242,41 @@ class PostPromiseVerifyHook:
             task_context: 任务上下文（包含 promise_anchor 字段）
             dispatch_registry: Dispatch 注册表（用于验证 dispatch_id）
             session_registry: Session 注册表（用于验证 session_id）
+            enforce_mode_override: 可选的 enforce mode 覆盖（"audit"/"warn"/"enforce"）
         
         Returns:
             PromiseAnchorCheck 检查结果
+        
+        Raises:
+            HookViolationError: enforce 模式下锚点验证失败时抛出
         """
+        # 导入配置和异常模块（延迟导入，避免循环依赖）
+        from .hook_config import get_hook_enforce_mode
+        from .hook_exceptions import HookViolationError
+        
+        # 获取 enforce mode（支持覆盖）
+        mode = enforce_mode_override if enforce_mode_override in ["audit", "warn", "enforce"] else get_hook_enforce_mode("post_promise_verify")
+        
         promise_anchor = task_context.get("promise_anchor", {})
         
         # Check 1: 是否有 promise_anchor
         if not promise_anchor:
-            return PromiseAnchorCheck(
+            result = PromiseAnchorCheck(
                 has_anchor=False,
                 status="anchor_missing",
                 missing_reason="缺少 promise_anchor 字段",
                 suggested_fix="在 task_context 中添加 promise_anchor，包含 anchor_type 和 anchor_value",
             )
+            # Enforce mode 处理
+            self._handle_violation(mode, result, task_context)
+            return result
         
         anchor_type = promise_anchor.get("anchor_type", "")
         anchor_value = promise_anchor.get("anchor_value", "")
         
         # Check 2: anchor_type 是否有效
         if anchor_type not in self.VALID_ANCHOR_TYPES:
-            return PromiseAnchorCheck(
+            result = PromiseAnchorCheck(
                 has_anchor=False,
                 status="anchor_invalid",
                 anchor_type=anchor_type,
@@ -269,21 +284,27 @@ class PostPromiseVerifyHook:
                 missing_reason=f"无效的锚点类型：{anchor_type}",
                 suggested_fix=f"使用有效的锚点类型：{self.VALID_ANCHOR_TYPES}",
             )
+            # Enforce mode 处理
+            self._handle_violation(mode, result, task_context)
+            return result
         
         # Check 3: anchor_value 是否非空
         if not anchor_value or anchor_value.strip() == "":
-            return PromiseAnchorCheck(
+            result = PromiseAnchorCheck(
                 has_anchor=False,
                 status="anchor_missing",
                 anchor_type=anchor_type,
                 missing_reason="锚点值为空",
                 suggested_fix="提供非空的 anchor_value",
             )
+            # Enforce mode 处理
+            self._handle_violation(mode, result, task_context)
+            return result
         
         # Check 4: 锚点格式验证
         format_ok, format_reason = self._validate_anchor_format(anchor_type, anchor_value)
         if not format_ok:
-            return PromiseAnchorCheck(
+            result = PromiseAnchorCheck(
                 has_anchor=False,
                 status="anchor_invalid",
                 anchor_type=anchor_type,
@@ -291,6 +312,9 @@ class PostPromiseVerifyHook:
                 missing_reason=f"锚点格式无效：{format_reason}",
                 suggested_fix=f"锚点值必须符合 {anchor_type} 的格式规范",
             )
+            # Enforce mode 处理
+            self._handle_violation(mode, result, task_context)
+            return result
         
         # Check 5: 验证锚点是否存在于注册表中（可选）
         registry_ok = True
@@ -304,7 +328,7 @@ class PostPromiseVerifyHook:
             registry_reason = f"Session {anchor_value} 不存在于注册表" if not registry_ok else ""
         
         if not registry_ok:
-            return PromiseAnchorCheck(
+            result = PromiseAnchorCheck(
                 has_anchor=False,
                 status="anchor_missing",
                 anchor_type=anchor_type,
@@ -312,6 +336,9 @@ class PostPromiseVerifyHook:
                 missing_reason=registry_reason,
                 suggested_fix="确保锚点对应的 artifact 已创建并注册",
             )
+            # Enforce mode 处理
+            self._handle_violation(mode, result, task_context)
+            return result
         
         # 所有检查通过
         return PromiseAnchorCheck(
@@ -324,6 +351,53 @@ class PostPromiseVerifyHook:
                 "promised_eta": promise_anchor.get("promised_eta", ""),
             },
         )
+    
+    def _handle_violation(
+        self,
+        mode: str,
+        result: PromiseAnchorCheck,
+        task_context: Dict[str, Any],
+    ) -> None:
+        """
+        处理锚点违规
+        
+        Args:
+            mode: enforce mode ("audit"/"warn"/"enforce")
+            result: 锚点检查结果
+            task_context: 任务上下文
+        
+        Raises:
+            HookViolationError: enforce 模式下抛出
+        """
+        from .hook_exceptions import HookViolationError
+        from .hook_integrations import log_anchor_violation
+        
+        task_id = task_context.get("task_id", "unknown")
+        
+        if mode == "enforce":
+            # 抛出异常，阻断主流程
+            raise HookViolationError(
+                f"承诺必须有执行锚点：{result.missing_reason}",
+                hook_name="post_promise_verify",
+                metadata={
+                    "task_id": task_id,
+                    "anchor_type": result.anchor_type,
+                    "anchor_value": result.anchor_value,
+                    "status": result.status,
+                },
+            )
+        elif mode == "warn":
+            # 记录告警（不阻断）
+            import warnings
+            warnings.warn(f"⚠️ 空承诺检测 [{task_id}]: {result.missing_reason}")
+        
+        # mode == "audit": 只记录审计日志（现有行为）
+        # 调用现有审计日志记录
+        log_anchor_violation(task_id, result.missing_reason, {
+            "anchor_type": result.anchor_type,
+            "anchor_value": result.anchor_value,
+            "status": result.status,
+        })
     
     def _validate_anchor_format(
         self,

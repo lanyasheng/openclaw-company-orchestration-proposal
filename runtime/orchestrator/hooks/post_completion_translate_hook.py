@@ -263,9 +263,111 @@ class PostCompletionTranslateHook:
         completion_receipt: Dict[str, Any],
         task_context: Dict[str, Any],
         template: Optional[str] = None,
+        enforce_mode_override: Optional[str] = None,
     ) -> str:
         """
         强制生成翻译汇报
+        
+        Args:
+            completion_receipt: Completion receipt artifact
+            task_context: 任务上下文
+            template: 可选的汇报模板
+            enforce_mode_override: 可选的 enforce mode 覆盖（"audit"/"warn"/"enforce"）
+        
+        Returns:
+            人话汇报文本
+        
+        Raises:
+            HookViolationError: enforce 模式下无法生成翻译时抛出
+        """
+        # 导入配置和异常模块（延迟导入，避免循环依赖）
+        from .hook_config import get_hook_enforce_mode
+        from .hook_exceptions import HookViolationError
+        
+        # 获取 enforce mode（支持覆盖）
+        mode = enforce_mode_override if enforce_mode_override in ["audit", "warn", "enforce"] else get_hook_enforce_mode("post_completion_translate")
+        
+        # 先检查是否需要翻译
+        requirement = self.check(completion_receipt, task_context)
+        
+        if not requirement.requires_translation:
+            # 不需要翻译，直接返回空
+            return ""
+        
+        # 尝试生成翻译
+        translation = self._generate_translation_safe(completion_receipt, task_context, template)
+        
+        # 验证翻译质量
+        if translation:
+            passed, missing = self.validate(translation)
+            if not passed:
+                # 翻译质量不达标
+                if mode == "enforce":
+                    raise HookViolationError(
+                        f"翻译汇报质量不达标：{missing}",
+                        hook_name="post_completion_translate",
+                        metadata={
+                            "receipt_id": completion_receipt.get("receipt_id", ""),
+                            "task_id": task_context.get("task_id", ""),
+                            "missing_sections": missing,
+                        },
+                    )
+                elif mode == "warn":
+                    import warnings
+                    warnings.warn(f"⚠️ 翻译质量不达标 [{task_context.get('task_id', '')}]: {missing}")
+                # mode == "audit": 只记录审计日志（现有行为）
+        
+        # 如果无法生成翻译
+        if not translation:
+            if mode == "enforce":
+                raise HookViolationError(
+                    "完成汇报必须包含翻译，但无法生成",
+                    hook_name="post_completion_translate",
+                    metadata={
+                        "receipt_id": completion_receipt.get("receipt_id", ""),
+                        "task_id": task_context.get("task_id", ""),
+                        "reason": requirement.reason,
+                    },
+                )
+            elif mode == "warn":
+                import warnings
+                task_id = task_context.get("task_id", "unknown")
+                warnings.warn(f"⚠️ 缺少翻译汇报 [{task_id}]: {requirement.reason}")
+            # mode == "audit": 只记录审计日志（现有行为）
+        
+        return translation
+    
+    def _generate_translation_safe(
+        self,
+        completion_receipt: Dict[str, Any],
+        task_context: Dict[str, Any],
+        template: Optional[str] = None,
+    ) -> str:
+        """
+        安全生成翻译汇报（不抛异常）
+        
+        Args:
+            completion_receipt: Completion receipt artifact
+            task_context: 任务上下文
+            template: 可选的汇报模板
+        
+        Returns:
+            人话汇报文本（可能为空）
+        """
+        try:
+            return self._generate_translation(completion_receipt, task_context, template)
+        except Exception:
+            # 捕获所有异常，返回空字符串
+            return ""
+    
+    def _generate_translation(
+        self,
+        completion_receipt: Dict[str, Any],
+        task_context: Dict[str, Any],
+        template: Optional[str] = None,
+    ) -> str:
+        """
+        生成翻译汇报（内部实现）
         
         Args:
             completion_receipt: Completion receipt artifact
