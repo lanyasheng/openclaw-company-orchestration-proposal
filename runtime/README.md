@@ -7,6 +7,46 @@
 - `scripts/`：入口命令与 callback / dispatch bridge
 - `skills/`：runtime 侧技能入口（当前主要是 `orchestration-entry`）
 
+## 快速开始 — `orch` CLI
+
+**最简用法**（其他 agent 一句话就会用）：
+
+```bash
+# 1. 查看频道接入建议
+orch onboard
+
+# 2. 触发执行
+orch run --task "任务描述" --workdir /path/to/workdir
+
+# 3. 查看状态
+orch status
+```
+
+**常用选项**：
+
+```bash
+# 指定场景
+orch onboard --scenario trading_roundtable --owner trading
+
+# 触发 trading 场景执行
+orch run --task "分析 AAPL 可交易性" \
+  --scenario trading_roundtable \
+  --owner trading \
+  --backend subagent \
+  --workdir /path/to/workdir
+
+# 查看特定任务状态
+orch status --task-id task_123 --output json
+```
+
+**入口位置**：`runtime/scripts/orch`
+
+**向后兼容**：
+- `orch_product.py`：保持不变，`orch` 是其极薄 wrapper
+- `orch_command.py`：保持不变，用于生成 contract
+
+**详细说明**：见 `docs/guides/orch-cli-entry.md`
+
 ## 边界
 - `docs/` 负责阅读入口、CURRENT_TRUTH、计划与边界说明
 - `runtime/` 负责真实实现

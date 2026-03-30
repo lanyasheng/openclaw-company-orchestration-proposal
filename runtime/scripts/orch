@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""
+orch — OpenClaw Orchestration 极简入口
+
+最简用法：
+  orch onboard          # 查看频道接入建议
+  orch run --task "..." # 触发执行
+  orch status           # 查看状态
+
+设计原则：
+  - 极薄 wrapper，路由到 orch_product.py
+  - 零心智负担，其他 agent 一句话就会用
+  - 向后兼容，不破坏现有入口
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+ORCH_PRODUCT = SCRIPT_DIR / "orch_product.py"
+
+__version__ = "orch_v1"
+
+
+def _iso_now() -> str:
+    from datetime import datetime
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _run_orch_product(args: list[str], output_format: str = "text") -> Dict[str, Any]:
+    """调用 orch_product.py 并返回结果。"""
+    import subprocess
+    
+    cmd = [sys.executable, str(ORCH_PRODUCT)] + args
+    env = os.environ.copy()
+    
+    if output_format == "json":
+        cmd.append("--output")
+        cmd.append("json")
+    
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(REPO_ROOT),
+    )
+    
+    if result.returncode != 0:
+        raise RuntimeError(f"orch_product.py failed: {result.stderr}")
+    
+    # 解析输出
+    output = result.stdout.strip()
+    if output_format == "json":
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            return {"raw_output": output}
+    else:
+        return {"raw_output": output}
+
+
+def cmd_onboard(args: argparse.Namespace) -> int:
+    """onboard 命令：查看频道接入建议。"""
+    orch_args = ["onboard"]
+    
+    if args.channel_id:
+        orch_args.extend(["--channel-id", args.channel_id])
+    if args.channel_name:
+        orch_args.extend(["--channel-name", args.channel_name])
+    if args.topic:
+        orch_args.extend(["--topic", args.topic])
+    if args.context:
+        orch_args.extend(["--context", args.context])
+    if args.scenario:
+        orch_args.extend(["--scenario", args.scenario])
+    if args.owner:
+        orch_args.extend(["--owner", args.owner])
+    if args.backend:
+        orch_args.extend(["--backend", args.backend])
+    
+    try:
+        result = _run_orch_product(orch_args, output_format=args.output)
+        if args.output == "json":
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(result.get("raw_output", ""))
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """run 命令：触发执行。"""
+    orch_args = ["run", "--task", args.task]
+    
+    if args.channel_id:
+        orch_args.extend(["--channel-id", args.channel_id])
+    if args.channel_name:
+        orch_args.extend(["--channel-name", args.channel_name])
+    if args.topic:
+        orch_args.extend(["--topic", args.topic])
+    if args.context:
+        orch_args.extend(["--context", args.context])
+    if args.scenario:
+        orch_args.extend(["--scenario", args.scenario])
+    if args.owner:
+        orch_args.extend(["--owner", args.owner])
+    if args.backend:
+        orch_args.extend(["--backend", args.backend])
+    if args.workdir:
+        orch_args.extend(["--workdir", args.workdir])
+    if args.duration:
+        orch_args.extend(["--duration", str(args.duration)])
+    if args.task_type:
+        orch_args.extend(["--type", args.task_type])
+    if args.monitor:
+        orch_args.append("--monitor")
+    if args.timeout:
+        orch_args.extend(["--timeout", str(args.timeout)])
+    
+    try:
+        result = _run_orch_product(orch_args, output_format=args.output)
+        if args.output == "json":
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(result.get("raw_output", ""))
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """status 命令：查看状态。"""
+    orch_args = ["status"]
+    
+    if args.channel_id:
+        orch_args.extend(["--channel-id", args.channel_id])
+    if args.batch_key:
+        orch_args.extend(["--batch-key", args.batch_key])
+    if args.task_id:
+        orch_args.extend(["--task-id", args.task_id])
+    if args.owner:
+        orch_args.extend(["--owner", args.owner])
+    if args.scenario:
+        orch_args.extend(["--scenario", args.scenario])
+    if args.stage:
+        orch_args.extend(["--stage", args.stage])
+    if args.limit:
+        orch_args.extend(["--limit", str(args.limit)])
+    
+    try:
+        result = _run_orch_product(orch_args, output_format=args.output)
+        if args.output == "json":
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(result.get("raw_output", ""))
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="orch",
+        description="🚀 OpenClaw Orchestration 极简入口 — onboard / run / status",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+╔═══════════════════════════════════════════════════════════╗
+║  orch — 其他 agent 一句话就会用                            ║
+╠═══════════════════════════════════════════════════════════╣
+║  快速开始：                                               ║
+║                                                           ║
+║  # 1. 查看频道接入建议                                    ║
+║  orch onboard                                             ║
+║                                                           ║
+║  # 2. 触发执行                                            ║
+║  orch run --task "任务描述" --workdir /path/to/work       ║
+║                                                           ║
+║  # 3. 查看状态                                            ║
+║  orch status                                              ║
+║                                                           ║
+║  常用选项：                                               ║
+║  --channel-id     频道 ID                                 ║
+║  --scenario       场景标识 (如 trading_roundtable)        ║
+║  --owner          任务负责人                              ║
+║  --backend        执行后端 (subagent | tmux)              ║
+║  --output         输出格式 (text | json)                  ║
+║                                                           ║
+║  向后兼容：                                               ║
+║  • orch_product.py 保持不变                               ║
+║  • orch_command.py 保持不变                               ║
+╚═══════════════════════════════════════════════════════════╝
+        """,
+    )
+    
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    
+    subparsers = parser.add_subparsers(dest="command", help="可用命令")
+    
+    # onboard 命令
+    onboard_parser = subparsers.add_parser("onboard", help="查看频道接入建议")
+    onboard_parser.add_argument("--channel-id", help="频道 ID")
+    onboard_parser.add_argument("--channel-name", help="频道名称")
+    onboard_parser.add_argument("--topic", help="讨论主题")
+    onboard_parser.add_argument("--context", help="上下文")
+    onboard_parser.add_argument("--scenario", help="场景标识")
+    onboard_parser.add_argument("--owner", help="任务负责人")
+    onboard_parser.add_argument("--backend", help="执行后端")
+    onboard_parser.add_argument("--output", "-o", choices=["text", "json"], default="text", help="输出格式")
+    onboard_parser.set_defaults(func=cmd_onboard)
+    
+    # run 命令
+    run_parser = subparsers.add_parser("run", help="触发执行")
+    run_parser.add_argument("--task", "-t", required=True, help="任务描述")
+    run_parser.add_argument("--channel-id", help="频道 ID")
+    run_parser.add_argument("--channel-name", help="频道名称")
+    run_parser.add_argument("--topic", help="讨论主题")
+    run_parser.add_argument("--context", help="上下文")
+    run_parser.add_argument("--scenario", help="场景标识")
+    run_parser.add_argument("--owner", help="任务负责人")
+    run_parser.add_argument("--backend", help="执行后端")
+    run_parser.add_argument("--workdir", "-w", help="工作目录")
+    run_parser.add_argument("--duration", "-d", type=int, help="预计时长（分钟）")
+    run_parser.add_argument("--type", "-T", dest="task_type", choices=["coding", "documentation", "research", "custom"], help="任务类型")
+    run_parser.add_argument("--monitor", "-m", action="store_true", help="监控中间过程")
+    run_parser.add_argument("--timeout", type=int, help="超时时间（秒）")
+    run_parser.add_argument("--output", "-o", choices=["text", "json"], default="text", help="输出格式")
+    run_parser.set_defaults(func=cmd_run)
+    
+    # status 命令
+    status_parser = subparsers.add_parser("status", help="查看状态")
+    status_parser.add_argument("--channel-id", help="频道 ID")
+    status_parser.add_argument("--batch-key", help="批次 key")
+    status_parser.add_argument("--task-id", help="任务 ID")
+    status_parser.add_argument("--owner", help="负责人")
+    status_parser.add_argument("--scenario", help="场景")
+    status_parser.add_argument("--stage", help="阶段")
+    status_parser.add_argument("--limit", "-l", type=int, default=20, help="返回数量")
+    status_parser.add_argument("--output", "-o", choices=["text", "json"], default="text", help="输出格式")
+    status_parser.set_defaults(func=cmd_status)
+    
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return 1
+    
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
