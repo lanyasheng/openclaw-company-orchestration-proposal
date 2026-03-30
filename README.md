@@ -170,6 +170,38 @@ python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
 
 ---
 
+## 🚀 Product Entry: Onboard + Run + Status (New!)
+
+**For channel operators and agents: three simple commands, zero mental overhead.**
+
+| Command | Purpose | One-liner |
+|---------|---------|-----------|
+| `onboard` | Generate channel onboarding recommendation | "How do I onboard this channel?" |
+| `run` | Trigger execution | "Run a task for me" |
+| `status` | View status overview | "What's the current progress?" |
+
+### Quick Start
+
+```bash
+# 1. Onboard — get channel接入 recommendation
+python3 runtime/scripts/orch_product.py onboard
+
+# 2. Run — trigger execution
+python3 runtime/scripts/orch_product.py run --task "Your task description" --workdir /path/to/workdir
+
+# 3. Status — check progress
+python3 runtime/scripts/orch_product.py status
+```
+
+**Full documentation:** [docs/orch_product_guide.md](docs/orch_product_guide.md)
+
+**Design principles:**
+- ✅ Reuse existing control plane — no new truth chain
+- ✅ Zero mental overhead — no need to understand contract/backend/observability internals
+- ✅ Backward compatible — existing `orch_command.py` entry unchanged
+
+---
+
 ## Onboarding a New Scenario
 
 ### Step 1: Define Your Workflow
