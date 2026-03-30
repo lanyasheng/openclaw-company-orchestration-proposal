@@ -70,7 +70,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 from backend_selector import BackendSelector, BackendRecommendation, recommend_backend
 
 # Import subagent executor
-from subagent_executor import SubagentExecutor, SubagentConfig, SubagentResult
+from subagent_executor import SubagentExecutor, SubagentConfig, SubagentResult, _state_file
 
 __all__ = [
     "TaskContext",
@@ -460,18 +460,19 @@ class UnifiedExecutionRuntime:
         executor = SubagentExecutor(config=config, cwd=str(context.workdir))
         task_id = executor.execute_async(context.task_description)
         
-        # Get initial status
-        status_result = executor.get_status(task_id)
+        # Get initial status via get_result
+        status_result = executor.get_result(task_id)
         
         # Build callback path
         callback_path = DISPATCH_DIR / f"{dispatch_id}-callback.json"
         
         # Build artifacts dict
         artifacts = {}
-        if status_result.get("status_path"):
-            artifacts["status_json"] = Path(status_result["status_path"])
-        if status_result.get("summary_path"):
-            artifacts["final_summary"] = Path(status_result["summary_path"])
+        if status_result:
+            # Load state file path
+            state_file = _state_file(task_id)
+            if state_file.exists():
+                artifacts["status_json"] = state_file
         
         return ExecutionResult(
             task_id=task_id,
@@ -479,13 +480,13 @@ class UnifiedExecutionRuntime:
             backend="subagent",
             session_id=f"subagent-{label}",
             label=label,
-            status=status_result.get("status", "pending"),
+            status=status_result.status if status_result else "pending",
             callback_path=callback_path,
             wake_command=None,  # subagent uses callback, not wake
             artifacts=artifacts,
             backend_selection=backend_selection,
             metadata={
-                "pid": status_result.get("pid"),
+                "pid": status_result.pid if status_result else None,
                 "runner_label": label,
                 "timeout_seconds": timeout,
             },
@@ -652,7 +653,7 @@ def run_task(
     """
     runtime = UnifiedExecutionRuntime()
     return runtime.run_task(
-        task_description=task_description,
+        task_context=task_description,
         workdir=workdir,
         backend_preference=backend_preference,
         estimated_duration_minutes=estimated_duration_minutes,

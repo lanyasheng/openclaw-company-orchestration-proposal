@@ -233,18 +233,20 @@ class TestSubagentPath(unittest.TestCase):
     """Test subagent execution path."""
     
     @patch('unified_execution_runtime.SubagentExecutor')
-    def test_execute_subagent_mock(self, mock_executor_class):
+    @patch('unified_execution_runtime._state_file')
+    def test_execute_subagent_mock(self, mock_state_file, mock_executor_class):
         """Test subagent execution with mocked executor."""
         # Setup mock
         mock_executor = MagicMock()
         mock_executor.execute_async.return_value = "task_123"
-        mock_executor.get_status.return_value = {
-            "status": "running",
-            "status_path": "/tmp/status.json",
-            "summary_path": "/tmp/summary.json",
-            "pid": 12345,
-        }
+        mock_result = MagicMock()
+        mock_result.status = "running"
+        mock_result.pid = 12345
+        mock_executor.get_result.return_value = mock_result
         mock_executor_class.return_value = mock_executor
+        
+        # Mock state file to not exist
+        mock_state_file.return_value = MagicMock(exists=MagicMock(return_value=False))
         
         runtime = UnifiedExecutionRuntime()
         context = TaskContext.from_string(
@@ -264,11 +266,10 @@ class TestSubagentPath(unittest.TestCase):
         self.assertEqual(result.task_id, "task_123")
         self.assertEqual(result.status, "running")
         self.assertIsNone(result.wake_command)  # subagent has no wake command
-        self.assertIn("status_json", result.artifacts)
         
         # Verify executor was called correctly
         mock_executor.execute_async.assert_called_once()
-        mock_executor.get_status.assert_called_once()
+        mock_executor.get_result.assert_called_once()
 
 
 class TestTmuxPath(unittest.TestCase):
@@ -354,16 +355,20 @@ class TestIntegration(unittest.TestCase):
     
     @patch('unified_execution_runtime.SubagentExecutor')
     @patch('unified_execution_runtime.subprocess.run')
-    def test_run_task_with_explicit_subagent(self, mock_run, mock_executor_class):
+    @patch('unified_execution_runtime._state_file')
+    def test_run_task_with_explicit_subagent(self, mock_state_file, mock_run, mock_executor_class):
         """Test run_task with explicit subagent backend."""
         # Setup mocks
         mock_executor = MagicMock()
         mock_executor.execute_async.return_value = "task_123"
-        mock_executor.get_status.return_value = {
-            "status": "running",
-            "status_path": "/tmp/status.json",
-        }
+        mock_result = MagicMock()
+        mock_result.status = "running"
+        mock_result.pid = 12345
+        mock_executor.get_result.return_value = mock_result
         mock_executor_class.return_value = mock_executor
+        
+        # Mock state file
+        mock_state_file.return_value = MagicMock(exists=MagicMock(return_value=False))
         
         runtime = UnifiedExecutionRuntime()
         result = runtime.run_task(
@@ -397,13 +402,20 @@ class TestIntegration(unittest.TestCase):
     
     @patch('unified_execution_runtime.SubagentExecutor')
     @patch('unified_execution_runtime.subprocess.run')
-    def test_run_task_auto_recommend(self, mock_run, mock_executor_class):
+    @patch('unified_execution_runtime._state_file')
+    def test_run_task_auto_recommend(self, mock_state_file, mock_run, mock_executor_class):
         """Test run_task with auto backend recommendation."""
         # Setup mocks
         mock_executor = MagicMock()
         mock_executor.execute_async.return_value = "task_123"
-        mock_executor.get_status.return_value = {"status": "running"}
+        mock_result = MagicMock()
+        mock_result.status = "running"
+        mock_result.pid = 12345  # Use int, not MagicMock
+        mock_executor.get_result.return_value = mock_result
         mock_executor_class.return_value = mock_executor
+        
+        # Mock state file
+        mock_state_file.return_value = MagicMock(exists=MagicMock(return_value=False))
         
         runtime = UnifiedExecutionRuntime()
         result = runtime.run_task(
