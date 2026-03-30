@@ -222,6 +222,162 @@ If your scenario is callback-driven (like trading or channel roundtable):
 
 ---
 
+## 🚀 Unified Execution Runtime (NEW)
+
+> **P0-3 Batch 8 (2026-03-30)**: Single entry point for task execution — automatic backend selection (tmux/subagent) with full automation.
+
+### One-Liner for Other Agents
+
+```python
+from unified_execution_runtime import run_task
+
+result = run_task(
+    task_description="重构认证模块，预计 1 小时",
+    workdir="/path/to/workdir",
+)
+print(f"Backend: {result.backend}, Session: {result.session_id}")
+print(f"Wake: {result.wake_command}")  # tmux only
+```
+
+### Python API
+
+```python
+from unified_execution_runtime import UnifiedExecutionRuntime, TaskContext
+
+runtime = UnifiedExecutionRuntime()
+
+# Auto recommend backend (subagent for short tasks, tmux for long/monitoring)
+result = runtime.run_task(
+    task_description="重构认证模块，预计 1 小时",
+    workdir="/path/to/workdir",
+    estimated_duration_minutes=60,
+)
+
+# Explicit backend preference (overrides auto recommendation)
+result = runtime.run_task(
+    task_description="写 README 文档",
+    workdir="/path/to/workdir",
+    backend_preference="subagent",  # or "tmux"
+)
+
+# Full context
+context = TaskContext(
+    task_description="调试 bug，需要监控中间过程",
+    workdir=Path("/path/to/workdir"),
+    estimated_duration_minutes=45,
+    task_type="coding",
+    requires_monitoring=True,
+    metadata={"scenario": "trading_roundtable_phase1"},
+)
+result = runtime.run_task(context)
+
+# Access result
+print(f"Task ID: {result.task_id}")
+print(f"Dispatch ID: {result.dispatch_id}")
+print(f"Backend: {result.backend}")  # "subagent" or "tmux"
+print(f"Session: {result.session_id}")
+print(f"Status: {result.status}")
+print(f"Callback: {result.callback_path}")
+if result.wake_command:
+    print(f"Wake Command: {result.wake_command}")
+print(f"Backend Selection: {result.backend_selection}")
+```
+
+### CLI Entry
+
+```bash
+# Auto recommend backend
+python3 runtime/orchestrator/run_task.py \
+  --task "重构认证模块" \
+  --workdir /path/to/workdir
+
+# Explicit backend
+python3 runtime/orchestrator/run_task.py \
+  --task "写 README 文档" \
+  --backend subagent \
+  --workdir /path/to/workdir
+
+# JSON output (for scripting)
+python3 runtime/orchestrator/run_task.py \
+  --task "..." \
+  --output json \
+  --workdir /path/to/workdir
+
+# With metadata
+python3 runtime/orchestrator/run_task.py \
+  --task "..." \
+  --workdir /path/to/workdir \
+  --metadata '{"scenario":"trading"}'
+```
+
+### What It Does
+
+| Step | subagent Path | tmux Path |
+|------|--------------|-----------|
+| **Backend Decision** | Explicit preference or auto recommend | Explicit preference or auto recommend |
+| **Start** | `SubagentExecutor.execute_async()` | `start-tmux-task.sh` |
+| **Observability** | Runner artifacts (status.json) | `sync-tmux-observability.py` |
+| **Initial Sync** | Runner status poll | `status-tmux-task.sh` |
+| **Callback/Wake** | Callback path | Callback path + wake command |
+| **Return** | `ExecutionResult` | `ExecutionResult` |
+
+### Backend Selection Logic
+
+```
+Task → Explicit backend_preference? → Yes → Use it
+                  ↓ No
+         backend_selector.recommend()
+                  ↓
+    ┌─────────────┴─────────────┐
+    │                           │
+Long task (>30min)          Short task (≤30min)
+Requires monitoring         Documentation
+Coding keywords             ↓
+↓                           subagent
+tmux
+```
+
+### ExecutionResult Schema
+
+```python
+{
+    "task_id": str,              # Task identifier
+    "dispatch_id": str,          # Dispatch identifier
+    "backend": "subagent|tmux",  # Backend used
+    "session_id": str,           # Session name (cc-{label} or subagent-{label})
+    "label": str,                # Task label
+    "status": str,               # pending/running/completed/failed
+    "callback_path": str,        # Path to callback artifact
+    "wake_command": str,         # Wake command (tmux only)
+    "artifacts": Dict[str, str], # Artifact paths
+    "backend_selection": {       # Backend selection metadata
+        "auto_recommended": bool,
+        "recommended_backend": str,
+        "applied_backend": str,
+        "confidence": float,
+        "reason": str,
+        "factors": Dict,
+        "explicit_override": bool,
+    },
+    "metadata": Dict,            # Additional metadata
+    "error": str,                # Error message (if failed)
+}
+```
+
+### Tests
+
+```bash
+python3 -m pytest runtime/tests/orchestrator/test_unified_execution_runtime.py -v
+# 23 passed
+```
+
+### Documentation
+
+- [Design Document](docs/design/unified_execution_runtime_design.md)
+- [Backend Selection Guide](docs/BACKEND_SELECTION_GUIDE.md)
+
+---
+
 ## Positioning vs Other Frameworks
 
 | Framework | What It Optimizes For | How We Relate |
