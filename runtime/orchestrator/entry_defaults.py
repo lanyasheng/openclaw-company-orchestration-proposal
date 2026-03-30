@@ -228,8 +228,9 @@ def _build_channel_operator_kit(*, scenario: str, owner: str, channel: Dict[str,
                 "--runtime subagent --allow-auto-dispatch false "
                 "--requester-session-key <agent:...>"
             ),
-            # P0-3 Batch 5 (2026-03-23): DEPRECATED - tmux backend is COMPAT-ONLY for legacy dispatches
-            # DO NOT USE for new development. Migrate to subagent backend.
+            # P0-3 Batch 7 (2026-03-30): DUAL-TRACK - tmux backend is FULLY SUPPORTED for interactive/observable scenarios
+            # This example is commented out by default because subagent is the DEFAULT for automation.
+            # Uncomment when tmux backend is needed for interactive debugging or live monitoring.
             # "complete_tmux": (
             #     "python3 scripts/orchestrator_dispatch_bridge.py complete "
             #     "--dispatch <dispatch.json> --task-id <task_id> --tmux-status likely_done "
@@ -300,8 +301,8 @@ def _build_onboarding_seam(
                 "callback_bridge": "scripts/orchestrator_callback_bridge.py complete",
                 "ack_guard": "orchestrator/completion_ack_guard.py",
                 "dispatch_plan": "summary -> decision -> dispatch plan",
-                # P0-3 Batch 4 (2026-03-23): subagent is PRIMARY recommended backend; tmux_bridge is COMPAT-ONLY for legacy tmux dispatches
-                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (COMPAT-ONLY; legacy tmux backend; NEW DEVELOPMENT MUST USE subagent BACKEND)",
+                # P0-3 Batch 7 (2026-03-30): DUAL-TRACK - tmux is FULLY SUPPORTED backend for interactive/observable scenarios
+                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (DUAL-TRACK: tmux backend for interactive_observable; subagent for automation)",
             },
             "current_boundary": (
                 "trading 仍是 richer specialization：默认 auto-dispatch 只对 clean PASS + truth 完整 + continuation whitelist 命中的 continuation 放开。"
@@ -336,8 +337,8 @@ def _build_onboarding_seam(
                 "callback_bridge": "scripts/orchestrator_callback_bridge.py complete",
                 "ack_guard": "orchestrator/completion_ack_guard.py",
                 "dispatch_plan": "summary -> decision -> dispatch plan",
-                # P0-3 Batch 4 (2026-03-23): subagent is PRIMARY recommended backend; tmux_bridge is COMPAT-ONLY for legacy tmux dispatches
-                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (COMPAT-ONLY; legacy tmux backend; NEW DEVELOPMENT MUST USE subagent BACKEND)",
+                # P0-3 Batch 7 (2026-03-30): DUAL-TRACK - tmux is FULLY SUPPORTED backend for interactive/observable scenarios
+                "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (DUAL-TRACK: tmux backend for interactive_observable; subagent for automation)",
             },
             "operator_kit": _build_channel_operator_kit(
                 scenario=scenario,

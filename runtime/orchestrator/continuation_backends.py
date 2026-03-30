@@ -399,7 +399,7 @@ def build_backend_plan(
     session = f"cc-{label}"
     prompt_file = Path("/tmp") / f"{session}-dispatch-ref.md"
 
-    # P0-3 Batch 5: Minimize tmux command surface - only essential commands for legacy migration
+    # P0-3 Batch 7 (2026-03-30): DUAL-TRACK - tmux backend command surface optimized for core lifecycle
     # P0-3 Batch 6: Use lifecycle config for status sets (no longer hardcoded)
     return {
         "backend": "tmux",
@@ -414,7 +414,7 @@ def build_backend_plan(
             "bridge": str(TMUX_BRIDGE_SCRIPT),
             "start_tmux_task": str(TMUX_START_SCRIPT),
             "status_tmux_task": str(TMUX_STATUS_SCRIPT),
-            # P0-3 Batch 5: monitor script retained only for legacy attach use cases (not recommended)
+            # P0-3 Batch 7: monitor script available for interactive attach use cases (tmux is FULLY SUPPORTED)
             "monitor_tmux_task": str(TMUX_MONITOR_SCRIPT),
         },
         "commands": {

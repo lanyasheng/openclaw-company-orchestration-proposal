@@ -586,16 +586,20 @@ python3 runtime/tests/orchestrator/test_issue_lane_schemas.py
 - ✅ **技术债务收口**: `docs/technical-debt-2026-03-22.md` 已创建
 - ✅ **P0-3 Batches 1-6**: Legacy cleanup completed (2026-03-23)
 - ✅ **P0-3 Final**: **Dual-track backend strategy** (subagent + tmux) - both backends retained indefinitely (2026-03-23)
+- ✅ **P0-3 Batch 7**: **Backend Selector Integration** - auto-recommend backend based on task characteristics; tmux upgraded to first-class citizen (2026-03-30)
 - ✅ **仓库收敛改造**: README/README.zh 重写为单入口;根目录报告/测试文件归位 (2026-03-24)
 - ✅ **架构健康度审查**: [`reports/ARCHITECTURE_HEALTH_REPORT_2026-03-24.md`](reports/ARCHITECTURE_HEALTH_REPORT_2026-03-24.md) (95/100 健康)
 - ⚠️ **CLI Integration**: 当前优先 mock Python API call,OpenClaw CLI 集成需确认 `openclaw sessions_spawn` 命令
 - ⚠️ **Auto-trigger 配置**: 使用本地 JSON 文件,缺少版本控制(见 technical debt D5)
 - ❌ 不等于"全域全自动无人续跑"
 
-**Dual-Track Backend Strategy**:
+**Dual-Track Backend Strategy (P0-3 Batch 7, 2026-03-30)**:
 - **subagent**: DEFAULT backend for automated execution, CI/CD, new development
-- **tmux**: FULLY SUPPORTED backend for interactive sessions, manual observation
+- **tmux**: **FIRST-CLASS CITIZEN** backend for interactive sessions, manual observation, live monitoring
+- **Backend Selector**: Auto-recommends backend based on task characteristics (duration, monitoring needs, task type)
+- **Explicit override**: User-specified `backend_preference` always takes precedence over auto-recommendation
 - **Both backends coexist** - no breaking removal planned
+- **Documentation**: See [`docs/BACKEND_SELECTION_GUIDE.md`](BACKEND_SELECTION_GUIDE.md)
 
 ### 7.4 V5 闭环验证(2026-03-22)
 

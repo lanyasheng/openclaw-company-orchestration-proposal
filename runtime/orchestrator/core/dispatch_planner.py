@@ -45,6 +45,9 @@ from core.handoff_schema import PlanningHandoff, build_planning_handoff
 # P0-1 Batch 1: 导入 planning default
 from planning_default import PlanningArtifact, build_planning_artifact, merge_planning_into_dispatch
 
+# P0-3 Batch 7 (2026-03-30): 导入 backend_selector 用于自动推荐
+from backend_selector import recommend_backend as auto_recommend_backend
+
 
 class DispatchBackend(str, Enum):
     """调度后端类型"""
@@ -346,6 +349,63 @@ class DispatchPlanner:
         # 获取超时策略
         timeout_policy = self.get_timeout_policy(backend)
         
+        # 提前提取 decision_metadata 和 orchestration_contract（用于 backend_selector）
+        decision_metadata = decision.get("metadata", {}) if isinstance(decision.get("metadata"), dict) else {}
+        orchestration_contract = decision_metadata.get("orchestration_contract", {})
+        
+        # P0-3 Batch 7 (2026-03-30): Backend Selector 自动推荐
+        # 当 backend 为默认值 (SUBAGENT) 且无显式 backend_preference 时，调用 backend_selector 推荐
+        backend_selection_metadata: Dict[str, Any] = {}
+        has_explicit_backend_preference = (
+            orchestration_contract.get("backend_preference") is not None or
+            decision_metadata.get("backend_preference") is not None
+        )
+        
+        if backend == DispatchBackend.SUBAGENT and not has_explicit_backend_preference:
+            # 从 continuation 和 decision 提取任务特征
+            task_preview = continuation.get("task_preview", "") or decision.get("reason", "")
+            estimated_duration = None
+            requires_monitoring = None
+            
+            # 从 metadata 提取时长估计
+            if isinstance(decision.get("metadata"), dict):
+                meta = decision["metadata"]
+                estimated_duration = meta.get("estimated_duration_minutes")
+                requires_monitoring = meta.get("requires_monitoring")
+            
+            # 调用 backend_selector 推荐
+            rec = auto_recommend_backend(
+                task_description=task_preview,
+                estimated_duration_minutes=estimated_duration,
+                requires_monitoring=requires_monitoring,
+            )
+            
+            # 应用推荐：如果推荐 tmux，则切换 backend
+            if rec.backend == "tmux":
+                backend = DispatchBackend.TMUX
+                # 重新获取 tmux 的超时策略
+                timeout_policy = self.get_timeout_policy(backend)
+            
+            # 记录推荐理由到 metadata（用于 downstream 消费和调试）
+            backend_selection_metadata = {
+                "auto_recommended": True,
+                "recommended_backend": rec.backend,
+                "applied_backend": backend.value,
+                "confidence": rec.confidence,
+                "reason": rec.reason,
+                "factors": rec.factors,
+                "explicit_override": False,
+            }
+        elif has_explicit_backend_preference:
+            # 显式偏好优先，记录但不覆盖
+            explicit_pref = orchestration_contract.get("backend_preference") or decision_metadata.get("backend_preference")
+            backend_selection_metadata = {
+                "auto_recommended": False,
+                "explicit_preference": explicit_pref,
+                "applied_backend": backend.value,
+                "explicit_override": True,
+            }
+        
         # 构建后端计划
         backend_plan = self._build_backend_plan(
             backend=backend,
@@ -415,9 +475,11 @@ class DispatchPlanner:
             "backend_terminal_role": "diagnostic_only",
         }
         
-        # 构建 orchestration_contract
-        decision_metadata = decision.get("metadata", {}) if isinstance(decision.get("metadata"), dict) else {}
-        orchestration_contract = decision_metadata.get("orchestration_contract", {})
+        # P0-3 Batch 7 (2026-03-30): 将 backend_selection 合并到 orchestration_contract
+        # (decision_metadata and orchestration_contract already extracted earlier for backend_selector)
+        if backend_selection_metadata:
+            orchestration_contract = dict(orchestration_contract)  # 确保是可修改的副本
+            orchestration_contract["backend_selection"] = backend_selection_metadata
         
         # P0-1 Batch 4: 构建统一的 ContinuationContract
         # 从 continuation dict 中提取 stopped_because/next_step/next_owner

@@ -88,16 +88,16 @@ class BackendSelector:
         # 收集决策因素
         factors: Dict[str, Any] = {}
         score_tmux = 0.0
-        score_subagent = 0.5  # subagent 默认基础分
+        score_subagent = 0.3  # subagent 默认基础分（降低，让 tmux 更容易在长任务中胜出）
         
         # 因素 1: 预计时长
         if estimated_duration_minutes is not None:
             factors["estimated_duration"] = estimated_duration_minutes
             if estimated_duration_minutes > self.SHORT_TASK_THRESHOLD_MINUTES:
-                score_tmux += 0.4
+                score_tmux += 0.5  # 长任务显著倾向 tmux
                 factors["duration_factor"] = "long_task"
             else:
-                score_subagent += 0.2
+                score_subagent += 0.3
                 factors["duration_factor"] = "short_task"
         
         # 因素 2: 明确需要监控

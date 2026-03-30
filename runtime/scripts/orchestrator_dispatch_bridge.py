@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-P0-3 Batch 4 (2026-03-23): LEGACY COMPATIBILITY BRIDGE SCRIPT
+P0-3 Batch 7 (2026-03-30): DUAL-TRACK DISPATCH BRIDGE SCRIPT
 
 BACKEND POLICY:
-- subagent backend: PRIMARY AND DEFAULT recommended backend for ALL new development
-- tmux backend: COMPATIBILITY-ONLY legacy path for EXISTING production dispatches
+- subagent backend: DEFAULT backend for automation, CI/CD, non-interactive execution
+- tmux backend: FULLY SUPPORTED backend for interactive sessions, manual observation, live monitoring
 
-This script provides tmux-specific dispatch bridge commands for backward compatibility ONLY.
-DO NOT USE for new development. Migrate existing tmux dispatches to subagent backend.
+This script provides tmux-specific dispatch bridge commands for the tmux backend path.
+Both backends are一等公民 (first-class citizens) with different use cases.
 
-Primary live path (2026-03-23): subagent backend with runner-based execution.
+Primary paths (2026-03-30):
+- subagent backend: DEFAULT for automation (sessions_spawn + runner-based observation)
+- tmux backend: FULLY SUPPORTED for interactive_observable scenarios (tmux sessions + callback bridge)
 
-Retained for:
-- Existing tmux-based dispatches in production (migration pending)
-- Legacy observable session use cases (prefer subagent + runner artifacts)
+Use cases:
+- Automation / CI/CD / batch processing → subagent backend
+- Interactive debugging / live monitoring / manual observation → tmux backend
 
 Commands:
 - prepare: Prepare dispatch plan reference document
@@ -21,19 +23,16 @@ Commands:
 - status: Query tmux session status
 - receipt: Build terminal receipt from tmux status
 - complete: Complete dispatch and bridge to callback (critical path)
-- capture: Capture tmux pane output (P0-3 Batch 3: deprecated; low usage)
-- attach: Attach to tmux session (P0-3 Batch 3: deprecated; low usage)
+- capture: Capture tmux pane output (optional; for detailed observation)
+- attach: Attach to tmux session (optional; for interactive debugging)
 - watchdog: Evaluate timeout/stuck policy (internal use only)
-- describe: Describe dispatch plan (P0-3 Batch 3: deprecated; debug only)
+- describe: Describe dispatch plan (optional; for debugging)
 
-Note: This bridge only supports tmux backend. For subagent backend,
+Note: This bridge supports tmux backend. For subagent backend,
 use sessions_spawn directly with runner-based observation.
 
-P0-3 Batch 3 (2026-03-23): Commands `describe`, `capture`, `attach` are marked
-as deprecated due to low usage. They are retained for backward compatibility
-but new development should prefer runner-based observation via subagent backend.
-
-P0-3 Batch 4 (2026-03-23): Strengthened deprecation; tmux is COMPAT-ONLY.
+P0-3 Batch 7 (2026-03-30): DUAL-TRACK - Both backends are一等公民 (first-class citizens).
+Commands `describe`, `capture`, `attach` are optional utilities for tmux interactive scenarios.
 """
 from __future__ import annotations
 
