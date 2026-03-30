@@ -1,0 +1,60 @@
+{
+  "validation_version": "trading_live_validation_v1",
+  "validation_timestamp": "2026-03-30T23:52:38+08:00",
+  "entry_point": "runtime/scripts/trading_live_validation.py",
+  "linkage": {
+    "execution_id": "live_exec_20260330235237",
+    "receipt_id": "receipt_c49a0333d959",
+    "request_id": "req_8ed8eef12f1d",
+    "consumed_id": "consumed_19920ba57c02",
+    "api_execution_id": "exec_api_547f7f0d1de7"
+  },
+  "artifacts": {
+    "execution": {
+      "id": "live_exec_20260330235237",
+      "path": "/Users/study/.openclaw/shared-context/spawn_executions/live_exec_20260330235237.json",
+      "exists": true,
+      "status": "started"
+    },
+    "receipt": {
+      "id": "receipt_c49a0333d959",
+      "path": "/Users/study/.openclaw/shared-context/completion_receipts/receipt_c49a0333d959.json",
+      "exists": true,
+      "status": "completed"
+    },
+    "request": {
+      "id": "req_8ed8eef12f1d",
+      "path": "/Users/study/.openclaw/shared-context/spawn_requests/req_8ed8eef12f1d.json",
+      "exists": true,
+      "status": "prepared",
+      "scenario": "trading_roundtable_phase1"
+    },
+    "consumed": {
+      "id": "consumed_19920ba57c02",
+      "path": "/Users/study/.openclaw/shared-context/bridge_consumed/consumed_19920ba57c02.json",
+      "exists": true
+    },
+    "api_execution": {
+      "id": "exec_api_547f7f0d1de7",
+      "path": "/Users/study/.openclaw/shared-context/api_executions/exec_api_547f7f0d1de7.json",
+      "exists": true,
+      "status": "started",
+      "reason": "API call successful",
+      "childSessionKey": "task_8ed8eef12f1d",
+      "runId": "task_8ed8eef12f1d"
+    }
+  },
+  "validation_result": {
+    "full_pass": true,
+    "stop_at_gate": false,
+    "linkage_complete": true,
+    "all_artifacts_exist": true
+  },
+  "configuration": {
+    "auto_trigger_enabled": true,
+    "allowlist": [
+      "trading_roundtable_phase1"
+    ],
+    "require_manual_approval": false
+  }
+}
