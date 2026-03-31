@@ -33,10 +33,12 @@ from subagent_executor import (
     SubagentStatus,
     CleanupStatus,
     CLEANUP_COMPLETE_STATES,
+    QUEUED_TIMEOUT_SECONDS,
     execute_subagent,
     get_subagent_result,
     list_subagent_tasks,
     reconcile_dead_processes,
+    reconcile_queued_tasks,
     _filter_tools,
     _background_tasks,
     _background_tasks_lock,
@@ -44,6 +46,7 @@ from subagent_executor import (
     _pid_exists,
     _update_task_status,
     _state_file,
+    _iso_now,
 )
 
 
@@ -927,6 +930,259 @@ def test_running_state_with_dead_pid_does_not_affect_completed():
     print("✓ Reconciliation 不会影响已完成的正常任务")
 
 
+def test_queued_launch_missed_state_definition():
+    """测试 queued_launch_missed 状态定义"""
+    from subagent_executor import TERMINAL_STATES
+    
+    # queued_launch_missed 应该是终端状态
+    assert "queued_launch_missed" in TERMINAL_STATES
+    print("✓ queued_launch_missed 已正确定义为终端状态")
+
+
+def test_reconcile_queued_tasks_basic():
+    """测试 reconcile_queued_tasks 基本功能"""
+    import tempfile
+    from datetime import datetime, timedelta
+    from pathlib import Path
+    
+    # 创建一个旧的 pending 任务（超过超时阈值）
+    task_id = "test_queued_old_pending"
+    old_timestamp = (datetime.now() - timedelta(seconds=QUEUED_TIMEOUT_SECONDS + 60)).isoformat()
+    
+    config = SubagentConfig(label="test-queued", runtime="subagent")
+    result = SubagentResult(
+        task_id=task_id,
+        status="pending",
+        config=config,
+        task="Test queued task",
+        metadata={
+            "registered_at": old_timestamp,
+            "spawned_at": old_timestamp,
+        },
+    )
+    
+    from subagent_executor import _persist_state
+    _persist_state(result)
+    
+    # 运行 reconciliation
+    reconciled = reconcile_queued_tasks(timeout_seconds=QUEUED_TIMEOUT_SECONDS, limit=100)
+    
+    # 应该回收到这个任务
+    reconciled_task_ids = [r["task_id"] for r in reconciled]
+    assert task_id in reconciled_task_ids, f"Task {task_id} should be reconciled"
+    
+    # 验证状态已更新为 queued_launch_missed
+    result = get_subagent_result(task_id)
+    assert result is not None
+    assert result.status == "queued_launch_missed"
+    assert result.cleanup_metadata.get("reason") == "queued_launch_handoff_failed"
+    
+    # 清理测试状态
+    state_file = Path(f"/Users/study/.openclaw/shared-context/subagent_states/{task_id}.json")
+    if state_file.exists():
+        state_file.unlink()
+    
+    print("✓ reconcile_queued_tasks 基本功能正常")
+
+
+def test_reconcile_queued_tasks_does_not_affect_recent_pending():
+    """测试 reconcile_queued_tasks 不会影响最近的 pending 任务"""
+    from datetime import datetime, timedelta
+    from pathlib import Path
+    
+    # 创建一个最近的 pending 任务（未超过超时阈值）
+    task_id = "test_queued_recent_pending"
+    recent_timestamp = (datetime.now() - timedelta(seconds=QUEUED_TIMEOUT_SECONDS - 120)).isoformat()
+    
+    config = SubagentConfig(label="test-queued-recent", runtime="subagent")
+    result = SubagentResult(
+        task_id=task_id,
+        status="pending",
+        config=config,
+        task="Test recent queued task",
+        metadata={
+            "registered_at": recent_timestamp,
+            "spawned_at": recent_timestamp,
+        },
+    )
+    
+    from subagent_executor import _persist_state
+    _persist_state(result)
+    
+    # 运行 reconciliation
+    reconciled = reconcile_queued_tasks(timeout_seconds=QUEUED_TIMEOUT_SECONDS, limit=100)
+    
+    # 不应该回收到这个任务
+    reconciled_task_ids = [r["task_id"] for r in reconciled]
+    assert task_id not in reconciled_task_ids, f"Recent task {task_id} should NOT be reconciled"
+    
+    # 验证状态仍然是 pending
+    result = get_subagent_result(task_id)
+    assert result is not None
+    assert result.status == "pending"
+    
+    # 清理测试状态
+    state_file = Path(f"/Users/study/.openclaw/shared-context/subagent_states/{task_id}.json")
+    if state_file.exists():
+        state_file.unlink()
+    
+    print("✓ reconcile_queued_tasks 不会影响最近的 pending 任务")
+
+
+def test_reconcile_queued_tasks_does_not_affect_running_with_pid():
+    """测试 reconcile_queued_tasks 不会影响有 pid 的 running 任务"""
+    from pathlib import Path
+    
+    # 创建一个有 pid 的 running 任务
+    task_id = "test_queued_running_with_pid"
+    
+    config = SubagentConfig(label="test-queued-running", runtime="subagent")
+    result = SubagentResult(
+        task_id=task_id,
+        status="running",
+        config=config,
+        task="Test running task with pid",
+        pid=12345,  # 假 pid
+        metadata={
+            "registered_at": _iso_now(),
+            "spawned_at": _iso_now(),
+        },
+    )
+    
+    from subagent_executor import _persist_state
+    _persist_state(result)
+    
+    # 运行 reconciliation
+    reconciled = reconcile_queued_tasks(timeout_seconds=QUEUED_TIMEOUT_SECONDS, limit=100)
+    
+    # 不应该回收到这个任务（因为有 pid）
+    reconciled_task_ids = [r["task_id"] for r in reconciled]
+    assert task_id not in reconciled_task_ids, f"Running task with pid {task_id} should NOT be reconciled"
+    
+    # 验证状态仍然是 running
+    result = get_subagent_result(task_id)
+    assert result is not None
+    assert result.status == "running"
+    
+    # 清理测试状态
+    state_file = Path(f"/Users/study/.openclaw/shared-context/subagent_states/{task_id}.json")
+    if state_file.exists():
+        state_file.unlink()
+    
+    print("✓ reconcile_queued_tasks 不会影响有 pid 的 running 任务")
+
+
+def test_reconcile_queued_tasks_concurrent_batch_scenario():
+    """测试并发批次场景：部分成功、部分 launch-missed 可区分"""
+    from datetime import datetime, timedelta
+    from pathlib import Path
+    
+    # 创建 4 个并发任务
+    old_timestamp = (datetime.now() - timedelta(seconds=QUEUED_TIMEOUT_SECONDS + 60)).isoformat()
+    recent_timestamp = (datetime.now() - timedelta(seconds=30)).isoformat()
+    
+    task_ids = {
+        "old_pending_1": old_timestamp,
+        "old_pending_2": old_timestamp,
+        "recent_pending_1": recent_timestamp,
+        "recent_pending_2": recent_timestamp,
+    }
+    
+    for task_id, timestamp in task_ids.items():
+        config = SubagentConfig(label=f"test-batch-{task_id}", runtime="subagent")
+        result = SubagentResult(
+            task_id=task_id,
+            status="pending",
+            config=config,
+            task=f"Test batch task {task_id}",
+            metadata={
+                "registered_at": timestamp,
+                "spawned_at": timestamp,
+            },
+        )
+        from subagent_executor import _persist_state
+        _persist_state(result)
+    
+    # 运行 reconciliation
+    reconciled = reconcile_queued_tasks(timeout_seconds=QUEUED_TIMEOUT_SECONDS, limit=100)
+    reconciled_task_ids = [r["task_id"] for r in reconciled]
+    
+    # 旧的 pending 任务应该被回收
+    assert "old_pending_1" in reconciled_task_ids
+    assert "old_pending_2" in reconciled_task_ids
+    
+    # 最近的 pending 任务不应该被回收
+    assert "recent_pending_1" not in reconciled_task_ids
+    assert "recent_pending_2" not in reconciled_task_ids
+    
+    # 验证状态
+    for task_id in ["old_pending_1", "old_pending_2"]:
+        result = get_subagent_result(task_id)
+        assert result is not None
+        assert result.status == "queued_launch_missed"
+    
+    for task_id in ["recent_pending_1", "recent_pending_2"]:
+        result = get_subagent_result(task_id)
+        assert result is not None
+        assert result.status == "pending"
+    
+    # 清理测试状态
+    for task_id in task_ids.keys():
+        state_file = Path(f"/Users/study/.openclaw/shared-context/subagent_states/{task_id}.json")
+        if state_file.exists():
+            state_file.unlink()
+    
+    print("✓ 并发批次场景：部分成功、部分 launch-missed 可区分")
+
+
+def test_queued_timeout_reconciliation_machine_readable_reason():
+    """测试 queued timeout reconciliation 提供 machine-readable reason"""
+    from datetime import datetime, timedelta
+    from pathlib import Path
+    
+    task_id = "test_queued_reason"
+    old_timestamp = (datetime.now() - timedelta(seconds=QUEUED_TIMEOUT_SECONDS + 60)).isoformat()
+    
+    config = SubagentConfig(label="test-queued-reason", runtime="subagent")
+    result = SubagentResult(
+        task_id=task_id,
+        status="pending",
+        config=config,
+        task="Test queued task with reason",
+        metadata={
+            "registered_at": old_timestamp,
+            "spawned_at": old_timestamp,
+        },
+    )
+    
+    from subagent_executor import _persist_state
+    _persist_state(result)
+    
+    # 运行 reconciliation
+    reconciled = reconcile_queued_tasks(timeout_seconds=QUEUED_TIMEOUT_SECONDS, limit=100)
+    
+    # 验证 machine-readable reason
+    assert len(reconciled) == 1
+    rec = reconciled[0]
+    assert rec["reason"] == "queued_launch_handoff_failed"
+    assert "pending_since" in rec
+    assert "timeout_seconds" in rec
+    assert "age_seconds" in rec
+    
+    # 验证 cleanup_metadata
+    result = get_subagent_result(task_id)
+    assert result is not None
+    assert result.cleanup_metadata.get("reason") == "queued_launch_handoff_failed"
+    assert result.cleanup_metadata.get("action") == "queued_launch_missed_reconciled"
+    
+    # 清理测试状态
+    state_file = Path(f"/Users/study/.openclaw/shared-context/subagent_states/{task_id}.json")
+    if state_file.exists():
+        state_file.unlink()
+    
+    print("✓ Queued timeout reconciliation 提供 machine-readable reason")
+
+
 def run_all_tests():
     """运行所有测试"""
     print("=" * 60)
@@ -969,6 +1225,13 @@ def run_all_tests():
         test_reconcile_does_not_affect_healthy_processes,
         test_terminal_states_includes_dead_process_reconciled,
         test_running_state_with_dead_pid_does_not_affect_completed,
+        # Queued Launch Missed Reconciliation 测试（本修复新增）
+        test_queued_launch_missed_state_definition,
+        test_reconcile_queued_tasks_basic,
+        test_reconcile_queued_tasks_does_not_affect_recent_pending,
+        test_reconcile_queued_tasks_does_not_affect_running_with_pid,
+        test_reconcile_queued_tasks_concurrent_batch_scenario,
+        test_queued_timeout_reconciliation_machine_readable_reason,
     ]
     
     passed = 0

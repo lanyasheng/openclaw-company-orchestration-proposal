@@ -58,10 +58,12 @@ __all__ = [
     "CleanupStatus",
     "CLEANUP_COMPLETE_STATES",
     "TERMINAL_STATES",
+    "QUEUED_TIMEOUT_SECONDS",
     "execute_subagent",
     "get_subagent_result",
     "list_subagent_tasks",
     "reconcile_dead_processes",
+    "reconcile_queued_tasks",
     "EXECUTOR_VERSION",
 ]
 
@@ -105,9 +107,19 @@ def _count_system_claude_processes() -> int:
 
 # ============ 状态定义 ============
 
-SubagentStatus = Literal["pending", "running", "completed", "failed", "timed_out", "cancelled", "dead_process_reconciled"]
+SubagentStatus = Literal[
+    "pending", "running", "completed", "failed", "timed_out", "cancelled",
+    "dead_process_reconciled", "queued_launch_missed"
+]
 
-TERMINAL_STATES = {"completed", "failed", "timed_out", "cancelled", "dead_process_reconciled"}
+TERMINAL_STATES = {
+    "completed", "failed", "timed_out", "cancelled",
+    "dead_process_reconciled", "queued_launch_missed"
+}
+
+# P0-Hotfix (2026-03-31): Queued launch timeout threshold
+# Tasks stuck in pending state for longer than this will be reconciled to queued_launch_missed
+QUEUED_TIMEOUT_SECONDS = int(os.environ.get("OPENCLAW_QUEUED_TIMEOUT_SECONDS", "300"))  # Default: 5 minutes
 
 # ============ Cleanup 状态定义 ============
 
@@ -561,15 +573,24 @@ class SubagentExecutor:
             global _active_subagent_count
             _active_subagent_count += 1
         
+        # P0-Hotfix (2026-03-31): Record registration timestamp for queued timeout reconciliation
+        registered_at = _iso_now()
+        
         result = SubagentResult(
             task_id=task_id, status="pending", config=self.config, task=task,
             metadata={
                 "executor_version": EXECUTOR_VERSION,
                 "allowed_tools": self.allowed_tools,
                 "spawn_depth": _get_current_spawn_depth() if not BYPASS_FORK_GUARD else 0,
+                "registered_at": registered_at,
+                "spawned_at": registered_at,  # Alias for compatibility with orchestration_runtime
             },
         )
         _register_task(result)
+        
+        # P0-Hotfix (2026-03-31): Launch confirmation
+        # _start_subagent_process will update status to "running" on success or "failed" on error
+        # If neither happens within QUEUED_TIMEOUT_SECONDS, reconcile_queued_tasks will recover
         self._start_subagent_process(task_id, task)
         
         return task_id
@@ -1147,6 +1168,125 @@ def reconcile_dead_processes(
     return reconciled
 
 
+def reconcile_queued_tasks(
+    *,
+    status_filter: Optional[SubagentStatus] = "pending",
+    timeout_seconds: Optional[int] = None,
+    limit: int = 1000,
+) -> List[Dict[str, Any]]:
+    """
+    批量回收长时间停留在 pending 状态的任务（queued→launch handoff 失败）。
+    
+    P0-Hotfix (2026-03-31): 修复并发 leaf tasks 在 queued→launch handoff 阶段丢失的问题。
+    
+    扫描所有状态为 pending 的任务，检查是否超过 QUEUED_TIMEOUT_SECONDS。
+    如果任务在 pending 状态停留时间超过阈值且没有 pid，
+    将状态更新为 queued_launch_missed。
+    
+    Args:
+        status_filter: 状态过滤（默认只检查 pending）
+        timeout_seconds: 超时阈值（秒），默认使用 QUEUED_TIMEOUT_SECONDS（300 秒=5 分钟）
+        limit: 最大检查数量
+    
+    Returns:
+        被回收的任务列表，每个元素包含：
+        - task_id: 任务 ID
+        - pending_since: 任务进入 pending 状态的时间
+        - timeout_seconds: 使用的超时阈值
+        - age_seconds: 任务在 pending 状态停留的时间
+        - reconciled_at: 回收时间
+        - reason: 回收原因（machine-readable）
+    
+    使用场景：
+    - 定期 cron job 清理 orphan tasks
+    - roundtable / dashboard 启动时检查
+    - 用户报告"并发任务全失败"时手动触发
+    
+    验收标准：
+    1. queued task 正常 launch → 不被误回收（有 pid 的任务跳过）
+    2. queued task 长时间无 launch/status/callback → 回收成明确终态
+    3. 并发批次中部分任务成功、部分 launch-missed → 状态可区分
+    """
+    timeout_seconds = timeout_seconds or QUEUED_TIMEOUT_SECONDS
+    reconciled = []
+    now = datetime.now()
+    
+    tasks = list_subagent_tasks(status=status_filter, limit=limit)
+    
+    for task in tasks:
+        # 只处理 pending 状态且没有 pid 的任务
+        # 有 pid 说明已经成功启动进程，不应该被回收
+        if task.status != "pending" or task.pid:
+            continue
+        
+        # 计算任务在 pending 状态停留的时间
+        # 优先使用 created_at（任务注册时间），回退到 metadata 中的 spawned_at
+        pending_since_str = (
+            task.metadata.get("spawned_at") or
+            task.metadata.get("registered_at") or
+            (task.to_dict().get("created_at") if hasattr(task, 'to_dict') else None)
+        )
+        
+        if not pending_since_str:
+            # 没有时间戳，跳过（避免误回收）
+            continue
+        
+        try:
+            # 解析时间戳
+            pending_since_str = str(pending_since_str).replace('Z', '+00:00')
+            pending_since = datetime.fromisoformat(pending_since_str)
+            
+            # 处理时区问题
+            if pending_since.tzinfo is None:
+                pending_since = pending_since.replace(tzinfo=now.tzinfo)
+            
+            age_seconds = (now - pending_since).total_seconds()
+        except (ValueError, TypeError) as e:
+            # 时间戳解析失败，跳过
+            continue
+        
+        # 检查是否超时
+        if age_seconds < timeout_seconds:
+            continue
+        
+        # 回收到 queued_launch_missed 状态
+        # 这是 machine-readable 的失败原因，表示 queued→launch handoff 失败
+        _update_task_status(
+            task.task_id,
+            "queued_launch_missed",
+            error=(
+                f"Task stuck in pending state for {age_seconds:.0f}s (threshold={timeout_seconds}s). "
+                f"Queued→launch handoff failed. No process was started."
+            ),
+            cleanup_status="session_cleaned",
+            cleanup_metadata={
+                "action": "queued_launch_missed_reconciled",
+                "pending_since": pending_since_str,
+                "timeout_seconds": timeout_seconds,
+                "age_seconds": round(age_seconds, 2),
+                "reconciled_at": _iso_now(),
+                "reason": "queued_launch_handoff_failed",
+                "reconciliation_batch": True,
+                "missing_signals": {
+                    "pid": task.pid is None,
+                    "status_file": not _state_file(task.task_id).exists() if not task.pid else False,
+                },
+            },
+        )
+        
+        reconciled.append({
+            "task_id": task.task_id,
+            "pending_since": pending_since_str,
+            "timeout_seconds": timeout_seconds,
+            "age_seconds": round(age_seconds, 2),
+            "reconciled_at": _iso_now(),
+            "label": task.config.label,
+            "reason": "queued_launch_handoff_failed",
+        })
+    
+    return reconciled
+
+
 # ============ CLI 入口 ============
 
 if __name__ == "__main__":
@@ -1156,6 +1296,7 @@ if __name__ == "__main__":
         print("  python subagent_executor.py get <task_id>")
         print("  python subagent_executor.py list [--status <status>]")
         print("  python subagent_executor.py reconcile [--limit 1000]")
+        print("  python subagent_executor.py reconcile-queued [--timeout 300] [--limit 1000]")
         sys.exit(1)
     
     cmd = sys.argv[1]
@@ -1207,6 +1348,25 @@ if __name__ == "__main__":
         reconciled = reconcile_dead_processes(limit=limit)
         print(json.dumps({
             "reconciled_count": len(reconciled),
+            "reconciled_tasks": reconciled,
+        }, indent=2))
+    
+    elif cmd == "reconcile-queued":
+        timeout = QUEUED_TIMEOUT_SECONDS
+        limit = 1000
+        if "--timeout" in sys.argv:
+            idx = sys.argv.index("--timeout")
+            if idx + 1 < len(sys.argv):
+                timeout = int(sys.argv[idx + 1])
+        if "--limit" in sys.argv:
+            idx = sys.argv.index("--limit")
+            if idx + 1 < len(sys.argv):
+                limit = int(sys.argv[idx + 1])
+        
+        reconciled = reconcile_queued_tasks(timeout_seconds=timeout, limit=limit)
+        print(json.dumps({
+            "reconciled_count": len(reconciled),
+            "timeout_seconds": timeout,
             "reconciled_tasks": reconciled,
         }, indent=2))
     
