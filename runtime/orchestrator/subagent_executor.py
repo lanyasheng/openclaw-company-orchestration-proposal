@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -60,6 +61,7 @@ __all__ = [
     "execute_subagent",
     "get_subagent_result",
     "list_subagent_tasks",
+    "reconcile_dead_processes",
     "EXECUTOR_VERSION",
 ]
 
@@ -103,9 +105,9 @@ def _count_system_claude_processes() -> int:
 
 # ============ 状态定义 ============
 
-SubagentStatus = Literal["pending", "running", "completed", "failed", "timed_out", "cancelled"]
+SubagentStatus = Literal["pending", "running", "completed", "failed", "timed_out", "cancelled", "dead_process_reconciled"]
 
-TERMINAL_STATES = {"completed", "failed", "timed_out", "cancelled"}
+TERMINAL_STATES = {"completed", "failed", "timed_out", "cancelled", "dead_process_reconciled"}
 
 # ============ Cleanup 状态定义 ============
 
@@ -267,6 +269,23 @@ def _iso_now() -> str:
     return datetime.now().isoformat()
 
 
+def _pid_exists(pid: int) -> bool:
+    """
+    检查进程是否存在。
+    
+    Args:
+        pid: 进程 ID
+    
+    Returns:
+        True 如果进程存在
+    """
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
 def _persist_state(result: SubagentResult):
     """持久化状态到文件"""
     _ensure_state_dir()
@@ -299,9 +318,16 @@ def _register_task(result: SubagentResult):
 
 
 def _update_task_status(task_id: str, status: SubagentStatus, **kwargs):
-    """更新任务状态"""
+    """更新任务状态（内存缓存 + 文件持久化）"""
     with _background_tasks_lock:
         result = _background_tasks.get(task_id)
+        
+        # 如果不在内存缓存中，尝试从文件加载
+        if not result:
+            result = _load_state(task_id)
+            if result:
+                _background_tasks[task_id] = result
+        
         if result:
             result.status = status
             if status == "running" and not result.started_at:
@@ -731,7 +757,11 @@ class SubagentExecutor:
     
     def get_result(self, task_id: str) -> Optional[SubagentResult]:
         """
-        获取任务结果（带超时自动检查 + cleanup）。
+        获取任务结果（带超时自动检查 + dead process reconciliation）。
+        
+        检测逻辑：
+        1. 超时检查：如果 started_at 存在且超过 timeout_seconds，标记为 timed_out
+        2. Dead process 检查：如果状态是 running 但 pid 不存在，标记为 dead_process_reconciled
         
         Args:
             task_id: 任务 ID
@@ -743,7 +773,11 @@ class SubagentExecutor:
         if not result:
             return None
         
-        # 超时自动检查（Batch F 增强）
+        # 只对非终端状态进行检测
+        if result.status in TERMINAL_STATES:
+            return result
+        
+        # 1. 超时自动检查（Batch F 增强）
         if result.status == "running" and result.started_at:
             if self._is_timed_out(result):
                 _update_task_status(
@@ -754,6 +788,25 @@ class SubagentExecutor:
                 # 超时自动 cleanup（杀死进程组）
                 if result.pid:
                     self._kill_process_group(result)
+                result = _get_task(task_id)
+                return result
+        
+        # 2. Dead process reconciliation（本修复新增）
+        # 如果状态是 running 但 pid 不存在，说明进程已死但状态未更新
+        if result.status == "running" and result.pid:
+            if not _pid_exists(result.pid):
+                _update_task_status(
+                    task_id,
+                    "dead_process_reconciled",
+                    error=f"Process {result.pid} no longer exists, but state was still 'running'. Reconciled to terminal state.",
+                    cleanup_status="session_cleaned",
+                    cleanup_metadata={
+                        "action": "dead_process_reconciled",
+                        "dead_pid": result.pid,
+                        "reconciled_at": _iso_now(),
+                        "reason": "pid_not_found",
+                    },
+                )
                 result = _get_task(task_id)
         
         return result
@@ -1030,6 +1083,70 @@ def list_subagent_tasks(
     return tasks[:limit]
 
 
+def reconcile_dead_processes(
+    *,
+    status_filter: Optional[SubagentStatus] = "running",
+    limit: int = 1000,
+) -> List[Dict[str, Any]]:
+    """
+    批量回收已死进程的任务（orphan reconciliation）。
+    
+    扫描所有状态为 running 的任务，检查 pid 是否存在。
+    如果 pid 不存在，将状态更新为 dead_process_reconciled。
+    
+    Args:
+        status_filter: 状态过滤（默认只检查 running）
+        limit: 最大检查数量
+    
+    Returns:
+        被回收的任务列表，每个元素包含：
+        - task_id: 任务 ID
+        - dead_pid: 已死的进程 ID
+        - started_at: 任务开始时间
+        - reconciled_at: 回收时间
+    
+    使用场景：
+    - 定期 cron job 清理 orphan tasks
+    - roundtable / dashboard 启动时检查
+    - 用户报告"假派发卡死"时手动触发
+    """
+    reconciled = []
+    
+    tasks = list_subagent_tasks(status=status_filter, limit=limit)
+    
+    for task in tasks:
+        # 只处理有 pid 的 running 任务
+        if task.status != "running" or not task.pid:
+            continue
+        
+        # 检查 pid 是否存在
+        if not _pid_exists(task.pid):
+            # 更新状态为 dead_process_reconciled
+            _update_task_status(
+                task.task_id,
+                "dead_process_reconciled",
+                error=f"Process {task.pid} no longer exists. Reconciled by batch reconciliation.",
+                cleanup_status="session_cleaned",
+                cleanup_metadata={
+                    "action": "dead_process_reconciled",
+                    "dead_pid": task.pid,
+                    "reconciled_at": _iso_now(),
+                    "reason": "pid_not_found",
+                    "reconciliation_batch": True,
+                },
+            )
+            
+            reconciled.append({
+                "task_id": task.task_id,
+                "dead_pid": task.pid,
+                "started_at": task.started_at,
+                "reconciled_at": _iso_now(),
+                "label": task.config.label,
+            })
+    
+    return reconciled
+
+
 # ============ CLI 入口 ============
 
 if __name__ == "__main__":
@@ -1038,6 +1155,7 @@ if __name__ == "__main__":
         print("  python subagent_executor.py execute <task> [label]")
         print("  python subagent_executor.py get <task_id>")
         print("  python subagent_executor.py list [--status <status>]")
+        print("  python subagent_executor.py reconcile [--limit 1000]")
         sys.exit(1)
     
     cmd = sys.argv[1]
@@ -1078,6 +1196,19 @@ if __name__ == "__main__":
         
         tasks = list_subagent_tasks(status=status)
         print(json.dumps([t.to_dict() for t in tasks], indent=2))
+    
+    elif cmd == "reconcile":
+        limit = 1000
+        if "--limit" in sys.argv:
+            idx = sys.argv.index("--limit")
+            if idx + 1 < len(sys.argv):
+                limit = int(sys.argv[idx + 1])
+        
+        reconciled = reconcile_dead_processes(limit=limit)
+        print(json.dumps({
+            "reconciled_count": len(reconciled),
+            "reconciled_tasks": reconciled,
+        }, indent=2))
     
     else:
         print(f"Unknown command: {cmd}")

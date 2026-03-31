@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 # 添加 runtime/orchestrator 到路径
@@ -35,10 +36,14 @@ from subagent_executor import (
     execute_subagent,
     get_subagent_result,
     list_subagent_tasks,
+    reconcile_dead_processes,
     _filter_tools,
     _background_tasks,
     _background_tasks_lock,
     TERMINAL_STATES,
+    _pid_exists,
+    _update_task_status,
+    _state_file,
 )
 
 
@@ -694,6 +699,234 @@ def test_ui_cleanup_unknown_modeling():
     print("✓ UI 清理状态显式建模正常")
 
 
+# ========== Dead Process Reconciliation 测试（本修复新增） ==========
+
+
+def test_pid_exists_function():
+    """测试 _pid_exists 函数"""
+    import os
+    
+    # 当前进程应该存在
+    assert _pid_exists(os.getpid()) is True
+    
+    # 一个不存在的 PID（使用一个非常大的数字）
+    assert _pid_exists(999999999) is False
+    
+    print("✓ _pid_exists 函数正常")
+
+
+def test_dead_process_reconciliation_in_get_result():
+    """测试 get_result 中的 dead process reconciliation 逻辑"""
+    import json
+    import uuid
+    from datetime import datetime
+    
+    # 直接创建状态文件，不使用 execute_async（避免缓存问题）
+    task_id = f"test_dead_pid_{uuid.uuid4().hex[:8]}"
+    state_path = _state_file(task_id)
+    
+    # 创建测试状态（模拟 running + dead pid）
+    # 使用最近的 started_at 避免触发超时处理
+    data = {
+        "executor_version": "subagent_executor_v1",
+        "task_id": task_id,
+        "status": "running",
+        "config": {"label": "test-dead-pid", "runtime": "subagent", "timeout_seconds": 900},
+        "task": "Test dead pid reconciliation",
+        "pid": 999999999,
+        "pgid": 999999999,
+        "started_at": datetime.now().isoformat(),  # 使用当前时间，避免超时
+        "cleanup_status": None,
+        "cleanup_metadata": {},
+        "metadata": {},
+    }
+    
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(state_path, "w") as f:
+        json.dump(data, f, indent=2)
+    
+    # 确保缓存中没有这个任务
+    with _background_tasks_lock:
+        if task_id in _background_tasks:
+            del _background_tasks[task_id]
+    
+    # 创建 executor（不启动进程）
+    config = SubagentConfig(label="test-dead-pid", runtime="subagent", timeout_seconds=900)
+    executor = SubagentExecutor(config, cwd="/tmp")
+    
+    # get_result 应该检测到 dead pid 并更新状态
+    result = executor.get_result(task_id)
+    
+    # 验证结果
+    if result is None:
+        raise AssertionError("result is None")
+    if result.status != "dead_process_reconciled":
+        raise AssertionError(f"Expected status 'dead_process_reconciled', got '{result.status}', pid={result.pid}")
+    
+    assert result.cleanup_status == "session_cleaned"
+    assert result.cleanup_metadata.get("action") == "dead_process_reconciled"
+    assert result.cleanup_metadata.get("dead_pid") == 999999999
+    assert result.cleanup_metadata.get("reason") == "pid_not_found"
+    
+    # 清理测试文件
+    state_path.unlink()
+    
+    print("✓ Dead process reconciliation in get_result 正常")
+
+
+def test_reconcile_dead_processes_function():
+    """测试 reconcile_dead_processes 批量回收函数"""
+    import json
+    import uuid
+    
+    # 创建几个模拟的 running 任务，使用不存在的 pid
+    test_task_ids = []
+    for i in range(3):
+        task_id = f"test_reconcile_{uuid.uuid4().hex[:8]}"
+        test_task_ids.append(task_id)
+        
+        # 直接创建状态文件
+        data = {
+            "executor_version": "subagent_executor_v1",
+            "task_id": task_id,
+            "status": "running",
+            "config": {"label": f"test-reconcile-{i}", "runtime": "subagent", "timeout_seconds": 900},
+            "task": f"Test reconcile {i}",
+            "pid": 999999990 + i,  # 不存在的 pid
+            "pgid": 999999990 + i,
+            "started_at": datetime.now().isoformat(),
+            "cleanup_status": None,
+            "cleanup_metadata": {},
+            "metadata": {},
+        }
+        
+        state_path = _state_file(task_id)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(state_path, "w") as f:
+            json.dump(data, f, indent=2)
+    
+    # 确保缓存中没有这些任务
+    with _background_tasks_lock:
+        for task_id in test_task_ids:
+            if task_id in _background_tasks:
+                del _background_tasks[task_id]
+    
+    # 运行 reconciliation（只检查我们创建的任务）
+    reconciled = reconcile_dead_processes(limit=100)
+    
+    # 验证我们创建的任务都被回收了
+    reconciled_task_ids = [r["task_id"] for r in reconciled]
+    for task_id in test_task_ids:
+        assert task_id in reconciled_task_ids, f"Task {task_id} not in reconciled list"
+    
+    # 验证状态已更新
+    for task_id in test_task_ids:
+        result = get_subagent_result(task_id)
+        assert result is not None, f"Result is None for {task_id}"
+        assert result.status == "dead_process_reconciled", f"Status not updated: {result.status}"
+    
+    # 清理测试文件
+    for task_id in test_task_ids:
+        state_path = _state_file(task_id)
+        if state_path.exists():
+            state_path.unlink()
+    
+    print(f"✓ reconcile_dead_processes 批量回收正常 (reconciled {len([t for t in reconciled if t['task_id'] in test_task_ids])} test tasks)")
+
+
+def test_reconcile_does_not_affect_healthy_processes():
+    """测试 reconciliation 不会误杀健康运行的进程"""
+    import os
+    import json
+    import uuid
+    
+    # 创建一个使用真实 pid 的任务（当前进程）
+    task_id = f"test_healthy_{uuid.uuid4().hex[:8]}"
+    
+    config = SubagentConfig(label="test-healthy", runtime="subagent")
+    result = SubagentResult(
+        task_id=task_id,
+        status="running",
+        config=config,
+        task="Test healthy process",
+        pid=os.getpid(),  # 使用当前进程 pid（存在）
+        pgid=os.getpid(),
+        started_at=datetime.now().isoformat(),
+    )
+    
+    from subagent_executor import _persist_state
+    _persist_state(result)
+    
+    # 运行 reconciliation
+    reconciled = reconcile_dead_processes(limit=100)
+    
+    # 不应该回收这个任务（因为 pid 存在）
+    reconciled_task_ids = [r["task_id"] for r in reconciled]
+    assert task_id not in reconciled_task_ids
+    
+    # 验证状态仍然是 running
+    result = get_subagent_result(task_id)
+    assert result is not None
+    assert result.status == "running"
+    
+    # 清理测试状态
+    from pathlib import Path
+    state_file = Path(f"/Users/study/.openclaw/shared-context/subagent_states/{task_id}.json")
+    if state_file.exists():
+        state_file.unlink()
+    
+    print("✓ Reconciliation 不会误杀健康进程")
+
+
+def test_terminal_states_includes_dead_process_reconciled():
+    """测试 dead_process_reconciled 被包含在 TERMINAL_STATES 中"""
+    assert "dead_process_reconciled" in TERMINAL_STATES
+    print("✓ dead_process_reconciled 是终端状态")
+
+
+def test_running_state_with_dead_pid_does_not_affect_completed():
+    """测试 running + dead pid 检测不会影响已完成的正常任务"""
+    import json
+    import uuid
+    
+    # 创建一个已完成的正常任务
+    task_id = f"test_completed_{uuid.uuid4().hex[:8]}"
+    
+    config = SubagentConfig(label="test-completed", runtime="subagent")
+    result = SubagentResult(
+        task_id=task_id,
+        status="completed",
+        config=config,
+        task="Test completed task",
+        result="Success",
+        started_at=datetime.now().isoformat(),
+        completed_at=datetime.now().isoformat(),
+    )
+    
+    from subagent_executor import _persist_state
+    _persist_state(result)
+    
+    # 运行 reconciliation
+    reconciled = reconcile_dead_processes(limit=100)
+    
+    # 不应该影响已完成的任务
+    reconciled_task_ids = [r["task_id"] for r in reconciled]
+    assert task_id not in reconciled_task_ids
+    
+    # 验证状态仍然是 completed
+    result = get_subagent_result(task_id)
+    assert result is not None
+    assert result.status == "completed"
+    
+    # 清理测试状态
+    from pathlib import Path
+    state_file = Path(f"/Users/study/.openclaw/shared-context/subagent_states/{task_id}.json")
+    if state_file.exists():
+        state_file.unlink()
+    
+    print("✓ Reconciliation 不会影响已完成的正常任务")
+
+
 def run_all_tests():
     """运行所有测试"""
     print("=" * 60)
@@ -729,6 +962,13 @@ def run_all_tests():
         test_process_group_kill,
         test_cleanup_metadata_tracking,
         test_ui_cleanup_unknown_modeling,
+        # Dead Process Reconciliation 测试（本修复新增）
+        test_pid_exists_function,
+        test_dead_process_reconciliation_in_get_result,
+        test_reconcile_dead_processes_function,
+        test_reconcile_does_not_affect_healthy_processes,
+        test_terminal_states_includes_dead_process_reconciled,
+        test_running_state_with_dead_pid_does_not_affect_completed,
     ]
     
     passed = 0
