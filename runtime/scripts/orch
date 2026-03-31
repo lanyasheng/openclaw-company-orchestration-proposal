@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 ORCH_PRODUCT = SCRIPT_DIR / "orch_product.py"
+ORCH_RUN_LIVE = SCRIPT_DIR / "orch_run_live.py"
 
 __version__ = "orch_v1"
 
@@ -98,8 +99,66 @@ def cmd_onboard(args: argparse.Namespace) -> int:
         return 1
 
 
+def _run_orch_live(args: list[str], output_format: str = "text") -> Dict[str, Any]:
+    """调用 orch_run_live.py 并返回结果（live artifact chain）。"""
+    import subprocess
+    
+    cmd = [sys.executable, str(ORCH_RUN_LIVE)] + args
+    env = os.environ.copy()
+    
+    if output_format == "json":
+        cmd.append("--output")
+        cmd.append("json")
+    
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(REPO_ROOT),
+    )
+    
+    if result.returncode != 0:
+        raise RuntimeError(f"orch_run_live.py failed: {result.stderr}")
+    
+    # 解析输出
+    output = result.stdout.strip()
+    if output_format == "json":
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            return {"raw_output": output}
+    else:
+        return {"raw_output": output}
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """run 命令：触发执行。"""
+    # 如果指定了 --live-chain，使用 orch_run_live.py
+    if getattr(args, 'live_chain', False):
+        orch_args = ["--scenario", args.scenario or "trading_roundtable", "--task", args.task]
+        
+        if args.workdir:
+            orch_args.extend(["--workdir", args.workdir])
+        if args.owner:
+            orch_args.extend(["--owner", args.owner])
+        if args.backend:
+            orch_args.extend(["--runtime", args.backend])
+        if args.timeout:
+            orch_args.extend(["--timeout", str(args.timeout)])
+        
+        try:
+            result = _run_orch_live(orch_args, output_format=args.output)
+            if args.output == "json":
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                print(result.get("raw_output", ""))
+            return 0
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+    
+    # 默认使用 orch_product.py
     orch_args = ["run", "--task", args.task]
     
     if args.channel_id:
@@ -236,6 +295,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--monitor", "-m", action="store_true", help="监控中间过程")
     run_parser.add_argument("--timeout", type=int, help="超时时间（秒）")
     run_parser.add_argument("--output", "-o", choices=["text", "json"], default="text", help="输出格式")
+    run_parser.add_argument("--live-chain", "-L", action="store_true", help="使用完整 live artifact chain（trading 场景推荐）")
     run_parser.set_defaults(func=cmd_run)
     
     # status 命令

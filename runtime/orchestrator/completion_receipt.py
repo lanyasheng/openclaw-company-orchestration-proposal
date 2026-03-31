@@ -635,13 +635,17 @@ class CompletionReceiptKernel:
         execution: SpawnExecutionArtifact,
     ) -> CompletionReceiptArtifact:
         """
-        Emit receipt：创建 artifact -> 写入文件 -> 记录 dedupe。
+        Emit receipt：创建 artifact -> 写入文件 -> 记录 dedupe -> 自动回写控制面。
         
         Args:
             execution: Spawn execution artifact
         
         Returns:
             CompletionReceiptArtifact（已写入文件）
+        
+        Side effects:
+            - 自动触发 completion backwrite（异步，不阻塞主流程）
+            - 更新 task_registration.status / state_machine.state / observability_card.stage
         """
         # 1. Create artifact
         artifact = self.create_receipt(execution)
@@ -651,6 +655,29 @@ class CompletionReceiptKernel:
         
         # 3. Record dedupe
         _record_receipt_dedupe(artifact.dedupe_key, artifact.receipt_id)
+        
+        # 4. ========== P0-5: Completion Backwrite for Ad-Hoc Tasks ==========
+        # 在 receipt 被 emit 后，自动回写到三个控制面系统
+        # 这是 ad-hoc trading tasks completion 结果自动回写的关键路径
+        # 异步执行，不阻塞主流程
+        try:
+            from completion_backwrite import backwrite_completion
+            
+            # 仅在 receipt 状态为 completed 或 failed 时触发 backwrite
+            # missing 状态的 receipt 不需要回写（等待人工审查）
+            if artifact.receipt_status in ("completed", "failed"):
+                backwrite_result = backwrite_completion(receipt=artifact)
+                # 记录 backwrite 结果到 artifact metadata（用于审计）
+                artifact.metadata["backwrite_result"] = backwrite_result.to_dict()
+                # 重新写入 artifact（包含 backwrite 结果）
+                artifact.write()
+        except ImportError:
+            # completion_backwrite 模块不可用，跳过（不阻塞主流程）
+            pass
+        except Exception as e:
+            # Backwrite 失败不阻塞 receipt 创建，仅记录日志
+            print(f"[WARN] completion_backwrite failed for {artifact.receipt_id}: {e}")
+        # ========== End P0-5: Completion Backwrite ==========
         
         return artifact
 
