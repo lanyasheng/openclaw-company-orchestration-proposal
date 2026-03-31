@@ -169,14 +169,33 @@ def build_receipt_continuation_contract(
         stopped_because = f"receipt_missing_{receipt_reason[:50].lower().replace(' ', '_')}"
     
     # Extract next_step from execution metadata or derive from status
+    # P0-Hotfix (2026-03-31): Prefer explicit next_step from metadata, then from result_summary, then scenario-specific default
     next_step = execution.spawn_execution_target.get("next_step", "")
+    
     if not next_step:
-        if receipt_status == "completed":
-            next_step = "Awaiting downstream processing or manual review"
-        elif receipt_status == "failed":
-            next_step = f"Resolve failure: {receipt_reason[:100]}"
-        else:
-            next_step = f"Investigate missing receipt: {receipt_reason[:100]}"
+        # Try to extract from execution result/metadata
+        exec_result = execution.execution_result or {}
+        metadata = execution.metadata or {}
+        
+        # Check for explicit next_step in result/metadata
+        next_step = exec_result.get("next_step") or metadata.get("next_step") or ""
+        
+        if not next_step:
+            # Scenario-specific default next_step (avoid generic "Awaiting downstream...")
+            scenario = execution.spawn_execution_target.get("scenario", "")
+            owner = execution.spawn_execution_target.get("owner", "main")
+            
+            if receipt_status == "completed":
+                if "trading" in scenario.lower():
+                    next_step = f"Trading 任务已完成，等待 {owner} 确认产物并决定是否继续下一批次"
+                elif "channel" in scenario.lower() or "roundtable" in scenario.lower():
+                    next_step = f"圆桌讨论已完成，等待 {owner} review 结论并确认是否推进"
+                else:
+                    next_step = f"任务已完成，等待 {owner} 确认并决定后续动作"
+            elif receipt_status == "failed":
+                next_step = f"任务失败：{receipt_reason[:80]} — 需要 {owner} 决定重试/修复/中止"
+            else:
+                next_step = f"任务状态不明：{receipt_reason[:80]} — 需要 {owner} 调查"
     
     # Extract next_owner from execution metadata or default to main
     next_owner = execution.spawn_execution_target.get("owner", "main")
