@@ -79,6 +79,9 @@ DEFAULT_STALE_HEARTBEAT_SECONDS = 1800
 DEFAULT_DEMO_TTL_HOURS = float(os.environ.get("OPENCLAW_OBSERVABILITY_DEMO_TTL_HOURS", "24"))
 DEMO_MARKER_RE = re.compile(r"(^|[_-])(demo|test)([_-]|$)", re.IGNORECASE)
 
+# 历史归档阈值：stale 超过此时长的卡片被视为"历史归档"（默认 48 小时）
+ARCHIVE_STALE_THRESHOLD_HOURS = float(os.environ.get("OPENCLAW_ARCHIVE_STALE_THRESHOLD_HOURS", "48"))
+
 
 def _iso_now() -> str:
     return datetime.now().isoformat()
@@ -281,6 +284,35 @@ def get_card_health(card: ObservabilityCard, now: Optional[datetime] = None) -> 
     }
 
 
+def is_historical_stale(card: ObservabilityCard, health: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """
+    判断卡片是否为"历史归档 stale 卡"。
+    
+    条件：
+    1. 当前是 stale 状态
+    2. stage == callback_received（历史回调卡）
+    3. stale 时长超过 ARCHIVE_STALE_THRESHOLD_HOURS（默认 48 小时）
+    
+    这类卡片默认从主视图隐藏，归入归档视图。
+    """
+    if not health.get("is_stale"):
+        return False
+    
+    if card.stage != "callback_received":
+        return False
+    
+    last_activity = _derive_last_activity(card)
+    if last_activity is None:
+        return False
+    
+    age_hours = _age_seconds(last_activity, now=now)
+    if age_hours is None:
+        return False
+    
+    threshold_seconds = ARCHIVE_STALE_THRESHOLD_HOURS * 3600
+    return age_hours >= threshold_seconds
+
+
 def load_cards_from_dir(card_dir: Path, limit: int = 1000) -> List[ObservabilityCard]:
     """直接从指定目录加载卡片，避免依赖全局 CARD_DIR。"""
     if not card_dir.exists():
@@ -425,7 +457,14 @@ def build_dashboard_snapshot(
     cleanup_report: Optional[Dict[str, Any]] = None,
     generated_at: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """构建 dashboard 导出快照，包含 stale 与 cleanup 摘要。"""
+    """
+    构建 dashboard 导出快照，包含 stale 与 cleanup 摘要。
+    
+    新增归档视图支持（v3）：
+    - archived_stale_cards: 历史归档 stale 卡数量（默认隐藏）
+    - visible_active_cards: 可见活跃卡数量（不含归档 stale）
+    - historical_stale_cards: 历史 stale 卡列表（可追溯）
+    """
     generated_at = generated_at or _iso_now()
 
     by_stage: Dict[str, int] = {}
@@ -433,6 +472,8 @@ def build_dashboard_snapshot(
     enriched_cards: List[Dict[str, Any]] = []
     stale_count = 0
     active_count = 0
+    archived_stale_count = 0
+    historical_stale_cards: List[Dict[str, Any]] = []
 
     for card in cards:
         by_stage[card.stage] = by_stage.get(card.stage, 0) + 1
@@ -448,18 +489,29 @@ def build_dashboard_snapshot(
 
         if health["is_stale"]:
             stale_count += 1
+        
+        # 归档视图逻辑：历史 stale callback_received 卡归入归档
+        if is_historical_stale(card, health):
+            archived_stale_count += 1
+            archived_item = card.to_dict()
+            archived_item["dashboard_health"] = health
+            archived_item["archive_reason"] = "historical_stale_callback_received"
+            historical_stale_cards.append(archived_item)
 
         item = card.to_dict()
         item["dashboard_health"] = health
+        item["is_archived"] = is_historical_stale(card, health)
         enriched_cards.append(item)
 
     snapshot = {
-        "snapshot_version": "dashboard_snapshot_v2",
+        "snapshot_version": "dashboard_snapshot_v3",
         "generated_at": generated_at,
         "summary": {
             "total_cards": len(cards),
             "active_cards": active_count,
             "stale_cards": stale_count,
+            "archived_stale_cards": archived_stale_count,
+            "visible_active_cards": active_count,
             "by_stage": by_stage,
             "by_owner": by_owner,
         },
@@ -473,6 +525,7 @@ def build_dashboard_snapshot(
             "candidates": [],
         },
         "all_cards": enriched_cards,
+        "historical_stale_cards": historical_stale_cards,
     }
     return snapshot
 
@@ -485,6 +538,7 @@ def create_summary_panel(cards: List[ObservabilityCard], cleanup_report: Optiona
     by_owner: Dict[str, int] = {}
     stale_count = 0
     active_count = 0
+    archived_stale_count = 0
     for card in cards:
         by_stage[card.stage] = by_stage.get(card.stage, 0) + 1
         by_owner[card.owner] = by_owner.get(card.owner, 0) + 1
@@ -496,6 +550,10 @@ def create_summary_panel(cards: List[ObservabilityCard], cleanup_report: Optiona
             active_count += 1
         elif card.stage == "callback_received" and not health["is_stale"]:
             active_count += 1
+        
+        # 归档统计
+        if is_historical_stale(card, health):
+            archived_stale_count += 1
 
     active = active_count
     completed = by_stage.get("completed", 0)
@@ -505,6 +563,8 @@ def create_summary_panel(cards: List[ObservabilityCard], cleanup_report: Optiona
     text.append(f"任务总数：{total}\n", style="bold")
     text.append(f"活跃：{active} ", style="yellow")
     text.append(f"Stale：{stale_count} ", style="bold red" if stale_count else "green")
+    if archived_stale_count > 0:
+        text.append(f"(归档：{archived_stale_count}) ", style="dim")
     text.append(f"完成：{completed} ", style="green")
     text.append(f"失败：{failed}\n", style="red")
 
@@ -597,8 +657,14 @@ def create_stage_table(cards: List[ObservabilityCard]) -> Table:
     return table
 
 
-def create_active_tasks_table(cards: List[ObservabilityCard]) -> Table:
-    """最近活跃任务列表。"""
+def create_active_tasks_table(cards: List[ObservabilityCard], *, hide_archived: bool = True) -> Table:
+    """
+    最近活跃任务列表。
+    
+    Args:
+        cards: 所有卡片
+        hide_archived: 是否隐藏历史归档 stale 卡（默认 True）
+    """
     table = Table(
         title="[bold]🔥 最近活跃任务[/bold]",
         box=box.ROUNDED,
@@ -617,6 +683,11 @@ def create_active_tasks_table(cards: List[ObservabilityCard]) -> Table:
     table.add_column("Anchor", style="dim", width=24)
 
     decorated = [(card, get_card_health(card)) for card in cards]
+    
+    # 过滤掉归档的历史 stale 卡（默认隐藏）
+    if hide_archived:
+        decorated = [(card, health) for card, health in decorated if not is_historical_stale(card, health)]
+    
     decorated.sort(
         key=lambda item: (
             0 if item[1]["is_stale"] else 1,
@@ -693,8 +764,20 @@ def create_owner_summary(cards: List[ObservabilityCard]) -> Table:
     return table
 
 
-def render_dashboard(cards: List[ObservabilityCard], cleanup_report: Optional[Dict[str, Any]] = None) -> Layout:
-    """渲染完整看板布局。"""
+def render_dashboard(
+    cards: List[ObservabilityCard],
+    cleanup_report: Optional[Dict[str, Any]] = None,
+    *,
+    hide_archived: bool = True,
+) -> Layout:
+    """
+    渲染完整看板布局。
+    
+    Args:
+        cards: 所有卡片
+        cleanup_report: 清理报告
+        hide_archived: 是否隐藏历史归档 stale 卡（默认 True）
+    """
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=12),
@@ -709,7 +792,7 @@ def render_dashboard(cards: List[ObservabilityCard], cleanup_report: Optional[Di
     layout["header"].update(create_summary_panel(cards, cleanup_report=cleanup_report))
     layout["stage"].update(create_stage_table(cards))
     layout["owner"].update(create_owner_summary(cards))
-    layout["bottom"].update(create_active_tasks_table(cards))
+    layout["bottom"].update(create_active_tasks_table(cards, hide_archived=hide_archived))
     return layout
 
 
@@ -723,12 +806,14 @@ class Dashboard:
         *,
         auto_cleanup_demo: bool = True,
         demo_ttl_hours: float = DEFAULT_DEMO_TTL_HOURS,
+        hide_archived: bool = True,
     ):
         self.refresh_interval = refresh_interval
         self.card_dir = Path(card_dir or CARD_DIR)
         self.console = Console()
         self.auto_cleanup_demo = auto_cleanup_demo
         self.demo_ttl_hours = demo_ttl_hours
+        self.hide_archived = hide_archived
         self.last_cleanup_report: Optional[Dict[str, Any]] = None
 
     def cleanup_demo_cards(self, dry_run: bool = False) -> Dict[str, Any]:
@@ -746,7 +831,7 @@ class Dashboard:
 
     def render_once(self) -> None:
         cards = self.load_cards()
-        layout = render_dashboard(cards, cleanup_report=self.last_cleanup_report)
+        layout = render_dashboard(cards, cleanup_report=self.last_cleanup_report, hide_archived=self.hide_archived)
         self.console.print(layout)
 
     def export_snapshot(self, output_path: str) -> str:
@@ -763,7 +848,7 @@ class Dashboard:
     def run_live(self) -> None:
         def generate_layout() -> Layout:
             cards = self.load_cards()
-            return render_dashboard(cards, cleanup_report=self.last_cleanup_report)
+            return render_dashboard(cards, cleanup_report=self.last_cleanup_report, hide_archived=self.hide_archived)
 
         with Live(generate_layout(), console=self.console, refresh_per_second=1, screen=True) as live:
             while True:
@@ -808,6 +893,11 @@ def main():
         default=DEFAULT_DEMO_TTL_HOURS,
         help=f"demo/test 卡自动清理 TTL（小时，默认 {DEFAULT_DEMO_TTL_HOURS}）",
     )
+    parser.add_argument(
+        "--show-archived",
+        action="store_true",
+        help="显示历史归档 stale 卡（默认隐藏）",
+    )
 
     args = parser.parse_args()
 
@@ -816,6 +906,7 @@ def main():
         card_dir=args.card_dir,
         auto_cleanup_demo=not args.no_auto_cleanup,
         demo_ttl_hours=args.demo_ttl_hours,
+        hide_archived=not args.show_archived,
     )
 
     if args.export:
