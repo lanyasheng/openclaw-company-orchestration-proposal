@@ -342,11 +342,13 @@ class DashboardPolishTest(unittest.TestCase):
     def test_is_historical_stale_identifies_old_trading_callback_cards(self):
         """
         验证 is_historical_stale 正确识别历史 trading stale 卡。
-        条件：callback_received + stale + 超过 48 小时
+        条件：callback_received + stale + 超过阈值
+        - trading scenario: 6 小时
+        - 其他 scenario: 48 小时
         """
         now = datetime.now()
         
-        # 10 张历史 stale callback_received 卡片（超过 48 小时）
+        # 10 张历史 stale callback_received 卡片（超过 48 小时，trading scenario）
         stale_callback_cards = [
             self._make_card(
                 task_id=f"trading_history_{i:02d}",
@@ -359,11 +361,11 @@ class DashboardPolishTest(unittest.TestCase):
             for i in range(10)
         ]
         
-        # 1 张 fresh callback_received 卡片（不到 48 小时）
+        # 1 张 fresh callback_received 卡片（不到 6 小时，trading scenario）
         fresh_callback_card = self._make_card(
             task_id="trading_active_001",
             stage="callback_received",
-            heartbeat=(now - timedelta(hours=24)).isoformat(),
+            heartbeat=(now - timedelta(hours=2)).isoformat(),
             promised_eta=(now + timedelta(hours=1)).isoformat(),
             owner="trading",
             scenario="trading_roundtable",
@@ -388,10 +390,10 @@ class DashboardPolishTest(unittest.TestCase):
                 f"trading_history_{i:02d} should be historical stale"
             )
         
-        # 验证 fresh callback_received 卡不被识别为历史归档
+        # 验证 fresh callback_received 卡不被识别为历史归档（不到 6 小时）
         self.assertFalse(
             is_historical_stale(fresh_callback_card, get_card_health(fresh_callback_card)),
-            "fresh callback_received should not be historical stale"
+            "fresh callback_received (<6h) should not be historical stale"
         )
         
         # 验证 stale running 卡不被识别为历史归档（stage 不对）
@@ -542,6 +544,70 @@ class DashboardPolishTest(unittest.TestCase):
         # 验证面板内容包含归档计数
         panel_text = str(panel.renderable)
         self.assertIn("归档：5", panel_text)
+
+    def test_trading_callback_received_uses_shorter_archive_threshold(self):
+        """
+        验证 trading scenario 的 callback_received 卡片使用更短的归档阈值（6 小时 vs 48 小时）。
+        
+        修前：10 张 13-29 小时前的 stale trading callback_received 卡片未被归档（阈值 48h）
+        修后：这些卡片被正确归档（阈值 6h for trading）
+        """
+        now = datetime.now()
+        
+        # 10 张 trading callback_received 卡片，心跳在 13-29 小时前（超过 6h 但不到 48h）
+        trading_stale_cards = [
+            self._make_card(
+                task_id=f"trading_stale_{i:02d}",
+                stage="callback_received",
+                heartbeat=(now - timedelta(hours=13 + i)).isoformat(),
+                promised_eta=(now - timedelta(hours=13 + i)).isoformat(),
+                owner="trading",
+                scenario="trading_roundtable",
+            )
+            for i in range(10)
+        ]
+        
+        # 2 张非 trading callback_received 卡片，同样 13-29 小时前（不到 48h，不应归档）
+        non_trading_stale_cards = [
+            self._make_card(
+                task_id=f"non_trading_stale_{i}",
+                stage="callback_received",
+                heartbeat=(now - timedelta(hours=13 + i)).isoformat(),
+                promised_eta=(now - timedelta(hours=13 + i)).isoformat(),
+                owner="main",
+                scenario="coding_issue",
+            )
+            for i in range(2)
+        ]
+        
+        # 验证 trading 卡片被识别为历史归档（6h 阈值）
+        for i in range(10):
+            card = trading_stale_cards[i]
+            health = get_card_health(card)
+            self.assertTrue(
+                is_historical_stale(card, health),
+                f"trading_stale_{i:02d} (scenario={card.scenario}) should be historical stale with 6h threshold"
+            )
+        
+        # 验证非 trading 卡片不被识别为历史归档（48h 阈值）
+        for i in range(2):
+            card = non_trading_stale_cards[i]
+            health = get_card_health(card)
+            self.assertFalse(
+                is_historical_stale(card, health),
+                f"non_trading_stale_{i} (scenario={card.scenario}) should NOT be historical stale with 48h threshold"
+            )
+        
+        # 验证 snapshot 统计
+        all_cards = trading_stale_cards + non_trading_stale_cards
+        snapshot = build_dashboard_snapshot(all_cards)
+        
+        self.assertEqual(snapshot["summary"]["archived_stale_cards"], 10)
+        self.assertEqual(len(snapshot["historical_stale_cards"]), 10)
+        
+        # 验证所有归档卡片都是 trading scenario
+        archived_scenarios = [c["scenario"] for c in snapshot["historical_stale_cards"]]
+        self.assertTrue(all("trading" in s for s in archived_scenarios))
 
 
 if __name__ == "__main__":

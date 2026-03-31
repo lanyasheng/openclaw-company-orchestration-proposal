@@ -79,8 +79,10 @@ DEFAULT_STALE_HEARTBEAT_SECONDS = 1800
 DEFAULT_DEMO_TTL_HOURS = float(os.environ.get("OPENCLAW_OBSERVABILITY_DEMO_TTL_HOURS", "24"))
 DEMO_MARKER_RE = re.compile(r"(^|[_-])(demo|test)([_-]|$)", re.IGNORECASE)
 
-# 历史归档阈值：stale 超过此时长的卡片被视为"历史归档"（默认 48 小时）
+# 历史归档阈值：stale 超过此时长的卡片被视为"历史归档"
+# 默认 48 小时，但对 trading scenario 的 callback_received 卡片使用更短阈值（6 小时）
 ARCHIVE_STALE_THRESHOLD_HOURS = float(os.environ.get("OPENCLAW_ARCHIVE_STALE_THRESHOLD_HOURS", "48"))
+ARCHIVE_STALE_TRADING_CALLBACK_HOURS = float(os.environ.get("OPENCLAW_ARCHIVE_STALE_TRADING_CALLBACK_HOURS", "6"))
 
 
 def _iso_now() -> str:
@@ -291,7 +293,9 @@ def is_historical_stale(card: ObservabilityCard, health: Dict[str, Any], now: Op
     条件：
     1. 当前是 stale 状态
     2. stage == callback_received（历史回调卡）
-    3. stale 时长超过 ARCHIVE_STALE_THRESHOLD_HOURS（默认 48 小时）
+    3. stale 时长超过阈值：
+       - trading scenario: ARCHIVE_STALE_TRADING_CALLBACK_HOURS（默认 6 小时）
+       - 其他 scenario: ARCHIVE_STALE_THRESHOLD_HOURS（默认 48 小时）
     
     这类卡片默认从主视图隐藏，归入归档视图。
     """
@@ -309,7 +313,11 @@ def is_historical_stale(card: ObservabilityCard, health: Dict[str, Any], now: Op
     if age_hours is None:
         return False
     
-    threshold_seconds = ARCHIVE_STALE_THRESHOLD_HOURS * 3600
+    # scenario-aware 阈值：trading roundtable 的 stale callback_received 更快归档
+    is_trading_scenario = card.scenario and "trading" in card.scenario.lower()
+    threshold_hours = ARCHIVE_STALE_TRADING_CALLBACK_HOURS if is_trading_scenario else ARCHIVE_STALE_THRESHOLD_HOURS
+    threshold_seconds = threshold_hours * 3600
+    
     return age_hours >= threshold_seconds
 
 
