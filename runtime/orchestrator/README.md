@@ -108,9 +108,10 @@ pending → running → callback_received → next_task_dispatched → final_clo
 - `process_trading_roundtable_callback(...)` — 处理 callback，持久化 trading summary / decision / dispatch plan
 
 **默认行为**：
-- 默认是 **safe semi-auto**：会生成 backend-aware dispatch plan，但不会把所有 continuation 默认自动续跑
-- dispatch plan 现在显式携带 `backend=subagent|tmux`，默认仍是 `subagent`
-- clean PASS trading continuation 可命中 `whitelist_default` 自动触发；其余仍需显式 allow 或人工 gate
+- `trading_roundtable` 已 cut over 为 **default auto-continue within low-risk boundary**
+- `orch_product onboard/run` 会写入 trading 默认自动推进配置：自动注册 / 自动派发 / 自动回流 / 自动续推
+- dispatch plan 显式携带 `backend=subagent|tmux`，默认仍是 `subagent`
+- clean PASS 且 low-risk continuation 默认 `triggered`；命中真实资金 / 不可逆线上动作 / gate review 时仍会停在人工 gate
 
 ---
 

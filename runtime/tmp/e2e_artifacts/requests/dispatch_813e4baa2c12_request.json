@@ -1,0 +1,9 @@
+{
+  "request_id": "req_20260330234212",
+  "dispatch_id": "dispatch_813e4baa2c12",
+  "batch_id": "trading_orch_e2e_batch_20260330234212",
+  "requested_at": "2026-03-30T23:42:13+08:00",
+  "task_description": "E2E verification task - trading roundtable phase1 packet validation",
+  "backend": "subagent",
+  "workdir": "/Users/study/.openclaw/workspace/repos/openclaw-company-orchestration-proposal/runtime"
+}

@@ -148,7 +148,7 @@ python3 runtime/scripts/orch_command.py --context <场景> --channel-id "<频道
 - **OpenClaw 持 control plane**
 - **本仓同时持阅读入口与 orchestration runtime 收口**
 - **外部框架只进叶子层 / benchmark / 局部方法层**
-- **总体仍是 thin bridge / allowlist / safe semi-auto**
+- **当前已进入 mixed mode：trading_roundtable 默认自动推进（保留高风险 gate），其他频道仍按 allowlist / safe semi-auto 管理**
 
 ### 1.1 本地 workspace 副本已退役(2026-03-22)
 历史上 orchestration runtime 曾散落在本地 workspace;从 2026-03-22 起:
@@ -434,17 +434,18 @@ python3 runtime/tests/orchestrator/test_issue_lane_schemas.py
 - **允许外部框架进入的层**:DeepAgents 风格 coding runtime、SWE-agent issue lane、局部 analysis graph、未来少数 durable pilot;
 - **明确不引成主链的层**:DeepAgents、SWE-agent、OpenSWE、LangGraph、Temporal 都不升为公司级 orchestration backbone。
 
-### 2.4 当前 live continuation 真值仍需收紧理解
+### 2.4 当前 live continuation 真值（2026-03-31 更新）
 
-以下仍然成立:
-- `channel_roundtable` 与 `trading_roundtable` 已证明 continuation 不是纸面设计;
-- 当前默认仍是 allowlist、条件触发、可回退;
-- trading 不是任意结果都自动 continuation;
-- `tmux` 已是正式可选 backend,但不等于已证明全局自动闭环。
+以下现在成立:
+- `channel_roundtable` 与 `trading_roundtable` 都已证明 continuation 不是纸面设计;
+- `trading_roundtable` 已 cut over 到 `orch_product onboard/run/status` 产品入口;
+- trading 默认自动推进的边界是 **low-risk continuation 自动续推，high-risk gate 保留人工审批**;
+- `tmux` 已是正式可选 backend,但 trading 默认自动推进主链仍以 `subagent` 为主。
 
-因此,当前正确写法仍是:
+因此,当前正确写法是:
 - **已有真实 continuation 场景**;
-- **但总体仍停留在 thin bridge / allowlist / safe semi-auto**;
+- **trading 已进入默认自动推进状态（不是无 gate 自由执行）**;
+- **其他频道仍处于 allowlist / safe semi-auto 阶段**;
 - **外部框架讨论的是下一阶段增强点,不是当前主链 owner。**
 
 ### 2.5 其他频道接入 quickstart 已就绪

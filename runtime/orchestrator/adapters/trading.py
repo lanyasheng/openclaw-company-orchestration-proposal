@@ -643,9 +643,15 @@ class TradingAdapter(BaseAdapter):
                 "tradability_not_pass",
                 "tradability.scenario_verdict 必须为 PASS；turnover/liquidity/net_vs_gross 不能残留硬失败。",
             )
-        if not criteria[8]["passed"]:
+        continuation_mode = str(continuation.get("mode") or "unknown")
+        if continuation_mode in HIGH_RISK_ACTIONS:
             add_blocker(
-                f"continuation_mode_{continuation.get('mode')}_not_whitelist_safe",
+                f"continuation_mode_{continuation_mode}_requires_manual_gate",
+                "命中真实资金 / 不可逆 / 线上外发动作时，必须停在人工 gate，不能默认 auto-dispatch。",
+            )
+        elif not criteria[8]["passed"]:
+            add_blocker(
+                f"continuation_mode_{continuation_mode}_not_whitelist_safe",
                 "默认 auto 只适用于单步、低风险的 handoff；packet freeze / artifact rerun / gate review 仍需人工确认。",
             )
         
@@ -783,13 +789,22 @@ class TradingAdapter(BaseAdapter):
     # ============== 辅助方法 ==============
     
     def _continuation_mode_from_next_step(self, next_step: str) -> str:
-        """从 next_step 推断 continuation mode"""
+        """从 next_step 推断 continuation mode。"""
         text = next_step.lower()
+
+        if "live trading" in text or "实盘" in text or "下单" in text or "place order" in text:
+            return "live_trading"
+        if "push" in text or "merge" in text or "发版" in text or "deploy" in text:
+            return "push_merge"
+        if "alert" in text and ("prod" in text or "production" in text or "线上" in text):
+            return "production_alert"
         if "rerun" in text or "re-run" in text:
             return "artifact_rerun"
         if "freeze" in text and "packet" in text:
             return "packet_freeze"
-        if "review" in text or "gate" in text:
+        if "closeout" in text:
+            return "runtime_closeout"
+        if "review" in text or "gate" in text or "审批" in text:
             return "gate_review"
         return "advance_phase_handoff"
     

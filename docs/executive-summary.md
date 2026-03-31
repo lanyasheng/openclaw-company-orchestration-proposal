@@ -42,15 +42,14 @@
 
 这份执行摘要也要补齐本轮 live 真值，而不是停留在 2026-03-19 的纯方案口径：
 
-- `trading_roundtable` continuation 已最小落地，但仍是 **safe semi-auto**
-- `channel_roundtable` 已落地为通用最小适配器
+- `trading_roundtable` 已切到 **default auto-continue within low-risk boundary**
+- `orch_product onboard/run/status` 成为 trading 主入口，并会落地默认自动推进配置
+- `channel_roundtable` 已落地为通用最小适配器，但其他频道默认仍按 allowlist / safe semi-auto 管理
 - 当前 `Temporal vs LangGraph｜OpenClaw 公司级编排架构` 频道已成为**第二个真实场景**
-- 当前白名单架构频道默认 auto-dispatch：dispatch plan 默认 `triggered`
-- 其他频道默认仍是 `skipped`
-- trading 侧当前策略更收紧：**仅 clean PASS 默认 `triggered`，其余结果默认 `skipped`**
-- `tmux` 已成为**正式可选 continuation backend**，但 trading real run 当前仍只到 **dry-run**；真实 artifact-backed clean PASS 仍缺
+- trading 侧当前策略是：**clean PASS + low-risk continuation 默认 `triggered`；真实资金 / 不可逆线上动作仍停在 gate**
+- `tmux` 已成为**正式可选 continuation backend**，但 trading 默认自动推进主链为 `subagent`
 
-一句话：**仓库已经从纯方案/POC 推进到双场景最小接线，但总体仍是 thin bridge / allowlist / safe semi-auto。**
+一句话：**仓库已经从纯方案/POC 推进到“trading 默认自动推进 + 其他频道按 allowlist 管理”的混合成熟态。**
 
 ---
 

@@ -52,6 +52,16 @@ from observability_card import list_cards, generate_board_snapshot, Observabilit
 __all__ = ["onboard", "run", "status", "main"]
 
 VERSION = "orch_product_v1"
+TRADING_DEFAULT_AUTO_MODE = "default_auto_continue_except_high_risk_gates"
+TRADING_RETAINED_GATES = [
+    "live_trading",
+    "funds_movement",
+    "irreversible_external_side_effects",
+    "push_merge",
+    "production_alert",
+    "gate_review",
+    "packet_freeze",
+]
 
 
 def _iso_now() -> str:
@@ -73,6 +83,108 @@ def _env_first(*names: str) -> Optional[str]:
         if value is not None:
             return value
     return None
+
+
+def _merge_allowlist(existing: Optional[List[str]], required: List[str]) -> List[str]:
+    merged: List[str] = []
+    seen = set()
+    for item in [*(existing or []), *required]:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        merged.append(text)
+    return merged
+
+
+def _is_trading_orchestration(orch: Dict[str, Any]) -> bool:
+    adapter = str(orch.get("adapter") or "").strip().lower()
+    scenario = str(orch.get("scenario") or "").strip().lower()
+    owner = str(orch.get("owner") or "").strip().lower()
+    return adapter == "trading_roundtable" or scenario == "trading_roundtable_phase1" or owner == "trading"
+
+
+def _get_trading_default_auto_profile(
+    *,
+    scenario: Optional[str] = None,
+    apply: bool = False,
+) -> Dict[str, Any]:
+    from sessions_spawn_request import (  # type: ignore
+        SPAWN_REQUEST_DIR,
+        AUTO_TRIGGER_CONFIG_FILE,
+        configure_auto_trigger,
+        get_auto_trigger_status,
+    )
+    from sessions_spawn_bridge import (  # type: ignore
+        AUTO_TRIGGER_REAL_EXEC_CONFIG_FILE,
+        configure_auto_trigger_real_exec,
+        get_auto_trigger_real_exec_status,
+    )
+
+    resolved_scenario = scenario or "trading_roundtable_phase1"
+
+    auto_status_before = get_auto_trigger_status()
+    real_exec_status_before = get_auto_trigger_real_exec_status()
+
+    if apply:
+        configure_auto_trigger(
+            enabled=True,
+            allowlist=_merge_allowlist(
+                auto_status_before.get("config", {}).get("allowlist"),
+                [resolved_scenario],
+            ),
+            denylist=auto_status_before.get("config", {}).get("denylist"),
+            require_manual_approval=False,
+        )
+        configure_auto_trigger_real_exec(
+            enabled=True,
+            allowlist=_merge_allowlist(
+                real_exec_status_before.get("config", {}).get("allowlist"),
+                [resolved_scenario],
+            ),
+            denylist=real_exec_status_before.get("config", {}).get("denylist"),
+            require_manual_approval=False,
+            safe_mode=False,
+        )
+
+    auto_status = get_auto_trigger_status()
+    real_exec_status = get_auto_trigger_real_exec_status()
+    auto_cfg = auto_status.get("config", {})
+    real_exec_cfg = real_exec_status.get("config", {})
+
+    cutover_applied = (
+        bool(auto_cfg.get("enabled"))
+        and not bool(auto_cfg.get("require_manual_approval", True))
+        and resolved_scenario in (auto_cfg.get("allowlist") or [])
+        and bool(real_exec_cfg.get("enabled"))
+        and not bool(real_exec_cfg.get("require_manual_approval", True))
+        and not bool(real_exec_cfg.get("safe_mode", True))
+        and resolved_scenario in (real_exec_cfg.get("allowlist") or [])
+    )
+
+    return {
+        "mode": TRADING_DEFAULT_AUTO_MODE,
+        "cutover_applied": cutover_applied,
+        "managed_by": "orch_product_trading_default_auto_profile_v1",
+        "adapter": "trading_roundtable",
+        "scenario": resolved_scenario,
+        "default_auto_scope": [
+            "auto_register",
+            "auto_dispatch",
+            "auto_callback",
+            "auto_continue_until_gate",
+        ],
+        "retained_gates": TRADING_RETAINED_GATES,
+        "config_paths": {
+            "spawn_request_dir": str(SPAWN_REQUEST_DIR),
+            "auto_trigger": str(AUTO_TRIGGER_CONFIG_FILE),
+            "real_execution": str(AUTO_TRIGGER_REAL_EXEC_CONFIG_FILE),
+        },
+        "config_state": {
+            "auto_trigger": auto_cfg,
+            "real_execution": real_exec_cfg,
+        },
+    }
 
 
 # ============ Onboard Command ============
@@ -121,6 +233,12 @@ def onboard(
     orch = contract.get("orchestration", {})
     onboarding = contract.get("onboarding", {})
     seed_payload = contract.get("seed_payload", {})
+    channel_mode = None
+    if _is_trading_orchestration(orch):
+        channel_mode = _get_trading_default_auto_profile(
+            scenario=orch.get("scenario"),
+            apply=True,
+        )
     
     # 构建简化的 onboard 输出
     result = {
@@ -142,7 +260,8 @@ def onboard(
         "bootstrap_capability_card": onboarding.get("bootstrap_capability_card", {}),
         "operator_kit": onboarding.get("operator_kit", {}),
         "payload_aliases": onboarding.get("payload_aliases", []),
-        "next_steps": _generate_onboard_next_steps(orch),
+        "channel_mode": channel_mode,
+        "next_steps": _generate_onboard_next_steps(orch, channel_mode=channel_mode),
         "example_commands": _generate_example_commands(
             channel_id=orch.get("channel", {}).get("channel_id"),
             scenario=orch.get("scenario"),
@@ -154,26 +273,33 @@ def onboard(
     return result
 
 
-def _generate_onboard_next_steps(orch: Dict[str, Any]) -> List[str]:
+def _generate_onboard_next_steps(
+    orch: Dict[str, Any],
+    *,
+    channel_mode: Optional[Dict[str, Any]] = None,
+) -> List[str]:
     """生成下一步行动建议。"""
     steps = []
     
     adapter = orch.get("adapter", "unknown")
-    backend = orch.get("backend_preference", "subagent")
     auto_execute = orch.get("auto_execute", True)
     
     steps.append("1. 确认推荐配置（adapter/scenario/owner/backend）")
     
-    if not auto_execute:
+    if channel_mode and channel_mode.get("cutover_applied"):
+        steps.append("2. Trading 默认自动推进配置已落地；低风险 continuation 将自动注册/派发/回流/续推")
+    elif not auto_execute:
         steps.append("2. 首次接入建议先设置 --auto-execute false 验证稳定")
+    else:
+        steps.append("2. 当前入口默认开启 auto_execute=true")
     
-    steps.append(f"2. 运行 'orch_product.py run --task \"任务描述\"' 触发执行")
-    steps.append(f"3. 运行 'orch_product.py status' 查看状态")
+    steps.append("3. 运行 'orch_product.py run --task \"任务描述\"' 触发执行")
+    steps.append("4. 运行 'orch_product.py status' 查看状态")
     
     if adapter == "trading_roundtable":
-        steps.append("4. Trading 场景：关注 artifact/report/commit 真值链完整性")
+        steps.append("5. Trading 场景：分析/规划/编码/文档类任务默认自动推进；真实资金/不可逆动作仍保留 gate")
     elif adapter == "channel_roundtable":
-        steps.append("4. Channel 场景：关注 roundtable 五字段（conclusion/blocker/owner/next_step/completion_criteria）")
+        steps.append("5. Channel 场景：关注 roundtable 五字段（conclusion/blocker/owner/next_step/completion_criteria）")
     
     return steps
 
@@ -260,6 +386,12 @@ def run(
     )
     
     orch = contract.get("orchestration", {})
+    channel_mode = None
+    if _is_trading_orchestration(orch):
+        channel_mode = _get_trading_default_auto_profile(
+            scenario=orch.get("scenario"),
+            apply=True,
+        )
     
     # 调用统一执行入口
     runtime = UnifiedExecutionRuntime()
@@ -323,6 +455,7 @@ def run(
         },
         "artifacts": {k: str(v) for k, v in result.artifacts.items()},
         "backend_selection": result.backend_selection,
+        "channel_mode": channel_mode,
         "observability_card": {
             "created": card is not None,
             "card_id": card.task_id if card else None,
@@ -435,6 +568,13 @@ def status(
     
     # 生成 next steps
     next_steps = _generate_status_next_steps(active_cards, completed_cards, failed_cards)
+
+    channel_mode = None
+    if (scenario and str(scenario).lower() == "trading_roundtable_phase1") or (owner and str(owner).lower() == "trading"):
+        channel_mode = _get_trading_default_auto_profile(
+            scenario=scenario or "trading_roundtable_phase1",
+            apply=False,
+        )
     
     # 构建输出
     output = {
@@ -461,6 +601,7 @@ def status(
         "blockers": blockers,
         "next_steps": next_steps,
         "board_snapshot_path": board_snapshot_path,
+        "channel_mode": channel_mode,
     }
     
     # 如果指定了 task_id，返回单个任务详情
@@ -621,6 +762,16 @@ def _print_result(result: Dict[str, Any], output_format: str) -> None:
             print(f"  Gate Policy: {rec.get('gate_policy', 'N/A')}")
             print()
         
+        if result.get("channel_mode"):
+            mode = result["channel_mode"]
+            print("Channel Mode:")
+            print(f"  Mode: {mode.get('mode', 'N/A')}")
+            print(f"  Cutover Applied: {mode.get('cutover_applied', False)}")
+            retained = mode.get("retained_gates") or []
+            if retained:
+                print(f"  Retained Gates: {', '.join(retained)}")
+            print()
+
         if "task" in result:
             task = result["task"]
             print(f"Task ID: {task.get('task_id', 'N/A')}")

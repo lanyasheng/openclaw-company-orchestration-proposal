@@ -1,0 +1,191 @@
+{
+  "entry_context": {
+    "resolved_context": "channel_roundtable",
+    "source": "ambient_default_current_channel",
+    "matched_on": "discord:channel:1483883339701158102",
+    "generated_at": "2026-03-31T23:01:16+08:00"
+  },
+  "onboarding": {
+    "adapter_capability": "channel_roundtable.generic.v1",
+    "seed_scope": "channel_roundtable",
+    "payload_aliases": [
+      "channel_roundtable",
+      "generic_roundtable"
+    ],
+    "new_scenario_minimum": {
+      "required_contract_fields": [
+        "scenario"
+      ],
+      "derived_by_default": [
+        "adapter=channel_roundtable",
+        "batch_key",
+        "owner",
+        "backend_preference",
+        "callback_payload_schema",
+        "auto_execute",
+        "gate_policy",
+        "channel/session metadata when ambient context exists"
+      ],
+      "required_packet_fields": [
+        "packet_version",
+        "scenario",
+        "channel_id",
+        "topic",
+        "owner",
+        "generated_at"
+      ],
+      "required_roundtable_fields": [
+        "conclusion",
+        "blocker",
+        "owner",
+        "next_step",
+        "completion_criteria"
+      ]
+    },
+    "runtime_reuse": {
+      "callback_bridge": "scripts/orchestrator_callback_bridge.py complete",
+      "ack_guard": "orchestrator/completion_ack_guard.py",
+      "dispatch_plan": "summary -> decision -> dispatch plan",
+      "tmux_bridge": "scripts/orchestrator_dispatch_bridge.py complete (DUAL-TRACK: tmux backend for interactive_observable; subagent for automation)"
+    },
+    "operator_kit": {
+      "entry_file": "orchestrator/examples/generic_channel_roundtable_onboarding_kit.md",
+      "example_contract_file": "orchestrator/examples/generic_non_trading_roundtable_contract.json",
+      "example_callback_file": "orchestrator/examples/generic_non_trading_roundtable_callback.json",
+      "checklist": [
+        "adapter 固定用 channel_roundtable；generic_roundtable 只是 payload alias，不是新的 runtime adapter。",
+        "先生成 contract，再用最小 callback payload 跑通 canonical callback/ack/dispatch artifacts。",
+        "新 scenario 首次接入建议显式 --allow-auto-dispatch false；若要默认自动续跑，再单独补 allowlist/策略。",
+        "packet 只补最小字段：packet_version/scenario/channel_id/topic/owner/generated_at。",
+        "roundtable 只补五字段：conclusion/blocker/owner/next_step/completion_criteria。",
+        "backend terminal receipt / completion report 只是诊断与证据，不能替代 canonical business callback PASS。"
+      ],
+      "example_commands": {
+        "generate_contract": "python3 ~/.openclaw/scripts/orch_command.py --scenario current_channel_architecture_roundtable --channel-id discord:channel:1483883339701158102 --channel-name temporal-vs-langgraph-openclaw-company-architecture --topic 'Temporal vs LangGraph｜OpenClaw 公司级编排架构' --owner main --backend subagent",
+        "complete_subagent": "python3 scripts/orchestrator_callback_bridge.py complete --task-id <task_id> --batch-id <batch_id> --payload orchestrator/examples/generic_non_trading_roundtable_callback.json --runtime subagent --allow-auto-dispatch false --requester-session-key <agent:...>"
+      },
+      "recommended_first_run": {
+        "allow_auto_dispatch": false,
+        "reason": "先证明 generic callback path/ack/dispatch artifacts 稳定，再决定是否为该 scenario 打开默认自动续跑。"
+      }
+    },
+    "current_boundary": "新的非 trading scenario 现在可复用 channel_roundtable adapter 与 generic_roundtable payload alias；但默认 allowlist 仍只对白名单频道/明确显式 allow 放开。",
+    "owner": "main",
+    "channel": {
+      "id": "discord:channel:1483883339701158102",
+      "channel_id": "discord:channel:1483883339701158102",
+      "name": "temporal-vs-langgraph-openclaw-company-architecture",
+      "channel_name": "temporal-vs-langgraph-openclaw-company-architecture",
+      "topic": "Temporal vs LangGraph｜OpenClaw 公司级编排架构"
+    },
+    "callback_payload_schema": "channel_roundtable.v1.callback",
+    "template_name": "channel_roundtable.current_channel_defaults",
+    "scenario": "current_channel_architecture_roundtable",
+    "bootstrap_capability_card": {
+      "adapter": "channel_roundtable",
+      "scenario_hint": "generic_roundtable (payload alias, not new adapter)",
+      "key_constraint": "非 trading 场景默认走 channel_roundtable adapter；不需要新 adapter",
+      "first_run_recommendation": {
+        "allow_auto_dispatch": false
+      },
+      "operator_kit_path": "orchestrator/examples/generic_channel_roundtable_onboarding_kit.md",
+      "example_contract": "orchestrator/examples/generic_non_trading_roundtable_contract.json",
+      "example_callback": "orchestrator/examples/generic_non_trading_roundtable_callback.json"
+    }
+  },
+  "orchestration": {
+    "enabled": true,
+    "adapter": "channel_roundtable",
+    "scenario": "current_channel_architecture_roundtable",
+    "batch_key": "batch_current_channel_architecture_roundtable_1483883339701158102_20260331230116",
+    "owner": "main",
+    "backend_preference": "subagent",
+    "callback_payload_schema": "channel_roundtable.v1.callback",
+    "auto_execute": true,
+    "auto_execute_scope": [
+      "auto_register",
+      "auto_dispatch",
+      "auto_callback",
+      "auto_continue_until_gate"
+    ],
+    "entrypoint": {
+      "layer": "command",
+      "name": "orch_command",
+      "version": "orchestration_entry_defaults_v1",
+      "mode": "no_input_defaults",
+      "command": "contract",
+      "command_alias_used": false
+    },
+    "gate_policy": {
+      "mode": "stop_on_gate",
+      "human_gate": "stop",
+      "business_gate": "stop",
+      "runtime_gate": "stop",
+      "notes": [
+        "auto_execute=true 表示自动注册 / 自动派发 / 自动回流 / 自动续推。",
+        "一旦命中 human gate / business gate / runtime safety gate，就正常停住，不绕过 gate。"
+      ]
+    },
+    "channel": {
+      "id": "discord:channel:1483883339701158102",
+      "channel_id": "discord:channel:1483883339701158102",
+      "name": "temporal-vs-langgraph-openclaw-company-architecture",
+      "channel_name": "temporal-vs-langgraph-openclaw-company-architecture",
+      "topic": "Temporal vs LangGraph｜OpenClaw 公司级编排架构"
+    },
+    "session": {},
+    "metadata": {
+      "default_source": "ambient_default_current_channel",
+      "matched_on": "discord:channel:1483883339701158102",
+      "template_name": "channel_roundtable.current_channel_defaults",
+      "topic": "Temporal vs LangGraph｜OpenClaw 公司级编排架构",
+      "entry_defaults_version": "orchestration_entry_defaults_v1",
+      "seed_scope": "channel_roundtable",
+      "payload_aliases": [
+        "channel_roundtable",
+        "generic_roundtable"
+      ]
+    }
+  },
+  "seed_payload": {
+    "summary": "当前频道结论已收口：不把 LangGraph 用作 OpenClaw 公司级编排底座；当前优先 OpenClaw native + thin orchestration。",
+    "channel_roundtable": {
+      "packet": {
+        "packet_version": "channel_roundtable_v1",
+        "scenario": "current_channel_architecture_roundtable",
+        "channel_id": "discord:channel:1483883339701158102",
+        "channel_name": "temporal-vs-langgraph-openclaw-company-architecture",
+        "topic": "Temporal vs LangGraph｜OpenClaw 公司级编排架构",
+        "owner": "main",
+        "generated_at": "2026-03-31T23:01:16+08:00"
+      },
+      "roundtable": {
+        "conclusion": "PASS",
+        "blocker": "none",
+        "owner": "main",
+        "next_step": "先在当前频道跑通 summary/decision/dispatch-plan，再回 trading 线补下一跳",
+        "completion_criteria": "当前频道产出 summary/decision/dispatch-plan，且默认白名单模式下 dispatch plan 为 triggered；其他频道仍保持默认 skipped"
+      },
+      "summary": "结论：不把 LangGraph 用作 OpenClaw 公司级编排底座；当前优先 OpenClaw native + thin orchestration。"
+    },
+    "generic_roundtable": {
+      "packet": {
+        "packet_version": "channel_roundtable_v1",
+        "scenario": "current_channel_architecture_roundtable",
+        "channel_id": "discord:channel:1483883339701158102",
+        "channel_name": "temporal-vs-langgraph-openclaw-company-architecture",
+        "topic": "Temporal vs LangGraph｜OpenClaw 公司级编排架构",
+        "owner": "main",
+        "generated_at": "2026-03-31T23:01:16+08:00"
+      },
+      "roundtable": {
+        "conclusion": "PASS",
+        "blocker": "none",
+        "owner": "main",
+        "next_step": "先在当前频道跑通 summary/decision/dispatch-plan，再回 trading 线补下一跳",
+        "completion_criteria": "当前频道产出 summary/decision/dispatch-plan，且默认白名单模式下 dispatch plan 为 triggered；其他频道仍保持默认 skipped"
+      },
+      "summary": "结论：不把 LangGraph 用作 OpenClaw 公司级编排底座；当前优先 OpenClaw native + thin orchestration。"
+    }
+  }
+}

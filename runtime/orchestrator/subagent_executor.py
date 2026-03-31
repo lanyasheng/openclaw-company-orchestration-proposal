@@ -331,6 +331,74 @@ def _get_task(task_id: str) -> Optional[SubagentResult]:
 
 # ============ 工具过滤 ============
 
+RUNNER_SCRIPT_NAME = "run_subagent_claude_v1.sh"
+RUNNER_SCRIPT_ENV_KEYS = ("OPENCLAW_SUBAGENT_RUNNER", "OPENCLAW_RUNNER_SCRIPT")
+WORKSPACE_ROOT_ENV_KEYS = ("OPENCLAW_WORKSPACE_ROOT",)
+
+
+def _resolve_runner_script(cwd: str) -> tuple[Optional[Path], List[str]]:
+    """解析 subagent runner 脚本路径。
+
+    历史实现默认假设 runner 总在 ``<workdir>/scripts``，
+    但 trading lane 的 workdir 可能是业务 repo（例如 workspace-trading），
+    真正的 canonical runner 实际位于全局 workspace/scripts 下。
+
+    解析顺序：
+    1. 显式环境变量（OPENCLAW_SUBAGENT_RUNNER / OPENCLAW_RUNNER_SCRIPT）
+    2. 显式 workspace root 环境变量（OPENCLAW_WORKSPACE_ROOT）
+    3. 任务 workdir 及其祖先目录
+    4. 当前模块所在 repo 的祖先目录（可覆盖 monorepo -> workspace 场景）
+    5. 默认全局 workspace: ~/.openclaw/workspace
+    """
+    searched: List[str] = []
+    seen: set[str] = set()
+
+    def _normalize(path: Path) -> Path:
+        try:
+            return path.expanduser().resolve()
+        except FileNotFoundError:
+            return path.expanduser()
+
+    def _record(path: Path) -> Optional[Path]:
+        normalized = _normalize(path)
+        text = str(normalized)
+        if text in seen:
+            return None
+        seen.add(text)
+        searched.append(text)
+        if normalized.exists():
+            return normalized
+        return None
+
+    for env_key in RUNNER_SCRIPT_ENV_KEYS:
+        raw = os.environ.get(env_key)
+        if not raw:
+            continue
+        resolved = _record(Path(raw))
+        if resolved is not None:
+            return resolved, searched
+
+    candidate_roots: List[Path] = []
+    for env_key in WORKSPACE_ROOT_ENV_KEYS:
+        raw = os.environ.get(env_key)
+        if raw:
+            candidate_roots.append(Path(raw))
+
+    cwd_path = Path(cwd).expanduser()
+    candidate_roots.append(cwd_path)
+    candidate_roots.extend(cwd_path.parents)
+
+    module_path = Path(__file__).resolve()
+    candidate_roots.extend(module_path.parents)
+    candidate_roots.append(Path.home() / ".openclaw" / "workspace")
+
+    for root in candidate_roots:
+        resolved = _record(_normalize(root) / "scripts" / RUNNER_SCRIPT_NAME)
+        if resolved is not None:
+            return resolved, searched
+
+    return None, searched
+
 
 def _filter_tools(
     available_tools: List[str],
@@ -489,11 +557,11 @@ class SubagentExecutor:
         """
         global _active_subagent_count
 
-        runner_script = Path(self.cwd) / "scripts" / "run_subagent_claude_v1.sh"
-        
+        runner_script, searched_runner_paths = _resolve_runner_script(self.cwd)
+
         test_mode = os.environ.get("OPENCLAW_TEST_MODE", "0") == "1" or BYPASS_FORK_GUARD
 
-        if not runner_script.exists():
+        if runner_script is None:
             if test_mode:
                 state_dir = str(SUBAGENT_STATE_DIR)
                 cmd = [
@@ -513,8 +581,14 @@ class SubagentExecutor:
             else:
                 _update_task_status(
                     task_id, "failed",
-                    error=f"Runner script not found: {runner_script}. "
-                          f"Set OPENCLAW_TEST_MODE=1 for test simulation.",
+                    error=(
+                        f"Runner script not found. searched={searched_runner_paths}. "
+                        f"Set OPENCLAW_TEST_MODE=1 for test simulation."
+                    ),
+                    metadata={
+                        "runner_script": None,
+                        "runner_search_paths": searched_runner_paths,
+                    },
                 )
                 with _active_subagent_count_lock:
                     _active_subagent_count -= 1
@@ -554,6 +628,8 @@ class SubagentExecutor:
                     "process_started": True,
                     "spawn_depth": current_depth + 1,
                     "process_group_id": pgid,
+                    "runner_script": str(runner_script) if runner_script is not None else None,
+                    "runner_search_paths": searched_runner_paths,
                 },
             )
             

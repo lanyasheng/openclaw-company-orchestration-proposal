@@ -67,7 +67,7 @@ orch status --task-id task_123 --output json
 ## 当前口径
 - 本目录已从 OpenClaw workspace 中最小导入 orchestration 相关实现子树
 - 不包含人格/记忆/runtime 数据/无关 skills/trading 杂项
-- 当前整体成熟度仍是 **thin bridge / allowlist / safe semi-auto**，不是默认全自动闭环
+- 当前成熟度已进入 **mixed mode**：`trading_roundtable` 已 cut over 为默认自动推进（保留高风险 gate），其他 channel 仍按 allowlist / safe semi-auto 管理
 
 ## Subagent Cleanup 语义（2026-03-25）
 
