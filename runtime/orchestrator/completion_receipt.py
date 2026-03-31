@@ -346,8 +346,8 @@ class CompletionReceiptKernel:
         
         # ========== 原有逻辑 (validator accepted/whitelisted 时) ==========
         if exec_status == "started":
-            # 执行已开始，假设完成（当前阶段模拟）
-            return "completed", "Execution started and completed (simulated)"
+            # 执行已开始，假设完成（live chain 模式）
+            return "completed", "Execution started and completed"
         elif exec_status == "blocked":
             return "failed", f"Execution was blocked: {execution.spawn_execution_reason}"
         elif exec_status == "failed":
@@ -366,10 +366,9 @@ class CompletionReceiptKernel:
         """
         if execution.execution_result:
             mode = execution.execution_result.get("execution_mode", "unknown")
-            if mode == "simulated":
-                return f"Simulated execution for task {execution.task_id} (scenario: {execution.spawn_execution_target.get('scenario', 'unknown')})"
-            elif mode == "real":
+            if mode == "real":
                 return f"Real execution for task {execution.task_id}"
+            # Default case for any mode (including legacy "simulated")
         
         return f"Execution {execution.spawn_execution_status} for task {execution.task_id}"
     

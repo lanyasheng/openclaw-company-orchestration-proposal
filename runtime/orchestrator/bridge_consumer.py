@@ -483,8 +483,8 @@ class BridgeConsumer:
         envelope = {
             "sessions_spawn_params": spawn_params,
             "execution_context": execution_context,
-            "consume_mode": "simulate" if self.policy.simulate_only else "execute",
-            "ready_for_dispatch": not self.policy.simulate_only,
+            "consume_mode": "execute" if self.policy.is_execute_mode() else "recorded",
+            "ready_for_dispatch": self.policy.is_execute_mode(),
         }
         
         # 如果 request 包含 business_context，添加到 envelope
@@ -542,8 +542,8 @@ class BridgeConsumer:
                 execute_time=_iso_now(),
                 execute_mode=self.policy.execute_mode,
                 sessions_spawn_result={
-                    "status": "simulated_execute",
-                    "message": "V8 execute mode: execution recorded (simulated)",
+                    "status": "recorded",
+                    "message": "V8 execute mode: execution recorded",
                     "input": spawn_input,
                 },
                 session_id=f"session_{request.request_id[4:]}",

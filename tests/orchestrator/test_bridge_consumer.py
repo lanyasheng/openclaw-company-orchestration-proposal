@@ -177,7 +177,7 @@ class TestBridgeConsumerHappyPath(unittest.TestCase):
         # 验证 execution envelope
         self.assertIn("sessions_spawn_params", artifact.execution_envelope)
         self.assertIn("execution_context", artifact.execution_envelope)
-        self.assertEqual(artifact.execution_envelope["consume_mode"], "simulate")
+        self.assertEqual(artifact.execution_envelope["consume_mode"], "recorded")
         
         # 验证 artifact 已写入文件
         artifact_file = BRIDGE_CONSUMED_DIR / f"{artifact.consumed_id}.json"

@@ -832,7 +832,7 @@ class TestP03Batch4RealAPICall(unittest.TestCase):
             # 验证 response 包含必要字段
             api_response = artifact.api_execution_result.api_response
             self.assertIsNotNone(api_response)
-            self.assertEqual(api_response.get("status"), "simulated")
+            self.assertEqual(api_response.get("status"), "recorded")
             self.assertTrue(api_response.get("safe_mode"))
             
             # 验证 request_snapshot 存在

@@ -788,7 +788,7 @@ class SessionsSpawnBridge:
                         request_snapshot=request.to_dict(),
                     )
             else:
-                # Safe mode / simulate only
+                # Safe mode / recorded only (not actually executed)
                 status = "pending"
                 reason = "Safe mode enabled; execution recorded but not executed"
                 api_result = APIExecutionResult(
@@ -796,7 +796,7 @@ class SessionsSpawnBridge:
                     api_execution_reason=reason,
                     api_execution_time=_iso_now(),
                     api_response={
-                        "status": "simulated",
+                        "status": "recorded",
                         "safe_mode": True,
                         "input": request.to_dict(),
                     },
