@@ -218,6 +218,120 @@ class DashboardPolishTest(unittest.TestCase):
             self.assertIn("task_demo_recent_001", remaining_index)
             self.assertIn("owner_real_reconciliation_001", remaining_index)
 
+    def test_callback_received_stale_not_counted_as_active(self):
+        """
+        验证 callback_received 状态的 stale 卡片不被算作 active。
+        这是针对 trading roundtable dashboard 显示 10 个 active 但实际 active=0 问题的修复。
+        """
+        now = datetime.now()
+        
+        # 10 张 stale callback_received 卡片（模拟 trading 历史卡片）
+        stale_callback_cards = [
+            self._make_card(
+                task_id=f"trading_history_{i:02d}",
+                stage="callback_received",
+                heartbeat=(now - timedelta(days=2)).isoformat(),
+                promised_eta=(now - timedelta(days=2)).isoformat(),
+                owner="trading",
+                scenario="trading_roundtable",
+            )
+            for i in range(10)
+        ]
+        
+        # 1 张 fresh callback_received 卡片（真实活跃）
+        fresh_callback_card = self._make_card(
+            task_id="trading_active_001",
+            stage="callback_received",
+            heartbeat=(now - timedelta(minutes=2)).isoformat(),
+            promised_eta=(now + timedelta(minutes=10)).isoformat(),
+            owner="trading",
+            scenario="trading_roundtable",
+        )
+        
+        # 2 张真实 running 卡片
+        running_cards = [
+            self._make_card(
+                task_id=f"trading_running_{i}",
+                stage="running",
+                heartbeat=(now - timedelta(minutes=1)).isoformat(),
+                promised_eta=(now + timedelta(minutes=30)).isoformat(),
+                owner="trading",
+                scenario="trading_roundtable",
+            )
+            for i in range(2)
+        ]
+        
+        # 1 张 completed 卡片
+        completed_card = self._make_card(
+            task_id="trading_completed_001",
+            stage="completed",
+            heartbeat=(now - timedelta(hours=1)).isoformat(),
+            promised_eta=(now - timedelta(hours=1)).isoformat(),
+            owner="trading",
+            scenario="trading_roundtable",
+        )
+        
+        all_cards = stale_callback_cards + [fresh_callback_card] + running_cards + [completed_card]
+        
+        snapshot = build_dashboard_snapshot(all_cards)
+        
+        # 验证 active count: 应该是 3 (2 running + 1 fresh callback_received)
+        # 而不是 13 (如果把所有 callback_received 都算上)
+        self.assertEqual(snapshot["summary"]["active_cards"], 3)
+        self.assertEqual(snapshot["summary"]["stale_cards"], 10)
+        
+        # 验证每张 stale callback_received 卡片被正确标记
+        enriched = {item["task_id"]: item for item in snapshot["all_cards"]}
+        for i in range(10):
+            task_id = f"trading_history_{i:02d}"
+            self.assertTrue(
+                enriched[task_id]["dashboard_health"]["is_stale"],
+                f"{task_id} should be marked as stale"
+            )
+        
+        # 验证 fresh callback_received 卡片不被标记为 stale
+        self.assertFalse(
+            enriched["trading_active_001"]["dashboard_health"]["is_stale"],
+            "fresh callback_received should not be stale"
+        )
+
+    def test_dashboard_snapshot_active_count_excludes_stale_callback_received(self):
+        """
+        验证 dashboard 统计口径：callback_received 无条件算 active 的问题已修复。
+        修前：10 张 stale callback_received + 2 running + 1 fresh callback = 13 active
+        修后：2 running + 1 fresh callback = 3 active
+        """
+        now = datetime.now()
+        
+        # 模拟问题场景：10 张 stale callback_received 卡片
+        stale_cards = [
+            self._make_card(
+                task_id=f"stale_cb_{i:02d}",
+                stage="callback_received",
+                heartbeat=(now - timedelta(days=5)).isoformat(),
+                promised_eta=(now - timedelta(days=5)).isoformat(),
+            )
+            for i in range(10)
+        ]
+        
+        # 2 张真实 running 卡片
+        running_cards = [
+            self._make_card(
+                task_id=f"running_{i}",
+                stage="running",
+                heartbeat=(now - timedelta(minutes=1)).isoformat(),
+                promised_eta=(now + timedelta(minutes=30)).isoformat(),
+            )
+            for i in range(2)
+        ]
+        
+        snapshot = build_dashboard_snapshot(stale_cards + running_cards)
+        
+        # 修前会是 12 (10 stale callback + 2 running)
+        # 修后应该是 2 (只有 running)
+        self.assertEqual(snapshot["summary"]["active_cards"], 2)
+        self.assertEqual(snapshot["summary"]["stale_cards"], 10)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

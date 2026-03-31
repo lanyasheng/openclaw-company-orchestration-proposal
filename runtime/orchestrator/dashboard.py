@@ -437,10 +437,15 @@ def build_dashboard_snapshot(
     for card in cards:
         by_stage[card.stage] = by_stage.get(card.stage, 0) + 1
         by_owner[card.owner] = by_owner.get(card.owner, 0) + 1
-        if card.stage in {"dispatch", "running", "callback_received", "closeout"}:
+        
+        # 计算 active count: callback_received 只有非 stale 才算 active
+        health = get_card_health(card)
+        if card.stage in {"dispatch", "running", "closeout"}:
+            active_count += 1
+        elif card.stage == "callback_received" and not health["is_stale"]:
+            # callback_received 只有近期活跃才算 active，避免历史 stale 卡污染统计
             active_count += 1
 
-        health = get_card_health(card)
         if health["is_stale"]:
             stale_count += 1
 
@@ -479,13 +484,20 @@ def create_summary_panel(cards: List[ObservabilityCard], cleanup_report: Optiona
     by_stage: Dict[str, int] = {}
     by_owner: Dict[str, int] = {}
     stale_count = 0
+    active_count = 0
     for card in cards:
         by_stage[card.stage] = by_stage.get(card.stage, 0) + 1
         by_owner[card.owner] = by_owner.get(card.owner, 0) + 1
-        if get_card_health(card)["is_stale"]:
+        health = get_card_health(card)
+        if health["is_stale"]:
             stale_count += 1
+        # 计算 active: callback_received 只有非 stale 才算
+        if card.stage in {"dispatch", "running", "closeout"}:
+            active_count += 1
+        elif card.stage == "callback_received" and not health["is_stale"]:
+            active_count += 1
 
-    active = sum(by_stage.get(stage, 0) for stage in ["dispatch", "running", "callback_received", "closeout"])
+    active = active_count
     completed = by_stage.get("completed", 0)
     failed = by_stage.get("failed", 0)
 
