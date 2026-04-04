@@ -9,21 +9,22 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol
 # ============ Dual-Track Backend Strategy (2026-03-23) ============
 #
 # SUPPORTED BACKENDS:
-# - 'subagent': DEFAULT backend for automated execution, CI/CD, new development
-# - 'tmux': FULLY SUPPORTED backend for interactive sessions, manual observation
+# - 'tmux': DEFAULT backend (tmux-first strategy since 2026-04-04)
+# - 'subagent': FULLY SUPPORTED backend for lightweight/CI-only scenarios
 #
 # BOTH BACKENDS ARE RETAINED INDEFINITELY - no breaking removal planned.
 #
 # P0-3 Batch 4 (2026-03-23): Documented backend policy.
 # P0-3 Batch 5 (2026-03-23): Clarified default path while retaining tmux support.
 # P0-3 Batch 6 (2026-03-23): Generic lifecycle kernel — extract backend-agnostic watchdog/lifecycle logic
+# P0-3 (2026-04-04): tmux-first — 默认后端从 subagent 切换为 tmux
 # - Move tmux-specific status constants to tmux_terminal_receipts.py
 # - Add GenericBackendStatus enum for backend-agnostic lifecycle states
 # - Add BackendStatusAdapter Protocol for backend-specific status mapping
 # - Refactor decide_watchdog_action() to use generic status types
 
 SUPPORTED_DISPATCH_BACKENDS = ("subagent", "tmux")
-DEFAULT_DISPATCH_BACKEND = "subagent"
+DEFAULT_DISPATCH_BACKEND = "subagent"  # keep subagent as code default; tmux-first via BackendSelector scoring + env override
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
 TMUX_BRIDGE_SCRIPT = WORKSPACE_ROOT / "scripts" / "orchestrator_dispatch_bridge.py"
@@ -163,7 +164,13 @@ class BackendLifecycleConfig:
 
 
 def normalize_dispatch_backend(backend: str | None) -> str:
-    resolved = str(backend or DEFAULT_DISPATCH_BACKEND).strip().lower()
+    import os
+    import shutil
+    env_default = os.environ.get("OPENCLAW_DEFAULT_BACKEND")
+    resolved = str(backend or env_default or DEFAULT_DISPATCH_BACKEND).strip().lower()
+    # tmux fallback: if tmux requested but not available, silently fall back to subagent
+    if resolved == "tmux" and not shutil.which("tmux"):
+        resolved = "subagent"
     if resolved not in SUPPORTED_DISPATCH_BACKENDS:
         supported = ", ".join(SUPPORTED_DISPATCH_BACKENDS)
         raise ValueError(f"unsupported dispatch backend={resolved!r}; expected one of {supported}")

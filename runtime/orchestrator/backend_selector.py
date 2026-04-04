@@ -86,9 +86,10 @@ class BackendSelector:
             )
         
         # 收集决策因素
+        # 策略变更 (2026-04-04): tmux-first — tmux 作为默认后端，subagent 仅在明确适合时选用
         factors: Dict[str, Any] = {}
-        score_tmux = 0.0
-        score_subagent = 0.3  # subagent 默认基础分（降低，让 tmux 更容易在长任务中胜出）
+        score_tmux = 0.3  # tmux 默认基础分，优先选择 tmux
+        score_subagent = 0.0
         
         # 因素 1: 预计时长
         if estimated_duration_minutes is not None:
