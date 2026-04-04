@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+import subprocess
+
 from workflow_state import WorkflowState, BatchEntry, TaskEntry
 from executor_interface import TaskExecutorBase, SubagentTaskExecutor, TaskResult
 
@@ -42,12 +44,38 @@ class BatchExecutor:
         self._executor: TaskExecutorBase = executor or SubagentTaskExecutor(
             workspace_dir, timeout_seconds
         )
+        # When True, _sync_to_state_machine becomes a no-op.
+        # Set by WorkflowLoop to prevent concurrent file writes:
+        # WorkflowLoop._save() is the single writer for workflow_state
+        # during loop execution; state_machine sync would trigger
+        # cascading writes to the same file, causing lost updates.
+        self.skip_store_sync = False
+
+    @staticmethod
+    def _tmux_session_exists(session_name: str) -> bool:
+        """Check whether a tmux session with the given name is already alive."""
+        try:
+            ret = subprocess.run(
+                ["tmux", "has-session", "-t", session_name],
+                capture_output=True, timeout=5,
+            )
+            return ret.returncode == 0
+        except Exception:
+            return False
 
     def execute_batch(self, batch: BatchEntry, workflow_state: WorkflowState) -> None:
         batch.status = "running"
         batch.started_at = _iso_now()
         for task in batch.tasks:
             if task.status != "pending":
+                continue
+            # Bug-2 guard: skip if a tmux session for this task already exists
+            if task.subagent_task_id and self._tmux_session_exists(task.subagent_task_id):
+                logger.info(
+                    "task %s already has live tmux session %s — skipping dispatch",
+                    task.task_id, task.subagent_task_id,
+                )
+                task.status = "running"
                 continue
             task.status = "running"
             task.started_at = _iso_now()
@@ -170,6 +198,14 @@ class BatchExecutor:
     def _redispatch_pending(self, tasks: list[TaskEntry], batch: BatchEntry) -> None:
         """Re-dispatch tasks that were reset to pending after a retry."""
         for task in tasks:
+            # Bug-2 guard: skip if a tmux session for this task already exists
+            if task.subagent_task_id and self._tmux_session_exists(task.subagent_task_id):
+                logger.info(
+                    "task %s already has live tmux session %s — skipping redispatch",
+                    task.task_id, task.subagent_task_id,
+                )
+                task.status = "running"
+                continue
             task.status = "running"
             task.started_at = _iso_now()
             try:
@@ -182,10 +218,11 @@ class BatchExecutor:
                 task.error = str(e)
                 task.completed_at = _iso_now()
 
-    @staticmethod
     def _sync_to_state_machine(
-        task_id: str, batch_id: str, status: str, result: dict | None = None
+        self, task_id: str, batch_id: str, status: str, result: dict | None = None
     ) -> None:
+        if self.skip_store_sync:
+            return
         try:
             from state_sync import sync_task_to_state_machine
             sync_task_to_state_machine(task_id, batch_id, status, result)

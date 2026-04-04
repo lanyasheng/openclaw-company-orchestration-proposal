@@ -47,6 +47,10 @@ class WorkflowLoop:
                 executor = TmuxTaskExecutor(workspace_dir, timeout_seconds)
         # else: default SubagentTaskExecutor via BatchExecutor
         self.executor = BatchExecutor(workspace_dir, timeout_seconds, executor=executor)
+        # WorkflowLoop._save() is the single writer for workflow_state.
+        # Disable state_machine sync in BatchExecutor to prevent cascading
+        # writes to the same file (lost-update race condition).
+        self.executor.skip_store_sync = True
         self.reviewer = BatchReviewer()
         self.poll_interval = poll_interval
         self.max_runtime_seconds = max_runtime_seconds
