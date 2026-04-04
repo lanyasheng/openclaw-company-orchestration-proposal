@@ -72,26 +72,38 @@ OUTPUT_LOG="$STATE_DIR/$TASK_ID.output.log"
 # ──── Helper Functions ────────────────────────────────────────────────
 write_result() {
     local status="$1"
-    local result="$2"
+    local result_file="$2"
     local error="${3:-}"
-    python3 - "$TASK_ID" "$status" "$result" "$error" "$TASK_DESC" "$TASK_LABEL" "$STATE_FILE" <<'PYEOF'
-import json, sys
-task_id, status, result, error, desc, label, out_path = sys.argv[1:8]
+    local error_file
+    error_file="$(mktemp)"
+    printf '%s' "$error" > "$error_file"
+    python3 - "$TASK_ID" "$status" "$result_file" "$error_file" "$TASK_DESC" "$TASK_LABEL" "$STATE_FILE" "$TIMEOUT_S" <<'PYEOF'
+import json, sys, os
+task_id, status, result_path, error_path, desc, label, out_path, timeout_s = sys.argv[1:9]
+result = None
+if os.path.isfile(result_path) and os.path.getsize(result_path) > 0:
+    with open(result_path, "r") as f:
+        result = f.read()
+error = None
+if os.path.isfile(error_path) and os.path.getsize(error_path) > 0:
+    with open(error_path, "r") as f:
+        error = f.read()
 data = {
     "task_id": task_id,
     "status": status,
-    "result": result if result else None,
-    "error": error if error else None,
+    "result": result,
+    "error": error,
     "task": desc,
     "config": {
         "label": label,
         "runtime": "subagent",
-        "timeout_seconds": 900,
+        "timeout_seconds": int(timeout_s),
     },
 }
 with open(out_path, "w") as f:
     json.dump(data, f, indent=2)
 PYEOF
+    rm -f "$error_file"
 }
 
 log() {
@@ -117,27 +129,22 @@ timeout "$TIMEOUT_S" "$CLAUDE_BIN" --print --permission-mode bypassPermissions "
 AGENT_EXIT=$?
 set -e
 
-# Read output
+# Append output to log
 if [ -f "$TEMP_OUTPUT" ]; then
-    AGENT_OUTPUT="$(cat "$TEMP_OUTPUT")"
-else
-    AGENT_OUTPUT=""
+    cat "$TEMP_OUTPUT" >> "$OUTPUT_LOG"
 fi
-
-# Append to log
-echo "$AGENT_OUTPUT" >> "$OUTPUT_LOG"
 
 # ──── Result Handling ─────────────────────────────────────────────────
 if [ "$AGENT_EXIT" -eq 0 ]; then
     log "[runner] Task $TASK_ID completed successfully"
-    write_result "completed" "$AGENT_OUTPUT" ""
+    write_result "completed" "$TEMP_OUTPUT" ""
     exit 0
 elif [ "$AGENT_EXIT" -eq 124 ]; then
     log "[runner] Task $TASK_ID timed out after ${TIMEOUT_S}s"
-    write_result "timeout" "" "Task timed out after ${TIMEOUT_S} seconds"
+    write_result "timeout" "/dev/null" "Task timed out after ${TIMEOUT_S} seconds"
     exit 1
 else
     log "[runner] Task $TASK_ID failed (exit code $AGENT_EXIT)"
-    write_result "failed" "" "Claude CLI exited with code $AGENT_EXIT"
+    write_result "failed" "/dev/null" "Claude CLI exited with code $AGENT_EXIT"
     exit 1
 fi

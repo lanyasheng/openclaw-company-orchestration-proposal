@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -140,12 +141,13 @@ class WorkflowDispatcher:
             if handler is None:
                 raise WorkflowDispatchError(f"未注册的 step handler: {step['type']}")
 
+            step_signal = copy.deepcopy(signal) if signal is not None else None
             context = StepContext(
                 workflow=normalized_workflow,
                 step=step,
                 task_id=task_id,
                 request=request,
-                signal=signal,
+                signal=step_signal,
                 record=record,
                 scheduler=scheduler,
                 step_outputs=dict(scheduler.get("outputs", {})),
@@ -371,6 +373,7 @@ class WorkflowDispatcher:
         scheduler = evidence.get("scheduler")
         if isinstance(scheduler, dict) and scheduler.get("workflow_id") == workflow["workflow_id"]:
             scheduler.setdefault("cursor", 0)
+            scheduler["cursor"] = min(scheduler["cursor"], len(workflow["steps"]))
             scheduler.setdefault("status", "queued")
             scheduler.setdefault("current_step_id", None)
             scheduler.setdefault("waiting_for", None)
@@ -498,15 +501,6 @@ class WorkflowDispatcher:
                 self._nested_get(dispatch_handle, "dispatch_evidence", "response_excerpt", "active_task_count"),
             )
         )
-        if active_task_count is not None and active_task_count <= 0:
-            return {
-                "code": "subagent_waiting_without_active_execution",
-                "resolution": "dropped",
-                "summary": f"waiting_for=subagent_terminal for {child_session_key} but active_task_count={active_task_count}",
-                "child_session_key": child_session_key,
-                "active_task_count": active_task_count,
-            }
-
         run_status = str(
             self._first_non_empty(
                 run_handle.get("status"),
@@ -515,7 +509,16 @@ class WorkflowDispatcher:
             )
             or ""
         ).strip().lower()
-        if run_status in {"failed", "timeout", "timed_out", "cancelled", "canceled", "dropped", "rejected", "closed", "exited"}:
+        if run_status in {"failed", "timeout", "timed_out", "cancelled", "canceled"}:
+            if active_task_count is not None and active_task_count <= 0:
+                return {
+                    "code": f"subagent_waiting_after_{run_status}",
+                    "resolution": "dropped",
+                    "summary": f"waiting_for=subagent_terminal for {child_session_key} but run_handle.status={run_status} and active_task_count={active_task_count}",
+                    "child_session_key": child_session_key,
+                    "run_status": run_status,
+                    "active_task_count": active_task_count,
+                }
             return {
                 "code": f"subagent_waiting_after_{run_status}",
                 "resolution": "dropped",
@@ -523,6 +526,9 @@ class WorkflowDispatcher:
                 "child_session_key": child_session_key,
                 "run_status": run_status,
             }
+
+        # active_task_count <= 0 with non-terminal run_status is only a warning, not an anomaly.
+        # The count is a dispatch-time snapshot and may be stale.
 
         return None
 
@@ -605,7 +611,9 @@ class WorkflowDispatcher:
             if not isinstance(value, Mapping):
                 continue
             candidate_child_session_key = value.get("child_session_key")
-            if candidate_child_session_key is not None and str(candidate_child_session_key) != child_session_key:
+            if candidate_child_session_key is None:
+                continue
+            if str(candidate_child_session_key) != child_session_key:
                 continue
             if isinstance(value.get("run_handle"), Mapping) or isinstance(value.get("dispatch_evidence"), Mapping):
                 return dict(value)

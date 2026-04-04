@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re as _re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+
+logger = logging.getLogger(__name__)
 
 from .context_render import render_context_value
 from .scheduler import StepContext, StepOutcome
@@ -118,7 +122,7 @@ class GatewayToolInvokeSubagentTransport:
         )
 
         try:
-            with self.opener.open(http_request) as response:
+            with self.opener.open(http_request, timeout=30) as response:
                 raw_body = response.read().decode("utf-8")
         except urllib_error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
@@ -151,7 +155,8 @@ class GatewayToolInvokeSubagentTransport:
             return None
         try:
             config = load_json_file(path)
-        except Exception:  # noqa: BLE001 - 配置读取失败时走 env/显式 token 即可
+        except Exception as exc:  # noqa: BLE001 - 配置读取失败时走 env/显式 token 即可
+            logger.warning("Failed to read gateway token from config %s: %s", path, exc)
             return None
         gateway = config.get("gateway", {})
         if not isinstance(gateway, dict):
@@ -386,7 +391,7 @@ def create_subagent_dispatch_handler(
 
 
 def _safe_file_component(value: str) -> str:
-    return value.replace(":", "__").replace("/", "__")
+    return _re.sub(r"[^a-zA-Z0-9_\-.]", "_", value)
 
 
 def _now_iso() -> str:

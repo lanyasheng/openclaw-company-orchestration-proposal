@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -39,7 +41,11 @@ def load_json_file(path: Path) -> Dict[str, Any]:
 def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    data = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
     temp_path.replace(path)
 
 
@@ -100,9 +106,10 @@ def normalize_continuation_contract(value: Any) -> Dict[str, Any]:
     if missing:
         raise TaskRegistryError(f"continuation 缺少字段: {', '.join(missing)}")
 
-    stopped_because = _normalize_optional_string(value.get("stopped_because"), field_name="stopped_because")
-    if stopped_because is None:
-        raise TaskRegistryError("continuation.stopped_because 不能为空")
+    raw_stopped_because = value.get("stopped_because")
+    if raw_stopped_because is None:
+        raise TaskRegistryError("continuation.stopped_because 不能为 None")
+    stopped_because = str(raw_stopped_because).strip()
 
     return {
         "next_step": _normalize_optional_string(value.get("next_step"), field_name="next_step"),
@@ -211,10 +218,20 @@ class FileTaskRegistry:
     def exists(self, task_id: str) -> bool:
         return self.task_path(task_id).exists()
 
+    def _file_lock_path(self) -> Path:
+        lock_path = self.tasks_dir / ".registry.lock"
+        return lock_path
+
     def upsert(self, record: Mapping[str, Any]) -> Dict[str, Any]:
         normalized = validate_record(record)
         with self._lock:
-            write_json_atomic(self.task_path(normalized["task_id"]), normalized)
+            lock_path = self._file_lock_path()
+            with open(lock_path, "a") as lock_fd:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                try:
+                    write_json_atomic(self.task_path(normalized["task_id"]), normalized)
+                finally:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
         return normalized
 
     def load(self, task_id: str) -> Dict[str, Any]:
@@ -234,19 +251,27 @@ class FileTaskRegistry:
         callback_status: str = "pending",
         continuation: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
-        if self.exists(task_id):
-            return self.load(task_id)
-        return self.upsert(
-            build_task_record(
-                task_id=task_id,
-                owner=owner,
-                runtime=runtime,
-                state=state,
-                evidence=evidence,
-                callback_status=callback_status,
-                continuation=continuation,
-            )
-        )
+        with self._lock:
+            lock_path = self._file_lock_path()
+            with open(lock_path, "a") as lock_fd:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                try:
+                    if self.task_path(task_id).exists():
+                        return validate_record(load_json_file(self.task_path(task_id)))
+                    record = build_task_record(
+                        task_id=task_id,
+                        owner=owner,
+                        runtime=runtime,
+                        state=state,
+                        evidence=evidence,
+                        callback_status=callback_status,
+                        continuation=continuation,
+                    )
+                    normalized = validate_record(record)
+                    write_json_atomic(self.task_path(task_id), normalized)
+                    return normalized
+                finally:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
     def patch(
         self,
@@ -260,22 +285,28 @@ class FileTaskRegistry:
         continuation: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         with self._lock:
-            record = self.load(task_id)
-            if state is not None:
-                record["state"] = state
-            if runtime is not None:
-                record["runtime"] = runtime
-            if evidence_replace is not None:
-                record["evidence"] = evidence_replace
-            elif evidence_merge is not None:
-                current = record.get("evidence", {})
-                if not isinstance(current, dict):
-                    raise TaskRegistryError("当前 evidence 不是 object，不能做 merge")
-                record["evidence"] = deep_merge(current, dict(evidence_merge))
-            if callback_status is not None:
-                record["callback_status"] = callback_status
-            if continuation is not None:
-                record["continuation"] = dict(continuation)
-            normalized = validate_record(record)
-            write_json_atomic(self.task_path(task_id), normalized)
-            return normalized
+            lock_path = self._file_lock_path()
+            with open(lock_path, "a") as lock_fd:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                try:
+                    record = self.load(task_id)
+                    if state is not None:
+                        record["state"] = state
+                    if runtime is not None:
+                        record["runtime"] = runtime
+                    if evidence_replace is not None:
+                        record["evidence"] = evidence_replace
+                    elif evidence_merge is not None:
+                        current = record.get("evidence", {})
+                        if not isinstance(current, dict):
+                            raise TaskRegistryError("当前 evidence 不是 object，不能做 merge")
+                        record["evidence"] = deep_merge(current, dict(evidence_merge))
+                    if callback_status is not None:
+                        record["callback_status"] = callback_status
+                    if continuation is not None:
+                        record["continuation"] = dict(continuation)
+                    normalized = validate_record(record)
+                    write_json_atomic(self.task_path(task_id), normalized)
+                    return normalized
+                finally:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)

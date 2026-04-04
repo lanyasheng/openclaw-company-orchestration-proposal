@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+
+logger = logging.getLogger(__name__)
 
 from .callback_transport import CallbackTransportResult, FileCallbackTransport
 from .scheduler import StepContext, StepOutcome
@@ -96,7 +99,7 @@ def subagent_local_cli_handler(context: StepContext) -> StepOutcome:
             check=False,
             capture_output=True,
             text=True,
-            timeout=float(timeout_seconds) if timeout_seconds is not None else None,
+            timeout=float(timeout_seconds) if timeout_seconds is not None else 3600.0,
         )
         terminal = {
             "terminal_state": "completed" if result.returncode == 0 else "failed",
@@ -140,6 +143,8 @@ def await_terminal_handler(context: StepContext) -> StepOutcome:
     signal_key = str(context.step.get("signal_key", "terminal"))
     terminal_signal = (context.signal or {}).get(signal_key)
     child_session_key = _extract_child_session_key(context)
+    if child_session_key is None:
+        raise ValueError("await_terminal 需要 child_session_key，但未能从上游 step 输出中提取")
     ingest = SubagentTerminalIngest(context.registry)
 
     if terminal_signal is None:
@@ -207,8 +212,11 @@ def collect_and_classify_handler(context: StepContext) -> StepOutcome:
         context.request.get("artifact_json_path"),
     )
     workspace_repo = str(context.request.get("workspace_repo") or "").strip()
-    if workspace_repo != "workspace-trading":
-        raise ValueError("collect_and_classify 仅允许 workspace_repo=workspace-trading")
+    allowed_workspace_repos = context.step.get("allowed_workspace_repos", ["workspace-trading"])
+    if workspace_repo not in allowed_workspace_repos:
+        raise ValueError(
+            f"collect_and_classify 仅允许 workspace_repo 在 {allowed_workspace_repos} 中，当前: {workspace_repo}"
+        )
 
     workspace_repo_path = _require_workspace_repo_path(context)
     payload: Dict[str, Any] = {
@@ -597,8 +605,10 @@ def _render_value(value: Any, context: StepContext) -> Any:
 
 def _render_string(template: str, context: StepContext) -> str:
     def replace(match: re.Match[str]) -> str:
-        resolved = _resolve_dotted_path(match.group(1), context)
+        path_expr = match.group(1)
+        resolved = _resolve_dotted_path(path_expr, context)
         if resolved is None:
+            logger.warning("Template variable resolved to None: {{%s}}", path_expr)
             return ""
         return str(resolved)
 

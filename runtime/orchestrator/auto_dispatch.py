@@ -18,11 +18,15 @@ auto_dispatch.py — Universal Partial-Completion Continuation Framework v3
 from __future__ import annotations
 
 import json
+import logging
 import os
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+
+logger = logging.getLogger(__name__)
 
 from task_registration import (
     TaskRegistry,
@@ -53,6 +57,12 @@ __all__ = [
 
 DISPATCH_ARTIFACT_VERSION = "auto_dispatch_v1"
 
+MAX_CONCURRENT_DISPATCHES = 4
+MAX_DISPATCHES_PER_MINUTE = 10
+
+# Module-level rate limiting state
+_recent_dispatch_times: List[float] = []
+
 DispatchStatus = Literal["dispatched", "skipped", "blocked"]
 
 # 默认白名单场景（低风险）
@@ -81,13 +91,12 @@ def _dispatch_file(dispatch_id: str) -> Path:
 
 
 def _iso_now() -> str:
-    """返回当前 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    """返回当前 ISO-8601 时间戳（UTC）"""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _generate_dispatch_id() -> str:
     """生成稳定 dispatch ID"""
-    import uuid
     return f"dispatch_{uuid.uuid4().hex[:12]}"
 
 
@@ -191,7 +200,7 @@ class DispatchArtifact:
         """写入 dispatch artifact 到文件，同时同步到 WorkflowState"""
         _ensure_dispatch_dir()
         dispatch_file = _dispatch_file(self.dispatch_id)
-        tmp_file = dispatch_file.with_suffix(".tmp")
+        tmp_file = dispatch_file.with_name(f".{dispatch_file.name}.{uuid.uuid4().hex}.tmp")
         with open(tmp_file, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         tmp_file.replace(dispatch_file)
@@ -206,8 +215,8 @@ class DispatchArtifact:
                         "dispatch_status": self.dispatch_status,
                     },
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to sync dispatch artifact to WorkflowState for task %s: %s", self.task_id, exc)
         return dispatch_file
 
 
@@ -520,25 +529,54 @@ class DispatchExecutor:
     ) -> DispatchArtifact:
         """
         执行 dispatch：评估 policy -> 生成 artifact -> 写入文件 -> (可选) 启动 subagent 执行。
-        
+
         P0-5 Batch C (2026-03-25): Integrated SubagentExecutor for real dispatch execution.
-        
+
         Args:
             record: Task registration record
             existing_dispatches: 已存在的 dispatch artifacts
-        
+
         Returns:
             DispatchArtifact（已写入文件）
         """
+        import time as _time
+
+        # 0. Rate limiting: check concurrent dispatches and per-minute rate
+        if existing_dispatches:
+            in_progress_count = sum(
+                1 for d in existing_dispatches if d.dispatch_status == "dispatched"
+            )
+            if in_progress_count >= MAX_CONCURRENT_DISPATCHES:
+                logger.warning(
+                    "Concurrent dispatch limit reached (%d/%d), skipping",
+                    in_progress_count,
+                    MAX_CONCURRENT_DISPATCHES,
+                )
+                return self._make_skipped_artifact(
+                    record, f"Concurrent dispatch limit reached ({in_progress_count}/{MAX_CONCURRENT_DISPATCHES})"
+                )
+
+        now = _time.monotonic()
+        _recent_dispatch_times[:] = [t for t in _recent_dispatch_times if now - t < 60]
+        if len(_recent_dispatch_times) >= MAX_DISPATCHES_PER_MINUTE:
+            logger.warning(
+                "Per-minute dispatch rate limit reached (%d/%d), skipping",
+                len(_recent_dispatch_times),
+                MAX_DISPATCHES_PER_MINUTE,
+            )
+            return self._make_skipped_artifact(
+                record, f"Rate limit reached ({len(_recent_dispatch_times)}/{MAX_DISPATCHES_PER_MINUTE} per minute)"
+            )
+
         # 1. Evaluate policy
         policy_evaluation = self.selector.evaluate_policy(record, existing_dispatches)
-        
+
         # 2. Generate artifact
         artifact = self.generate_dispatch_artifact(record, policy_evaluation)
-        
+
         # 3. Write artifact
         artifact.write()
-        
+
         # 4. Update task status（如果 dispatched）
         if artifact.dispatch_status == "dispatched":
             self.selector.registry.update_status(
@@ -549,20 +587,66 @@ class DispatchExecutor:
                     "dispatch_time": artifact.dispatch_time,
                 },
             )
-            
+
             # P0-5 Batch C: Execute dispatch intent via SubagentExecutor
             # This actually starts the subagent to execute the dispatched task
             if artifact.execution_intent and "recommended_spawn" in artifact.execution_intent:
-                subagent_task_id = self._execute_dispatch_intent(
-                    record=record,
-                    dispatch_id=artifact.dispatch_id,
-                    execution_intent=artifact.execution_intent,
-                )
-                # Update artifact with subagent task info
-                artifact.metadata["subagent_task_id"] = subagent_task_id
-                artifact.metadata["execution_started"] = True
-                artifact.write()
-        
+                try:
+                    subagent_task_id = self._execute_dispatch_intent(
+                        record=record,
+                        dispatch_id=artifact.dispatch_id,
+                        execution_intent=artifact.execution_intent,
+                    )
+                    # Update artifact with subagent task info
+                    artifact.metadata["subagent_task_id"] = subagent_task_id
+                    artifact.metadata["execution_started"] = True
+                    artifact.write()
+                except Exception as e:
+                    # Rollback status on dispatch failure
+                    logger.error(
+                        "Dispatch execution failed for %s, rolling back to registered: %s",
+                        record.registration_id,
+                        e,
+                    )
+                    self.selector.registry.update_status(
+                        record.registration_id,
+                        "registered",
+                        metadata={
+                            "dispatch_id": artifact.dispatch_id,
+                            "rollback_reason": str(e),
+                            "rollback_time": _iso_now(),
+                        },
+                    )
+                    artifact.dispatch_status = "blocked"
+                    artifact.dispatch_reason = f"Execution failed, rolled back: {e}"
+                    artifact.metadata["execution_started"] = False
+                    artifact.write()
+
+            _recent_dispatch_times.append(now)
+
+        return artifact
+
+    def _make_skipped_artifact(
+        self,
+        record: TaskRegistrationRecord,
+        reason: str,
+    ) -> DispatchArtifact:
+        """Create a skipped dispatch artifact for rate-limit / concurrency rejections."""
+        artifact = DispatchArtifact(
+            dispatch_id=_generate_dispatch_id(),
+            registration_id=record.registration_id,
+            task_id=record.task_id,
+            dispatch_status="skipped",
+            dispatch_reason=reason,
+            dispatch_time=_iso_now(),
+            dispatch_target={
+                "scenario": record.metadata.get("scenario", ""),
+                "adapter": record.metadata.get("adapter", ""),
+                "batch_id": record.batch_id,
+                "owner": record.owner,
+            },
+        )
+        artifact.write()
         return artifact
     
     def _execute_dispatch_intent(
