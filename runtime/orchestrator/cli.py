@@ -199,7 +199,7 @@ def cmd_plan(description: str, config_path: str):
     print(f"\nRun with: orchestrator-cli run {out_path}")
 
 
-def cmd_run(state_path: str, workspace_dir: str = "."):
+def cmd_run(state_path: str, workspace_dir: str = ".", backend: str = "auto"):
     """运行工作流"""
     from workflow_state_store import get_store
     store = get_store()
@@ -231,7 +231,7 @@ def cmd_run(state_path: str, workspace_dir: str = "."):
         if engine == "LangGraph":
             result = run_workflow(ws, state_path, workspace_dir)
         else:
-            loop = WorkflowLoop(workspace_dir)
+            loop = WorkflowLoop(workspace_dir, backend=backend)
             result = loop.run(state_path)
     except Exception as e:
         print(f"\nError during execution: {type(e).__name__}: {e}")
@@ -330,14 +330,19 @@ def main():
 
     if cmd == "run":
         if len(sys.argv) < 3:
-            print("Usage: orchestrator-cli run <state.json> [--workspace <dir>]")
+            print("Usage: orchestrator-cli run <state.json> [--workspace <dir>] [--backend tmux|subagent|auto]")
             sys.exit(1)
         workspace = "."
+        backend = os.environ.get("OPENCLAW_DEFAULT_BACKEND", "auto")
         if "--workspace" in sys.argv:
             idx = sys.argv.index("--workspace")
             if idx + 1 < len(sys.argv):
                 workspace = sys.argv[idx + 1]
-        cmd_run(sys.argv[2], workspace)
+        if "--backend" in sys.argv:
+            idx = sys.argv.index("--backend")
+            if idx + 1 < len(sys.argv):
+                backend = sys.argv[idx + 1]
+        cmd_run(sys.argv[2], workspace, backend)
         return
 
     if cmd == "resume":

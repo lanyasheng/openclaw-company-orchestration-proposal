@@ -33,8 +33,19 @@ class WorkflowLoop:
         workspace_dir: str,
         timeout_seconds: int = 900,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
+        backend: str = "auto",
     ):
-        self.executor = BatchExecutor(workspace_dir, timeout_seconds)
+        executor = None
+        if backend == "tmux":
+            from tmux_executor import TmuxTaskExecutor
+            executor = TmuxTaskExecutor(workspace_dir, timeout_seconds)
+        elif backend == "auto":
+            import shutil
+            if shutil.which("tmux"):
+                from tmux_executor import TmuxTaskExecutor
+                executor = TmuxTaskExecutor(workspace_dir, timeout_seconds)
+        # else: default SubagentTaskExecutor via BatchExecutor
+        self.executor = BatchExecutor(workspace_dir, timeout_seconds, executor=executor)
         self.reviewer = BatchReviewer()
         self.poll_interval = poll_interval
 
