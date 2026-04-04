@@ -206,14 +206,18 @@ def cmd_run(state_path: str, workspace_dir: str = ".", backend: str = "auto"):
     store.set_active(os.path.abspath(state_path))
     os.environ["OPENCLAW_WORKFLOW_STATE_PATH"] = os.path.abspath(state_path)
 
-    try:
-        from workflow_graph import run_workflow
-        from workflow_state import load_workflow_state
-        engine = "LangGraph"
-    except ImportError:
+    from workflow_state import load_workflow_state
+    if backend in ("tmux", "auto"):
+        # tmux backend requires WorkflowLoop (LangGraph doesn't support custom executors)
         from workflow_loop import WorkflowLoop
-        from workflow_state import load_workflow_state
         engine = "WorkflowLoop"
+    else:
+        try:
+            from workflow_graph import run_workflow
+            engine = "LangGraph"
+        except ImportError:
+            from workflow_loop import WorkflowLoop
+            engine = "WorkflowLoop"
 
     try:
         ws = load_workflow_state(state_path)
