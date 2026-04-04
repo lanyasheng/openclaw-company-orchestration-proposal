@@ -34,6 +34,7 @@ class WorkflowLoop:
         timeout_seconds: int = 900,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         backend: str = "auto",
+        max_runtime_seconds: int = 86400,
     ):
         executor = None
         if backend == "tmux":
@@ -48,6 +49,7 @@ class WorkflowLoop:
         self.executor = BatchExecutor(workspace_dir, timeout_seconds, executor=executor)
         self.reviewer = BatchReviewer()
         self.poll_interval = poll_interval
+        self.max_runtime_seconds = max_runtime_seconds
 
     def run(self, workflow_state_path: str | Path) -> WorkflowState:
         state = load_workflow_state(workflow_state_path)
@@ -58,7 +60,18 @@ class WorkflowLoop:
         state.status = "running"
         self._save(state, workflow_state_path)
 
+        run_start = time.monotonic()
+
         while state.status == "running":
+            # ── Global workflow timeout ───────────────────────────────
+            elapsed = time.monotonic() - run_start
+            if elapsed > self.max_runtime_seconds:
+                logger.error(
+                    "workflow %s timed out after %.0fs (limit %ds)",
+                    state.workflow_id, elapsed, self.max_runtime_seconds,
+                )
+                state.status = "timed_out"
+                break
             batch = get_current_batch(state)
             if batch is None:
                 state.status = "completed"

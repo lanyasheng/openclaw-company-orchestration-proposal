@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-WorkflowStatus = Literal["pending", "running", "completed", "failed", "gate_blocked"]
+WorkflowStatus = Literal["pending", "running", "completed", "failed", "gate_blocked", "timed_out"]
 BatchStatus = Literal["pending", "running", "completed", "failed"]
-TaskStatus = Literal["pending", "running", "completed", "failed", "timeout"]
+TaskStatus = Literal["pending", "running", "completed", "failed", "timeout", "timed_out"]
 FanInPolicy = Literal["all_success", "any_success", "majority"]
 ContinuationAction = Literal["proceed", "gate", "stop"]
 

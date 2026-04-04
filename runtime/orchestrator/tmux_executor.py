@@ -115,8 +115,47 @@ class TmuxTaskExecutor(TaskExecutorBase):
         progress_file = Path.home() / ".openclaw/shared-context/progress" / f"{handle}.json"
         progress_file.unlink(missing_ok=True)
 
+    def _check_jsonl_log(self, session_name: str) -> TaskResult | None:
+        """Check the JSONL log file for a 'result' event from headless mode.
+
+        In headless mode Claude Code writes stream-json to
+        ``~/.openclaw/logs/{session_name}.jsonl``.  If the session's tmux
+        window has already exited but a ``result`` event exists in the log,
+        the task actually completed successfully.
+        """
+        log_path = Path.home() / ".openclaw" / "logs" / f"{session_name}.jsonl"
+        if not log_path.exists():
+            return None
+        try:
+            # Read in reverse so we find the last result quickly
+            lines = log_path.read_text().splitlines()
+            for line in reversed(lines):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("type") == "result":
+                    summary = event.get("result", event.get("output", ""))
+                    logger.info(
+                        "task %s completed per JSONL log (session already gone)",
+                        session_name,
+                    )
+                    return TaskResult(status="completed", output=str(summary))
+        except Exception as e:
+            logger.debug("JSONL log check failed for %s: %s", session_name, e)
+        return None
+
     def _check_orch_bridge(self, session_name: str) -> TaskResult:
         """Check orch-bridge for task completion status."""
+        # 1. Check JSONL log first (headless mode may have finished cleanly)
+        jsonl_result = self._check_jsonl_log(session_name)
+        if jsonl_result is not None:
+            return jsonl_result
+
+        # 2. Fall back to orch-bridge
         task_ref = "tsk_" + session_name.replace("nc-", "").replace("-", "_")
         try:
             result = subprocess.run(
@@ -134,5 +173,5 @@ class TmuxTaskExecutor(TaskExecutorBase):
         except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
             logger.debug("orch-bridge check failed for %s: %s", session_name, e)
 
-        # Session gone, no orch-bridge info — assume failed
+        # Session gone, no orch-bridge info, no JSONL result — assume failed
         return TaskResult(status="failed", error="tmux session exited without completion")
