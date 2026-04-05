@@ -110,6 +110,18 @@ class TmuxTaskExecutor(TaskExecutorBase):
                         summary = cap.stdout.strip()[-500:] if cap.stdout else ""
                     except Exception:
                         pass
+                    # Complete the task in orch-bridge before killing (SessionEnd hook may not fire)
+                    try:
+                        subprocess.run(
+                            [str(ORCH_BRIDGE), "complete", session_name,
+                             "--stopped-because", "completed_interactive",
+                             "--exit-code", "0"],
+                            capture_output=True, text=True, timeout=10,
+                        )
+                    except Exception:
+                        pass
+                    # Clean up progress file
+                    progress_file.unlink(missing_ok=True)
                     # Kill the session (task is done, CC is waiting for input we won't send)
                     subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
                     return TaskResult(status="completed", output=summary)
@@ -135,9 +147,32 @@ class TmuxTaskExecutor(TaskExecutorBase):
         return result.returncode == 0
 
     def cleanup(self, handle: str) -> None:
-        """Remove progress file."""
-        progress_file = Path.home() / ".openclaw/shared-context/progress" / f"{handle}.json"
+        """Clean up all state sources for a completed task."""
+        session_name = handle
+
+        # 1. Remove progress file
+        progress_file = Path.home() / ".openclaw/shared-context/progress" / f"{session_name}.json"
         progress_file.unlink(missing_ok=True)
+
+        # 2. Complete task in orch-bridge (marks state=completed in task-registry)
+        try:
+            subprocess.run(
+                [str(ORCH_BRIDGE), "complete", session_name,
+                 "--stopped-because", "workflow_completed", "--exit-code", "0"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            pass
+
+        # 3. Remove task-registry file directly (belt + suspenders)
+        task_ref = "tsk_" + session_name.replace("nc-", "").replace("-", "_")
+        task_file = Path.home() / ".openclaw/shared-context/task-registry/tasks" / f"{task_ref}.json"
+        task_file.unlink(missing_ok=True)
+
+        # 4. Kill tmux session if still alive
+        subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+
+        logger.info("cleanup completed for %s", session_name)
 
     def _check_jsonl_log(self, session_name: str) -> TaskResult | None:
         """Check the JSONL log file for a 'result' event from headless mode.

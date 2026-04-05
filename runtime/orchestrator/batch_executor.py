@@ -127,6 +127,12 @@ class BatchExecutor:
                 task.task_id, batch.batch_id, "failed",
                 result={"error": error},
             )
+            # Clean up external state on permanent failure
+            if task.subagent_task_id:
+                try:
+                    self._executor.cleanup(task.subagent_task_id)
+                except Exception:
+                    pass
 
     def monitor_batch(self, batch: BatchEntry) -> bool:
         # ── Hard batch timeout ───────────────────────────────────────
@@ -176,6 +182,11 @@ class BatchExecutor:
                     task.task_id, batch.batch_id, "completed",
                     result={"verdict": "PASS", "summary": task.result_summary},
                 )
+                # Clean up all external state (progress, task-registry, tmux session)
+                try:
+                    self._executor.cleanup(task.subagent_task_id)
+                except Exception:
+                    pass
             elif tr.status in ("failed", "timed_out"):
                 self._apply_retry_or_fail(
                     task, batch, tr.error or tr.status,
