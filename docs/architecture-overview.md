@@ -311,3 +311,94 @@ for line in sys.stdin:
 | `session-monitor.sh` | 同上 | 实时监控 |
 | `on-stop.sh` | 同上 | Stop hook |
 | `on-session-end.sh` | 同上 | SessionEnd hook |
+
+---
+
+## 真实链路示例
+
+### 示例 1：多 MR 并行 Review（端到端）
+
+```
+用户(钉钉): "帮我 review 这 3 个 MR: #2326, #2327, #2328"
+  │
+  ▼ Muse 匹配 @orchestrator-planner (触发词: "批量")
+  │
+  ▼ Skill 自动生成 config.json:
+[
+  {
+    "batch_id": "parallel_review",
+    "label": "并行 Review 3 个 MR",
+    "depends_on": [],
+    "tasks": [
+      {"task_id": "review_2326", "label": "Review MR #2326", "executor": "tmux",
+       "prompt": "Review MR #2326，使用 @code-review-enhanced 工作流..."},
+      {"task_id": "review_2327", "label": "Review MR #2327", "executor": "tmux",
+       "prompt": "Review MR #2327，使用 @code-review-enhanced 工作流..."},
+      {"task_id": "review_2328", "label": "Review MR #2328", "executor": "tmux",
+       "prompt": "Review MR #2328，使用 @code-review-enhanced 工作流..."}
+    ]
+  },
+  {
+    "batch_id": "summary",
+    "label": "汇总 Review 结果",
+    "depends_on": ["parallel_review"],
+    "tasks": [
+      {"task_id": "review_summary", "label": "汇总报告", "executor": "tmux",
+       "prompt": "读取所有 review 结果，生成统一的 review 汇总报告"}
+    ]
+  }
+]
+
+  ▼ orchestrator-cli plan → wf_20260405_100000
+  ▼ orchestrator-cli run --backend tmux
+  │
+  ├── nc-review-review-2326 (tmux, interactive, NanoCompose 目录)
+  ├── nc-review-review-2327 (tmux, interactive, 并行)
+  ├── nc-review-review-2328 (tmux, interactive, 并行, 等 slot)
+  │   └── MAX_SESSIONS=4，前 3 个直接启动
+  │
+  ├── [30s 后] CC 完成 → on-stop.sh → phase=idle-waiting-input
+  ├── [poll 检测] → completed → cleanup
+  ├── [fan-in] 3/3 completed, all_success → proceed
+  │
+  ├── nc-review-review-summary (自动派发)
+  │   └── 读取前 3 个 review 的结果，生成汇总
+  │
+  └── workflow completed → Muse 通知用户
+```
+
+### 示例 2：单 MR Review（快速路径）
+
+```
+用户(钉钉): "review MR #2330"
+  │
+  ▼ Muse 识别为单任务，不走编排层
+  ▼ dispatch.sh --type review --id 2330 --prompt "Review MR #2330..."
+  │
+  ├── nc-review-2330 (tmux, interactive)
+  ├── CC 完成 → on-stop.sh → on-session-end.sh → notify-callback.sh
+  └── 钉钉通知用户结果
+```
+
+### 示例 3：复杂功能开发（多阶段）
+
+```
+用户: "帮我实现 NanoCompose 的动画插值器功能"
+  │
+  ▼ Muse 匹配 @orchestrator-planner (触发词: "实现", "功能")
+  ▼ Skill 生成 3-batch DAG:
+    batch_01: [设计 API 接口]
+    batch_02: [实现核心逻辑, 实现平台适配] (并行, depends_on batch_01)
+    batch_03: [集成测试 + review] (depends_on batch_02)
+  │
+  ▼ orchestrator-cli plan + run
+  │
+  ├── Phase 1: 设计（1 个 CC 实例，~10min）
+  ├── [fan-in] → proceed
+  ├── Phase 2: 实现（2 个 CC 实例并行，~30min）
+  │   ├── 任务 A 失败 → 自动重试 (retry 1/3)
+  │   ├── 重试成功 → completed
+  │   └── [fan-in] 2/2 completed → proceed
+  ├── Phase 3: 测试 + review（1 个 CC 实例，~15min）
+  └── workflow completed (总计 ~55min)
+```
