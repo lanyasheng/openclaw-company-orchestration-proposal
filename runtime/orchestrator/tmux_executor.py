@@ -46,7 +46,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
         self,
         workspace_dir: str,
         timeout_seconds: int = 3600,
-        mode: str = "headless",
+        mode: str = "interactive",
     ):
         self.workspace_dir = workspace_dir
         self.timeout_seconds = timeout_seconds
@@ -92,14 +92,38 @@ class TmuxTaskExecutor(TaskExecutorBase):
             # Session gone — check orch-bridge for final state
             return self._check_orch_bridge(session_name)
 
-        # 2. Check timeout
+        # 2. Check progress file for interactive mode completion
+        #    on-stop.sh writes phase=idle-waiting-input when CC finishes a turn
+        progress_file = Path.home() / ".openclaw/shared-context/progress" / f"{session_name}.json"
+        if progress_file.exists():
+            try:
+                pdata = json.loads(progress_file.read_text())
+                if pdata.get("phase") == "idle-waiting-input":
+                    logger.info("task %s completed (interactive mode, idle-waiting-input)", session_name)
+                    # Capture last output as summary
+                    summary = ""
+                    try:
+                        cap = subprocess.run(
+                            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-10"],
+                            capture_output=True, text=True, timeout=5,
+                        )
+                        summary = cap.stdout.strip()[-500:] if cap.stdout else ""
+                    except Exception:
+                        pass
+                    # Kill the session (task is done, CC is waiting for input we won't send)
+                    subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+                    return TaskResult(status="completed", output=summary)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # 3. Check timeout
         start = self._start_times.get(session_name)
         if start and (time.monotonic() - start) > self.timeout_seconds:
             logger.warning("task %s timed out after %ds", session_name, self.timeout_seconds)
             subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
             return TaskResult(status="timed_out", error=f"timeout after {self.timeout_seconds}s")
 
-        # 3. Still running
+        # 4. Still running
         return TaskResult(status="running")
 
     def cancel(self, handle: str) -> bool:
