@@ -342,14 +342,16 @@ class TestDispatchPlannerIntegration:
     def test_dispatch_plan_to_planning_handoff(self):
         """测试：DispatchPlan.to_planning_handoff()"""
         planner = DispatchPlanner()
-        
+
         plan = planner.create_plan(
             dispatch_id="dispatch_handoff_001",
             batch_id="batch_handoff_001",
             scenario="trading_roundtable_phase1",
             adapter="trading_roundtable",
             decision_id="decision_001",
-            decision={"action": "proceed"},
+            decision={"action": "proceed", "metadata": {
+                "orchestration_contract": {"backend_preference": "subagent"},
+            }},
             continuation={
                 "stopped_because": "manual_review",
                 "next_step": "Wait for review",
@@ -358,10 +360,10 @@ class TestDispatchPlannerIntegration:
             backend=DispatchBackend.SUBAGENT,
             allow_auto_dispatch=False,
         )
-        
+
         # 转换为 PlanningHandoff
         handoff = plan.to_planning_handoff()
-        
+
         assert handoff.source_type == "dispatch_plan"
         assert handoff.source_id == "dispatch_handoff_001"
         assert handoff.scenario == "trading_roundtable_phase1"
@@ -502,7 +504,9 @@ class TestIntegration:
             scenario="trading_roundtable_phase1",
             adapter="trading_roundtable",
             decision_id="decision_integration",
-            decision={"action": "proceed", "metadata": {}},
+            decision={"action": "proceed", "metadata": {
+                "orchestration_contract": {"backend_preference": "subagent"},
+            }},
             continuation={
                 "stopped_because": "gate_held",
                 "next_step": "Continue after gate",
@@ -511,23 +515,23 @@ class TestIntegration:
             backend=DispatchBackend.SUBAGENT,
             allow_auto_dispatch=False,
         )
-        
+
         # 2. 转换为 PlanningHandoff
         planning_handoff = plan.to_planning_handoff()
         assert planning_handoff.source_type == "dispatch_plan"
-        
+
         # 3. 构建 RegistrationHandoff
         registration_handoff = build_registration_handoff(planning_handoff)
         assert registration_handoff.registration_status == "skipped"  # allow_auto_dispatch=False
-        
+
         # 4. 构建 ExecutionHandoff
         execution_handoff = build_execution_handoff(planning_handoff)
         assert execution_handoff.runtime == "subagent"
-        
+
         # 5. 注册任务
         record = register_from_handoff(registration_handoff)
         assert record.registration_id == registration_handoff.registration_id
-        
+
         # 6. 转换为 sessions_spawn 参数
         spawn_params = handoff_to_dispatch_spawn(execution_handoff)
         assert spawn_params["runtime"] == "subagent"

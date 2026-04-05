@@ -1,3 +1,5 @@
+> **⚠️ 部分内容已过时。** `claude-code-orchestrator` 目录不存在，请使用 `dispatch.sh` 替代 `start-tmux-task.sh`。详见 `integration-guide.md`。
+
 # tmux 接入与使用指南
 
 > **版本**: v1.0  

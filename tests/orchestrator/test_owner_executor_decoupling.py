@@ -255,15 +255,17 @@ class TestDispatchPlannerExecutorIntegration:
     def test_dispatch_plan_to_planning_handoff_with_executor(self):
         """测试：DispatchPlan → PlanningHandoff 包含 executor 推导"""
         planner = DispatchPlanner()
-        
-        # Coding task
+
+        # Coding task — explicit backend_preference=subagent to test coding profile derivation
         plan = planner.create_plan(
             dispatch_id="disp_coding_001",
             batch_id="batch_coding_001",
             scenario="api_development",
             adapter="api_adapter",
             decision_id="dec_001",
-            decision={"action": "proceed"},
+            decision={"action": "proceed", "metadata": {
+                "orchestration_contract": {"backend_preference": "subagent"},
+            }},
             continuation={
                 "stopped_because": "continuation",
                 "next_step": "Implement new API endpoint",
@@ -272,23 +274,25 @@ class TestDispatchPlannerExecutorIntegration:
             backend=DispatchBackend.SUBAGENT,
             allow_auto_dispatch=False,
         )
-        
+
         handoff = plan.to_planning_handoff()
-        
+
         assert handoff.executor == "claude_code"
         assert handoff.execution_profile == "coding"
     
     def test_dispatch_plan_non_coding_task(self):
         """测试：DispatchPlan 非 coding 任务 → subagent executor"""
         planner = DispatchPlanner()
-        
+
         plan = planner.create_plan(
             dispatch_id="disp_generic_001",
             batch_id="batch_generic_001",
             scenario="trading_strategy",
             adapter="trading_adapter",
             decision_id="dec_002",
-            decision={"action": "proceed"},
+            decision={"action": "proceed", "metadata": {
+                "orchestration_contract": {"backend_preference": "subagent"},
+            }},
             continuation={
                 "stopped_because": "continuation",
                 "next_step": "Review and analyze trading strategy",
@@ -297,9 +301,9 @@ class TestDispatchPlannerExecutorIntegration:
             backend=DispatchBackend.SUBAGENT,
             allow_auto_dispatch=False,
         )
-        
+
         handoff = plan.to_planning_handoff()
-        
+
         assert handoff.executor == "subagent"
         assert handoff.execution_profile == "generic_subagent"
     

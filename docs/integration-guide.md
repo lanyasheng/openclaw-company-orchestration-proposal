@@ -151,9 +151,9 @@ eval $PY resume workflow_state_wf_XXXXXXXX.json \
 
 **watchdog.sh** — tmux 状态守护:
 ```bash
-bash ~/.openclaw/skills/nanocompose-dispatch/scripts/watchdog.sh start  # 启动(30s轮询)
-bash ~/.openclaw/skills/nanocompose-dispatch/scripts/watchdog.sh once   # 单次扫描
-bash ~/.openclaw/skills/nanocompose-dispatch/scripts/watchdog.sh stop   # 停止
+bash ~/.openclaw/skills/nanocompose-dispatch/scripts/session-monitor.sh start  # 启动(30s轮询)
+bash ~/.openclaw/skills/nanocompose-dispatch/scripts/session-monitor.sh once   # 单次扫描
+bash ~/.openclaw/skills/nanocompose-dispatch/scripts/session-monitor.sh stop   # 停止
 ```
 功能: 检测 stuck(>30min) -> 告警 | context<20% -> compact | exited -> 清理
 

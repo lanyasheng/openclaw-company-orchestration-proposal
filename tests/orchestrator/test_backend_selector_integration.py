@@ -334,16 +334,17 @@ def test_documentation_task_recommends_subagent():
         "reason": "Documentation task",
         "metadata": {
             "orchestration_contract": {},
+            "estimated_duration_minutes": 15,  # Short doc task → subagent path
         },
     }
-    
+
     # Task with documentation keywords
     continuation = {
         "task_preview": "编写 API 文档，添加注释和说明",
         "next_step": "Write API documentation",
         "next_owner": "main",
     }
-    
+
     plan = planner.create_plan(
         dispatch_id="dispatch_test_006",
         batch_id="batch_test_006",

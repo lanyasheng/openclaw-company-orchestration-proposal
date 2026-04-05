@@ -4,7 +4,7 @@ import shlex
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Protocol
+from typing import Any, Dict, Iterable, Optional, Protocol
 
 # ============ Dual-Track Backend Strategy (2026-03-23) ============
 #
@@ -421,7 +421,9 @@ def build_backend_plan(
     # Both backends coexist indefinitely - no breaking removal planned.
     label = _slugify([adapter, scenario, batch_id, dispatch_id.split("_")[-1]])[:48].strip("-") or "dispatch"
     session = f"cc-{label}"
-    prompt_file = Path("/tmp") / f"{session}-dispatch-ref.md"
+    _state_dir = Path.home() / ".openclaw/state/tmux-tasks"
+    _state_dir.mkdir(parents=True, exist_ok=True)
+    prompt_file = _state_dir / f"{session}-dispatch-ref.md"
 
     # P0-3 Batch 7 (2026-03-30): DUAL-TRACK - tmux backend command surface optimized for core lifecycle
     # P0-3 Batch 6: Use lifecycle config for status sets (no longer hardcoded)
