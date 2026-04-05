@@ -13,7 +13,7 @@ trading/schemas.py — Paper Trading Journal Schema
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 import json
@@ -56,7 +56,7 @@ class Proposal:
     strategy_id: Optional[str] = None       # 策略 ID
     signal_id: Optional[str] = None         # 信号 ID
     execution_mode: ExecutionMode = ExecutionMode.PAPER
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -86,7 +86,7 @@ class Proposal:
             strategy_id=data.get("strategy_id"),
             signal_id=data.get("signal_id"),
             execution_mode=ExecutionMode(data.get("execution_mode", "paper")),
-            created_at=data.get("created_at", datetime.now().isoformat()),
+            created_at=data.get("created_at", datetime.now(timezone.utc).isoformat()),
             metadata=data.get("metadata", {}),
         )
 
@@ -266,7 +266,7 @@ class Position:
     def update_price(self, price: float) -> None:
         """更新当前价格并重新计算未实现盈亏"""
         self.current_price = price
-        self.updated_at = datetime.now().isoformat()
+        self.updated_at = datetime.now(timezone.utc).isoformat()
         if self.quantity != 0:
             if self.quantity > 0:  # 多头
                 self.unrealized_pnl = (price - self.average_cost) * self.quantity
@@ -335,7 +335,7 @@ def generate_id(prefix: str) -> str:
 
 def iso_now() -> str:
     """获取当前 ISO 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def validate_execution_mode_isolation(paper_records: List[Any], live_records: List[Any]) -> Dict[str, Any]:

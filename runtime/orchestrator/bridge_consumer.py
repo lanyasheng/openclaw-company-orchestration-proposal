@@ -96,13 +96,13 @@ def _generate_consumed_dedupe_key(request_id: str) -> str:
 def _load_consumed_index() -> Dict[str, str]:
     """
     加载 consumed index（request_id -> consumed_id 映射）。
-    
+
     用于去重检查。
     """
     _ensure_consumed_dir()
     if not CONSUMED_INDEX_FILE.exists():
         return {}
-    
+
     try:
         with open(CONSUMED_INDEX_FILE, "r") as f:
             return json.load(f)
@@ -119,11 +119,67 @@ def _save_consumed_index(index: Dict[str, str]):
     tmp_file.replace(CONSUMED_INDEX_FILE)
 
 
+def _atomic_claim_consumed(request_id: str, consumed_id: str) -> bool:
+    """Atomically claim a request_id for consumption.
+
+    Uses fcntl.flock on the consumed index file to prevent the TOCTOU
+    race where two concurrent consumers both see a request as unconsumed
+    and both proceed to execute it.
+
+    Returns True if the claim succeeded (we are the first consumer).
+    Returns False if another consumer already claimed this request_id.
+    """
+    import fcntl
+    _ensure_consumed_dir()
+    lock_path = CONSUMED_INDEX_FILE.with_suffix(".lock")
+    try:
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            # Re-read index under lock — the authoritative check
+            index = _load_consumed_index()
+            if request_id in index:
+                return False  # already claimed by another consumer
+            index[request_id] = consumed_id
+            _save_consumed_index(index)
+            return True
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+    except OSError:
+        # Fallback: non-atomic path (e.g., NFS without flock support)
+        index = _load_consumed_index()
+        if request_id in index:
+            return False
+        index[request_id] = consumed_id
+        _save_consumed_index(index)
+        return True
+
+
 def _record_consumed_dedupe(request_id: str, consumed_id: str):
-    """记录 consumed dedupe（防止重复消费）"""
-    index = _load_consumed_index()
-    index[request_id] = consumed_id
-    _save_consumed_index(index)
+    """记录 consumed dedupe（防止重复消费）。
+
+    Prefer _atomic_claim_consumed() for the check-and-record pattern.
+    This function is kept for backwards compatibility with code that
+    records after execution (post-hoc dedup).
+    """
+    import fcntl
+    _ensure_consumed_dir()
+    lock_path = CONSUMED_INDEX_FILE.with_suffix(".lock")
+    try:
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            index = _load_consumed_index()
+            index[request_id] = consumed_id
+            _save_consumed_index(index)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+    except OSError:
+        index = _load_consumed_index()
+        index[request_id] = consumed_id
+        _save_consumed_index(index)
 
 
 def _is_already_consumed(request_id: str) -> bool:
@@ -401,9 +457,12 @@ class BridgeConsumer:
                 f"Request status is '{request.spawn_request_status}', required '{self.policy.require_request_status}'"
             )
         
-        # Check 2: duplicate consumption prevention
+        # Check 2: duplicate consumption prevention (atomic claim)
         duplicate_ok = True
         if self.policy.prevent_duplicate:
+            # Use _is_already_consumed for the policy evaluation check.
+            # The actual atomic claim happens later in consume(), right
+            # before execution, to close the TOCTOU gap.
             is_duplicate = _is_already_consumed(request.request_id)
             if is_duplicate:
                 duplicate_ok = False
@@ -635,12 +694,21 @@ class BridgeConsumer:
             },
         )
         
-        # 6. Write artifact
-        artifact.write()
-        
-        # 7. Record dedupe（如果 consumed 或 executed）
+        # 6. Atomic claim — prevent duplicate consumption under concurrency.
+        # Must happen BEFORE writing the artifact, not after. This closes the
+        # TOCTOU gap where two consumers both pass policy evaluation but only
+        # one should actually execute.
         if artifact.consumer_status in ("consumed", "executed"):
-            _record_consumed_dedupe(request.request_id, consumed_id)
+            if not _atomic_claim_consumed(request.request_id, consumed_id):
+                # Another consumer beat us to it — update artifact to reflect this
+                artifact.consumer_status = "blocked"
+                artifact.consumer_reason = (
+                    f"Lost atomic claim race: request {request.request_id} "
+                    f"was consumed by another consumer between policy check and execution"
+                )
+
+        # 7. Write artifact
+        artifact.write()
         
         return artifact
 

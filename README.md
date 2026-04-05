@@ -46,6 +46,9 @@ Task completes → Explicit contract → Fan-in review → Safety gate → Next 
 | **Continuation Kernel** | 9-version incremental evolution: `registration → dispatch → spawn → execute → receipt → callback → auto-continue`. Full artifact linkage chain. | ✅ Production-tested |
 | **Context Recovery** | `context_summary` auto-generated at each save. Resume from crash or context compression. | ✅ Production-tested |
 | **Pluggable Executors** | `TaskExecutorBase` abstract interface — swap in HTTP workers, LangChain agents, or any custom backend. | ✅ Interface defined |
+| **Hooks System** | Three-mode enforcement hooks (audit/warn/enforce): promise verification, completion translation. | ✅ Production-tested |
+| **Alerts & Observability** | Rule-based alerting with audit trail, observability cards, dashboard rendering. | ✅ Production-tested |
+| **Denial Circuit Breaker** | Track consecutive (3) and total (20) failures per dispatch target; auto-trip to prevent runaway retries. | ✅ Implemented |
 
 ---
 
@@ -63,25 +66,48 @@ graph TD
     CK["Continuation Kernel<br/>v1-v9 artifact chain"]
   end
 
+  subgraph Reliability["Reliability Layer"]
+    WD["Watchdog<br/>stall detect · health check"]
+    CB_BREAK["Circuit Breaker<br/>denial tracking · auto-trip"]
+    SWG["SingleWriterGuard<br/>fcntl.flock · file locking"]
+    FP["FallbackProtocol<br/>retry · cancel · closeout"]
+  end
+
   subgraph Exec["Execution Substrate"]
-    SE["SubagentExecutor<br/>process mgmt · cleanup"]
+    SE["SubagentExecutor<br/>process mgmt · fork guard"]
+    TE["TmuxExecutor<br/>session mgmt · monitoring"]
     EI["TaskExecutorBase<br/>pluggable backends"]
+  end
+
+  subgraph Observe["Observability"]
+    OC["ObservabilityCard<br/>per-task status cards"]
+    DB["Dashboard<br/>board snapshot · summary"]
+    HK["Hooks<br/>promise verify · completion translate"]
+    AL["Alerts<br/>rule engine · dispatcher"]
   end
 
   subgraph Platform["OpenClaw Platform"]
     SS["sessions_spawn"]
-    CB["callback / shared-context"]
+    CB_P["callback / shared-context"]
   end
 
   CLI --> TP --> WS
   CLI --> WG --> BE --> SE
   WG --> BR --> WS
   SE --> SS
-  CK --> CB
+  CK --> CB_P
   BE -.-> EI
+  BE -.-> TE
+  WD --> WS
+  WD --> SE
+  FP --> CB_BREAK
+  SE --> OC
+  HK --> SE
 
   style Control fill:#1a2744,stroke:#3b82f6,color:#fff
+  style Reliability fill:#441a1a,stroke:#ef4444,color:#fff
   style Exec fill:#2d1a44,stroke:#8b5cf6,color:#fff
+  style Observe fill:#44381a,stroke:#eab308,color:#fff
   style Platform fill:#1a4428,stroke:#22c55e,color:#fff
 ```
 
@@ -109,10 +135,12 @@ flowchart LR
 ### State Machine
 
 ```
-Workflow: pending → running → completed / failed / gate_blocked
+Workflow: pending → running → completed / failed / gate_blocked / timed_out / stalled_unrecoverable
                                               ↓ resume
                                            running
 ```
+
+`stalled_unrecoverable` is set by the watchdog when a workflow stalls >3 times after automatic resume attempts.
 
 ### Artifact Linkage (Continuation Kernel)
 
@@ -170,7 +198,7 @@ python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
 
 ---
 
-## 🚀 Product Entry: Onboard + Run + Status (New!)
+## Product Entry: Onboard + Run + Status
 
 **For channel operators and agents: three simple commands, zero mental overhead.**
 
@@ -180,178 +208,60 @@ python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
 | `run` | Trigger execution | "Run a task for me" |
 | `status` | View status overview | "What's the current progress?" |
 
-### Quick Start
-
 ```bash
-# 1. Onboard — get channel接入 recommendation
 python3 runtime/scripts/orch_product.py onboard
-
-# 2. Run — trigger execution
 python3 runtime/scripts/orch_product.py run --task "Your task description" --workdir /path/to/workdir
-
-# 3. Status — check progress
 python3 runtime/scripts/orch_product.py status
 ```
 
 **Full documentation:** [docs/orch_product_guide.md](docs/orch_product_guide.md)
 
-**Design principles:**
-- ✅ Reuse existing control plane — no new truth chain
-- ✅ Zero mental overhead — no need to understand contract/backend/observability internals
-- ✅ Backward compatible — existing `orch_command.py` entry unchanged
+---
+
+## Reliability & Hardening
+
+The control plane incorporates patterns from Claude Code's execution harness architecture:
+
+| Mechanism | What It Does |
+|-----------|-------------|
+| **Atomic Writes** | All state files use `tempfile + os.fsync + os.replace` — crash mid-write leaves the previous file intact. Shared via `utils/io.py`. |
+| **File-Level Locking** | `subagent_executor` uses `fcntl.flock` to prevent concurrent read-modify-write races on state files. |
+| **Denial Circuit Breaker** | Tracks consecutive (3) and total (20) failures per dispatch target. When tripped, the target is skipped and an alternative strategy is recommended. |
+| **Watchdog Health Checks** | Unified `full_health_check()` combines workflow stall detection, dead process reconciliation, orphan completion recovery, and queued task stall detection. |
+| **Orphan Completion Recovery** | `reconcile_orphan_completions()` detects tasks whose process exited but state still shows "running" — prevents silent task loss. |
+| **Fork Bomb Prevention** | Three-layer guard in `SubagentExecutor`: (1) `OPENCLAW_SPAWN_DEPTH` env var, (2) system-wide `pgrep` process count, (3) `threading.Semaphore`. |
+| **Subprocess Timeouts** | All synchronous `subprocess.run()` calls have explicit timeouts (30s for tmux, 60s for general commands). |
+| **UTC Timestamps** | All modules use `datetime.now(timezone.utc)` for consistent cross-process timestamp ordering. |
+| **Single Writer Guard** | `fcntl.flock`-based file locking with 5-minute timeout, reentrant for same writer. |
 
 ---
 
-## Onboarding a New Scenario
+## Hooks System
 
-### Step 1: Define Your Workflow
+Three-mode behavioral enforcement hooks that constrain agent behavior at the control plane level:
 
-Create a `config.json` with batch definitions. Each batch has:
-- `batch_id` — unique identifier
-- `tasks[]` — array of `{task_id, label}`, optional `executor` (default: `subagent`), optional `max_retries`
-- `depends_on` — list of batch IDs this batch waits for (cycles are rejected)
-- `fan_in_policy` — `all_success` (default) / `any_success` / `majority`
+| Hook | Purpose | Modes |
+|------|---------|-------|
+| **PostPromiseVerifyHook** | Verifies that when an agent claims a task is "in progress", there is a real execution anchor (dispatch_id, session_id, tmux_session). | audit / warn / enforce |
+| **PostCompletionTranslateHook** | Forces agents to produce human-readable completion reports after subtask completion. Required sections: conclusion, evidence, action. | audit / warn / enforce |
 
-### Step 2: Install and Configure Runner
-
-The repo includes a ready-to-use runner script for Claude Code:
-
-```bash
-# 1. Install Claude Code CLI
-npm install -g @anthropic-ai/claude-code
-
-# 2. Verify installation
-claude --version
-
-# 3. The runner script is already in scripts/run_subagent_claude_v1.sh
-#    It auto-detects Claude CLI from PATH or common locations.
-
-# 4. (Optional) Configure environment variables:
-export CLAUDE_CLI_PATH="/path/to/claude"  # If not in PATH
-export CLAUDE_TIMEOUT_S=900               # Task timeout (default: 900s)
-export CLAUDE_WORKDIR="/path/to/project"  # Working directory
-```
-
-`SubagentExecutor` invokes the runner with arguments: `<task_prompt> <label>`.
-
-### Step 3: Run and Iterate
-
-```bash
-python3 runtime/orchestrator/cli.py plan "Your goal" config.json
-python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace .
-```
-
-Start with simple 2-batch workflows. Validate artifacts. Add complexity gradually.
-
-### For Callback-Driven Scenarios
-
-If your scenario is callback-driven (like trading or channel roundtable):
-
-1. Choose an adapter: `trading_roundtable`, `channel_roundtable`, or custom
-2. Start with `allow_auto_dispatch=false`
-3. Validate callback → ack → dispatch artifacts are stable
-4. Then enable auto-continuation
+Configure modes via `OPENCLAW_HOOK_ENFORCE_MODE` (default: `audit`) and per-hook overrides via `OPENCLAW_HOOK_PER_HOOK_MODES` JSON env var.
 
 ---
 
-## 🚀 Unified Execution Runtime (NEW)
+## Unified Execution Runtime
 
-> **P0-3 Batch 8 (2026-03-30)**: Single entry point for task execution — automatic backend selection (tmux/subagent) with full automation.
-
-### One-Liner for Other Agents
+> Single entry point for task execution — automatic backend selection (tmux/subagent).
 
 ```python
 from unified_execution_runtime import run_task
 
 result = run_task(
-    task_description="重构认证模块，预计 1 小时",
+    task_description="Refactor auth module, estimated 1 hour",
     workdir="/path/to/workdir",
 )
 print(f"Backend: {result.backend}, Session: {result.session_id}")
-print(f"Wake: {result.wake_command}")  # tmux only
 ```
-
-### Python API
-
-```python
-from unified_execution_runtime import UnifiedExecutionRuntime, TaskContext
-
-runtime = UnifiedExecutionRuntime()
-
-# Auto recommend backend (subagent for short tasks, tmux for long/monitoring)
-result = runtime.run_task(
-    task_description="重构认证模块，预计 1 小时",
-    workdir="/path/to/workdir",
-    estimated_duration_minutes=60,
-)
-
-# Explicit backend preference (overrides auto recommendation)
-result = runtime.run_task(
-    task_description="写 README 文档",
-    workdir="/path/to/workdir",
-    backend_preference="subagent",  # or "tmux"
-)
-
-# Full context
-context = TaskContext(
-    task_description="调试 bug，需要监控中间过程",
-    workdir=Path("/path/to/workdir"),
-    estimated_duration_minutes=45,
-    task_type="coding",
-    requires_monitoring=True,
-    metadata={"scenario": "trading_roundtable_phase1"},
-)
-result = runtime.run_task(context)
-
-# Access result
-print(f"Task ID: {result.task_id}")
-print(f"Dispatch ID: {result.dispatch_id}")
-print(f"Backend: {result.backend}")  # "subagent" or "tmux"
-print(f"Session: {result.session_id}")
-print(f"Status: {result.status}")
-print(f"Callback: {result.callback_path}")
-if result.wake_command:
-    print(f"Wake Command: {result.wake_command}")
-print(f"Backend Selection: {result.backend_selection}")
-```
-
-### CLI Entry
-
-```bash
-# Auto recommend backend
-python3 runtime/orchestrator/run_task.py \
-  --task "重构认证模块" \
-  --workdir /path/to/workdir
-
-# Explicit backend
-python3 runtime/orchestrator/run_task.py \
-  --task "写 README 文档" \
-  --backend subagent \
-  --workdir /path/to/workdir
-
-# JSON output (for scripting)
-python3 runtime/orchestrator/run_task.py \
-  --task "..." \
-  --output json \
-  --workdir /path/to/workdir
-
-# With metadata
-python3 runtime/orchestrator/run_task.py \
-  --task "..." \
-  --workdir /path/to/workdir \
-  --metadata '{"scenario":"trading"}'
-```
-
-### What It Does
-
-| Step | subagent Path | tmux Path |
-|------|--------------|-----------|
-| **Backend Decision** | Explicit preference or auto recommend | Explicit preference or auto recommend |
-| **Start** | `SubagentExecutor.execute_async()` | `start-tmux-task.sh` |
-| **Observability** | Runner artifacts (status.json) | `sync-tmux-observability.py` |
-| **Initial Sync** | Runner status poll | `status-tmux-task.sh` |
-| **Callback/Wake** | Callback path | Callback path + wake command |
-| **Return** | `ExecutionResult` | `ExecutionResult` |
 
 ### Backend Selection Logic
 
@@ -369,44 +279,44 @@ Coding keywords             ↓
 tmux
 ```
 
-### ExecutionResult Schema
-
-```python
-{
-    "task_id": str,              # Task identifier
-    "dispatch_id": str,          # Dispatch identifier
-    "backend": "subagent|tmux",  # Backend used
-    "session_id": str,           # Session name (cc-{label} or subagent-{label})
-    "label": str,                # Task label
-    "status": str,               # pending/running/completed/failed
-    "callback_path": str,        # Path to callback artifact
-    "wake_command": str,         # Wake command (tmux only)
-    "artifacts": Dict[str, str], # Artifact paths
-    "backend_selection": {       # Backend selection metadata
-        "auto_recommended": bool,
-        "recommended_backend": str,
-        "applied_backend": str,
-        "confidence": float,
-        "reason": str,
-        "factors": Dict,
-        "explicit_override": bool,
-    },
-    "metadata": Dict,            # Additional metadata
-    "error": str,                # Error message (if failed)
-}
-```
-
-### Tests
-
-```bash
-python3 -m pytest runtime/tests/orchestrator/test_unified_execution_runtime.py -v
-# 23 passed
-```
-
 ### Documentation
 
 - [Design Document](docs/design/unified_execution_runtime_design.md)
 - [Backend Selection Guide](docs/BACKEND_SELECTION_GUIDE.md)
+
+---
+
+## Onboarding a New Scenario
+
+### Step 1: Define Your Workflow
+
+Create a `config.json` with batch definitions. Each batch has:
+- `batch_id` — unique identifier
+- `tasks[]` — array of `{task_id, label}`, optional `executor` (default: `subagent`), optional `max_retries`
+- `depends_on` — list of batch IDs this batch waits for (cycles are rejected)
+- `fan_in_policy` — `all_success` (default) / `any_success` / `majority`
+
+### Step 2: Install and Configure Runner
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude --version
+# Runner script: scripts/run_subagent_claude_v1.sh (auto-detects Claude CLI)
+```
+
+### Step 3: Run and Iterate
+
+```bash
+python3 runtime/orchestrator/cli.py plan "Your goal" config.json
+python3 runtime/orchestrator/cli.py run workflow_state_wf_xxx.json --workspace .
+```
+
+### For Callback-Driven Scenarios
+
+1. Choose an adapter: `trading_roundtable`, `channel_roundtable`, or custom
+2. Start with `allow_auto_dispatch=false`
+3. Validate callback → ack → dispatch artifacts are stable
+4. Then enable auto-continuation
 
 ---
 
@@ -415,7 +325,7 @@ python3 -m pytest runtime/tests/orchestrator/test_unified_execution_runtime.py -
 | Framework | What It Optimizes For | How We Relate |
 |-----------|----------------------|---------------|
 | **LangGraph** | General-purpose stateful agent graphs, checkpoints, interrupts | **Embedded** as our optional engine. We add batch DAG, fan-in, gates, and JSON truth on top. |
-| **Deer-Flow** (ByteDance) | Research workflow: plan → research → report | Shared concept: `SubagentExecutor` design (task_id / timeout / status). We extend with full continuation kernel and quality gates. |
+| **Deer-Flow** (ByteDance) | Research workflow: plan → research → report | Shared concept: `SubagentExecutor` design. We extend with full continuation kernel and quality gates. |
 | **CrewAI / AutoGen** | Agent definition and conversation | We are the **control plane** — we decide *when and how* agents run, not *what* agents are. |
 | **Temporal** | Durable workflows at enterprise scale | We are single-process + JSON checkpoint. No server cluster needed. Right-sized for OpenClaw. |
 | **Google ADK** | Code-first agent toolkit | We focus on **orchestration** not **agent capability**. ADK agents can be task executors under our planner. |
@@ -427,28 +337,86 @@ python3 -m pytest runtime/tests/orchestrator/test_unified_execution_runtime.py -
 ## Repository Structure
 
 ```
-runtime/orchestrator/       # Core orchestration modules
-├── cli.py                  # Unified CLI entry point
-├── workflow_state.py       # Single JSON truth model
-├── task_planner.py         # DAG validation + topological sort
-├── batch_executor.py       # Parallel dispatch + retry
-├── batch_reviewer.py       # Fan-in policy + gate conditions
-├── workflow_graph.py       # LangGraph engine (SQLite checkpoint)
-├── workflow_loop.py        # Zero-dependency polling fallback
-├── subagent_executor.py    # Process management + cleanup
-├── executor_interface.py   # Pluggable executor abstract interface
-├── watchdog.py             # Stall detection + auto-resume
-├── state_machine.py        # Per-task state (callback-driven core)
-├── batch_aggregator.py     # Fan-in analysis
-├── orchestrator.py         # Rule chain decision engine
-├── auto_dispatch.py        # Policy-based auto-dispatch
-├── completion_receipt.py   # Completion receipt + validator
-├── sessions_spawn_*.py     # OpenClaw sessions_spawn integration
-└── ...                     # Adapters, quality gates, artifacts
+runtime/orchestrator/           # Core orchestration modules (90+ files)
+├── cli.py                      # Unified CLI entry point
+├── workflow_state.py           # Single JSON truth model
+├── workflow_state_store.py     # Thread-safe singleton state access
+├── workflow_loop.py            # Zero-dependency polling fallback
+├── workflow_graph.py           # LangGraph engine (SQLite checkpoint)
+├── task_planner.py             # DAG validation + topological sort
+├── batch_executor.py           # Parallel dispatch + retry
+├── batch_reviewer.py           # Fan-in policy + gate conditions
+├── batch_aggregator.py         # Fan-in analysis
+├── orchestrator.py             # Rule chain decision engine
+├── contracts.py                # Canonical callback envelope + task tiers
+├── core/                       # Core abstractions
+│   ├── types.py                # Shared types (GateResult, FanOutMode, FanInMode)
+│   ├── phase_engine.py         # Phase state machine
+│   ├── task_registry.py        # Multi-index in-memory task registry
+│   ├── callback_router.py      # Priority-based callback routing
+│   ├── dispatch_planner.py     # Backend selection + dispatch planning
+│   ├── fanout_controller.py    # Fan-out/fan-in controller
+│   ├── quality_gate.py         # Quality gate evaluator
+│   └── handoff_schema.py       # Planning-to-execution handoff
+├── hooks/                      # Behavioral enforcement hooks
+│   ├── hook_config.py          # Three-mode config (audit/warn/enforce)
+│   ├── hook_exceptions.py      # HookViolationError
+│   ├── hook_integrations.py    # Integration points
+│   ├── post_promise_verify_hook.py   # "Empty promise" detection
+│   └── post_completion_translate_hook.py  # Human-readable report enforcement
+├── utils/                      # Shared utilities
+│   ├── io.py                   # Atomic file writes (fsync + replace)
+│   └── time.py                 # Unified UTC timestamps
+├── alerts/                     # Alert system
+│   └── trading_alert_sender.py # Trading-specific alert delivery
+├── alert_audit.py              # Alert audit logging
+├── alert_dispatcher.py         # Alert routing and dispatch
+├── alert_rules.py              # Alert rule definitions
+├── adapters/                   # Domain-specific adapters
+│   ├── base.py                 # Base adapter interface
+│   └── trading.py              # Trading scenario adapter
+├── trading/                    # Trading domain modules
+│   ├── schemas.py              # Trading data schemas
+│   ├── callback_validator.py   # Trading callback validation
+│   └── simulation_adapter.py   # Trading simulation
+├── subagent_executor.py        # Process management + fork bomb prevention
+├── subagent_state.py           # Subagent state persistence
+├── executor_interface.py       # Pluggable executor abstract interface
+├── tmux_executor.py            # Tmux session executor
+├── tmux_status_sync.py         # Tmux status synchronization
+├── tmux_terminal_receipts.py   # Tmux terminal receipts
+├── auto_dispatch.py            # Policy-based auto-dispatch
+├── bridge_consumer.py          # Callback consumption engine
+├── completion_receipt.py       # Completion receipt generation
+├── completion_validator.py     # Completion quality gate kernel
+├── completion_validator_rules.py  # Through/Block/Gate scoring rules
+├── fallback_protocol.py        # Retry/cancel/closeout + circuit breaker
+├── retry_cancel_contract.py    # Unified retry/cancel semantics
+├── single_writer_guard.py      # File-level locking (fcntl.flock)
+├── watchdog.py                 # Stall detection + unified health checks
+├── state_machine.py            # Per-task state (callback-driven core)
+├── lineage.py                  # Task lineage tracking
+├── observability_card.py       # Observability card CRUD
+├── dashboard.py                # Dashboard rendering
+├── telemetry.py                # Telemetry/metrics
+├── unified_execution_runtime.py  # Single entry point for task execution
+├── run_task.py                 # Task runner entry point
+├── sessions_spawn_bridge.py    # Session spawn bridge
+├── sessions_spawn_request.py   # Session spawn request handling
+├── spawn_closure.py            # v4 continuation: dispatch → spawn
+├── spawn_execution.py          # v5 continuation: spawn → execution
+├── closeout_*.py               # Closeout lifecycle (5 modules)
+├── completion_*.py             # Completion handling (5 modules)
+├── *_roundtable.py             # Roundtable coordination (trading/channel)
+└── ...                         # Planning, continuation, entry defaults
 
-tests/orchestrator/         # Test suite (781 tests, all passing)
-docs/                       # Operations guide, architecture docs
-examples/                   # Sample configs and payloads
+runtime/scripts/                # CLI scripts and bridges
+tests/orchestrator/             # Test suite (885 tests)
+runtime/tests/orchestrator/     # Additional runtime tests
+docs/                           # Operations guide, architecture docs
+examples/                       # Sample configs and payloads
+schemas/                        # JSON schemas
+plugins/                        # Plugin modules (human-gate-message)
 ```
 
 ---
@@ -460,73 +428,47 @@ examples/                   # Sample configs and payloads
 3. **Callback-Driven First, DAG When Needed** — Simple scenarios use callbacks. Complex multi-batch workflows use `workflow_state`.
 4. **Prove, Then Automate** — Start with `allow_auto_dispatch=false`. Validate. Then enable.
 5. **Thin Bridge, Not Thick Platform** — We orchestrate the transitions. Agents do the work.
+6. **Fail-Closed Defaults** — Atomic writes, file locking, UTC timestamps, subprocess timeouts. Safety by default, not by opt-in.
 
 ---
 
 ## Tests
 
 ```bash
-PYTHONPATH=runtime/orchestrator:runtime/scripts python3 -m pytest tests/orchestrator/ -q
-# 781 passed
+PYTHONPATH=runtime/orchestrator python3 -m pytest tests/orchestrator/ -q
+# 885 tests
 ```
+
+---
+
+## Observability
+
+- **Status Cards**: Per-task observability cards with real-time progress tracking
+- **Unified Index**: Query by owner/scenario
+- **Task Board**: Dashboard grouped by stage
+- **tmux Integration**: Auto-register tmux sessions to observability index
+- **Behavioral Hooks**: "Promise-then-verify" hooks prevent empty promises
+
+```bash
+# List all tasks
+python3 scripts/sync-tmux-observability.py list
+
+# Generate task board snapshot
+python3 -c "
+from observability_card import generate_board_snapshot
+import json
+print(json.dumps(generate_board_snapshot()['summary'], indent=2))
+"
+```
+
+### Documentation
+
+- [Observability Setup Guide](docs/OBSERVABILITY_SETUP_GUIDE.md)
+- [Observability Design](docs/observability-transparency-design-2026-03-28.md)
+- [tmux Integration Guide](docs/tmux-integration-guide.md)
 
 ---
 
 ## License
 
 MIT
-
----
-
-## 🔍 Observability & 透明度
-
-> **Batch 1-3 已实现** (2026-03-28)
-
-### 核心能力
-
-- **状态卡系统**: 每个任务一张卡，实时追踪进度
-- **统一索引**: 按 owner/scenario 快速查询
-- **任务看板**: 按 stage 分组显示所有任务
-- **tmux 集成**: tmux session 自动注册到索引
-- **行为约束**: "承诺即执行"钩子，防止空承诺
-
-### 快速开始
-
-```bash
-# 1. 查看所有任务
-python3 scripts/sync-tmux-observability.py list
-
-# 2. 生成任务看板
-python3 -c "
-from observability_card import generate_board_snapshot
-import json
-print(json.dumps(generate_board_snapshot()['summary'], indent=2))
-"
-
-# 3. 查询特定任务
-python3 -c "
-from observability_card import get_card
-import json
-card = get_card('task_xxx')
-print(json.dumps(card.to_dict(), indent=2))
-"
-```
-
-### 什么时候用 tmux？
-
-| 场景 | 推荐后端 | 理由 |
-|------|----------|------|
-| **<30min 短任务** | `subagent` | Token 效率高，自动超时 |
-| **>30min 长任务** | `tmux` | 可监控中间进度 |
-| **需要看过程** | `tmux` | 实时看到 AI 在干什么 |
-| **容易卡住的任务** | `tmux` | 可随时接管 |
-| **编码/重构** | `tmux` | 需要看文件修改 |
-| **简单 callback** | `subagent` | 不需要中间状态 |
-
-### 完整文档
-
-- **设计方案**: `docs/observability-transparency-design-2026-03-28.md`
-- **tmux 接入指南**: `docs/tmux-integration-guide.md`
-- **Batch 1-3 报告**: `docs/observability-batch{1,2,3}-completion-report.md`
-
----
