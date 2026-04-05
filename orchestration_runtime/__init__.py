@@ -1,3 +1,10 @@
+import warnings
+warnings.warn(
+    "orchestration_runtime is deprecated. Use runtime.orchestrator instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from .builtin_handlers import (
     await_terminal_handler,
     callback_send_once_handler,

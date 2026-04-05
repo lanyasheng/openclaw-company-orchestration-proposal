@@ -8,7 +8,7 @@
 set -euo pipefail
 
 MAX_SESSIONS="${OPENCLAW_MAX_TMUX_SESSIONS:-6}"
-STATE_DIR="/tmp"
+STATE_DIR="$HOME/.openclaw/state/tmux-tasks"
 LOG_DIR="$HOME/.openclaw/logs"
 
 # ──── Argument Parsing ────────────────────────────────────────────────
@@ -54,9 +54,10 @@ if [[ "$ACTIVE" -ge "$MAX_SESSIONS" ]]; then
 fi
 
 mkdir -p "$LOG_DIR"
+mkdir -p "$STATE_DIR"
 
 # ──── Build Claude Command ───────────────────────────────────────────
-PROMPT_FILE=$(mktemp "/tmp/${SESSION}-prompt-XXXXXX.txt")
+PROMPT_FILE=$(mktemp "$STATE_DIR/${SESSION}-prompt-XXXXXX")
 printf '%s' "$TASK" > "$PROMPT_FILE"
 
 if [[ "$MODE" == "headless" ]]; then

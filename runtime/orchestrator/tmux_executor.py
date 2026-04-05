@@ -31,11 +31,6 @@ STATUS_SCRIPT = Path(os.environ.get(
     "OPENCLAW_STATUS_SCRIPT",
     os.path.expanduser("~/.openclaw/skills/nanocompose-dispatch/scripts/status.sh"),
 ))
-ORCH_BRIDGE = Path(os.environ.get(
-    "OPENCLAW_ORCH_BRIDGE",
-    os.path.expanduser("~/.openclaw/skills/nanocompose-dispatch/scripts/orch-bridge.sh"),
-))
-
 
 
 
@@ -92,7 +87,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
             capture_output=True,
         )
         if check.returncode != 0:
-            # Session gone — check orch-bridge for final state
+            # Session gone — check JSONL log for final state
             return self._check_orch_bridge(session_name)
 
         # 2. Check progress file for interactive mode completion
@@ -113,16 +108,6 @@ class TmuxTaskExecutor(TaskExecutorBase):
                         summary = cap.stdout.strip()[-500:] if cap.stdout else ""
                     except Exception:
                         pass
-                    # Complete the task in orch-bridge before killing (SessionEnd hook may not fire)
-                    try:
-                        subprocess.run(
-                            [str(ORCH_BRIDGE), "complete", session_name,
-                             "--stopped-because", "completed_interactive",
-                             "--exit-code", "0"],
-                            capture_output=True, text=True, timeout=10,
-                        )
-                    except Exception:
-                        pass
                     # Clean up progress file
                     progress_file.unlink(missing_ok=True)
                     # Kill the session (task is done, CC is waiting for input we won't send)
@@ -135,7 +120,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
         start = self._start_times.get(session_name)
         if start and (time.monotonic() - start) > self.timeout_seconds:
             logger.warning("task %s timed out after %ds", session_name, self.timeout_seconds)
-            # cleanup() handles orch-bridge complete, progress file removal,
+            # cleanup() handles progress file removal, task-registry cleanup,
             # and kill-session (tolerates already-dead sessions)
             self.cleanup(session_name)
             return TaskResult(status="timed_out", error=f"timeout after {self.timeout_seconds}s")
@@ -159,17 +144,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
         progress_file = Path.home() / ".openclaw/shared-context/progress" / f"{session_name}.json"
         progress_file.unlink(missing_ok=True)
 
-        # 2. Complete task in orch-bridge (marks state=completed in task-registry)
-        try:
-            subprocess.run(
-                [str(ORCH_BRIDGE), "complete", session_name,
-                 "--stopped-because", "workflow_completed", "--exit-code", "0"],
-                capture_output=True, text=True, timeout=10,
-            )
-        except Exception:
-            pass
-
-        # 3. Remove task-registry file directly (belt + suspenders)
+        # 2. Remove task-registry file directly
         task_ref = self._task_session_map.get(
             session_name,
             "tsk_" + session_name.replace("nc-", "").replace("-", "_"),  # fallback
@@ -177,8 +152,12 @@ class TmuxTaskExecutor(TaskExecutorBase):
         task_file = Path.home() / ".openclaw/shared-context/task-registry/tasks" / f"{task_ref}.json"
         task_file.unlink(missing_ok=True)
 
-        # 4. Kill tmux session if still alive
+        # 3. Kill tmux session if still alive
         subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+
+        # 4. Remove session from in-memory map to avoid memory leak
+        self._task_session_map.pop(session_name, None)
+        self._start_times.pop(session_name, None)
 
         logger.info("cleanup completed for %s", session_name)
 
@@ -216,32 +195,11 @@ class TmuxTaskExecutor(TaskExecutorBase):
         return None
 
     def _check_orch_bridge(self, session_name: str) -> TaskResult:
-        """Check orch-bridge for task completion status."""
-        # 1. Check JSONL log first (headless mode may have finished cleanly)
+        """Check for task completion status after tmux session has exited."""
+        # Check JSONL log (headless mode may have finished cleanly)
         jsonl_result = self._check_jsonl_log(session_name)
         if jsonl_result is not None:
             return jsonl_result
 
-        # 2. Fall back to orch-bridge
-        task_ref = self._task_session_map.get(
-            session_name,
-            "tsk_" + session_name.replace("nc-", "").replace("-", "_"),  # fallback
-        )
-        try:
-            result = subprocess.run(
-                [str(ORCH_BRIDGE), "status", task_ref],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                state = data.get("state", "")
-                if state == "completed":
-                    summary = data.get("continuation", {}).get("stopped_because", "")
-                    return TaskResult(status="completed", output=summary)
-                elif state == "failed":
-                    return TaskResult(status="failed", error="task failed")
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
-            logger.debug("orch-bridge check failed for %s: %s", session_name, e)
-
-        # Session gone, no orch-bridge info, no JSONL result — assume failed
+        # Session gone, no JSONL result — assume failed
         return TaskResult(status="failed", error="tmux session exited without completion")

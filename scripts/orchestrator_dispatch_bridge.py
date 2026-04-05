@@ -91,8 +91,9 @@ def cmd_receipt(args: argparse.Namespace) -> None:
     label = dispatch.get("label", dispatch.get("dispatch_id", "task")[:48])
     session = f"cc-{label}"
 
-    report_path = Path(f"/tmp/{session}-completion-report.md")
-    state_path = Path(f"/tmp/{session}-state.json")
+    state_dir = Path.home() / ".openclaw/state/tmux-tasks"
+    report_path = state_dir / f"{session}-completion-report.md"
+    state_path = state_dir / f"{session}-state.json"
     log_path = Path.home() / ".openclaw/logs" / f"{session}.jsonl"
 
     receipt = {
@@ -122,7 +123,8 @@ def cmd_complete(args: argparse.Namespace) -> None:
     dispatch = json.loads(Path(args.dispatch).read_text())
     label = dispatch.get("label", dispatch.get("dispatch_id", "task")[:48])
     session = f"cc-{label}"
-    state_path = Path(f"/tmp/{session}-state.json")
+    state_dir = Path.home() / ".openclaw/state/tmux-tasks"
+    state_path = state_dir / f"{session}-state.json"
 
     state = {}
     if state_path.is_file():
