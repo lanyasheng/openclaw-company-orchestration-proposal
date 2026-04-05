@@ -48,10 +48,43 @@ import threading
 import uuid
 
 logger = logging.getLogger(__name__)
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+
+# ============ Re-exports from subagent_config ============
+from subagent_config import (
+    BYPASS_FORK_GUARD,
+    CLEANUP_COMPLETE_STATES,
+    CleanupStatus,
+    EXECUTOR_VERSION,
+    MAX_CONCURRENT_SUBAGENTS,
+    MAX_SPAWN_DEPTH,
+    QUEUED_TIMEOUT_SECONDS,
+    RUNNER_SCRIPT_ENV_KEYS,
+    RUNNER_SCRIPT_NAME,
+    SPAWN_DEPTH_ENV_KEY,
+    SUBAGENT_STATE_DIR,
+    SubagentConfig,
+    SubagentResult,
+    SubagentStatus,
+    TERMINAL_STATES,
+    WORKSPACE_ROOT_ENV_KEYS,
+    _count_system_claude_processes,
+    _ensure_state_dir,
+    _get_current_spawn_depth,
+    _iso_now,
+    _pid_exists,
+    _state_file,
+)
+
+# ============ Re-exports from subagent_reconciler ============
+from subagent_reconciler import (
+    list_subagent_tasks,
+    reconcile_dead_processes,
+    reconcile_orphan_completions,
+    reconcile_queued_tasks,
+)
 
 __all__ = [
     "SubagentStatus",
@@ -67,18 +100,35 @@ __all__ = [
     "list_subagent_tasks",
     "reconcile_dead_processes",
     "reconcile_queued_tasks",
+    "reconcile_orphan_completions",
     "EXECUTOR_VERSION",
+    # Re-exported from subagent_config for backward compatibility
+    "MAX_CONCURRENT_SUBAGENTS",
+    "MAX_SPAWN_DEPTH",
+    "SPAWN_DEPTH_ENV_KEY",
+    "BYPASS_FORK_GUARD",
+    "SUBAGENT_STATE_DIR",
+    "RUNNER_SCRIPT_NAME",
+    "RUNNER_SCRIPT_ENV_KEYS",
+    "WORKSPACE_ROOT_ENV_KEYS",
+    "_iso_now",
+    "_ensure_state_dir",
+    "_state_file",
+    "_pid_exists",
+    "_get_current_spawn_depth",
+    "_count_system_claude_processes",
+    # Internal state management (used by tests)
+    "_persist_state",
+    "_load_state",
+    "_register_task",
+    "_update_task_status",
+    "_get_task",
+    "_background_tasks",
+    "_background_tasks_lock",
 ]
 
-EXECUTOR_VERSION = "subagent_executor_v1"
 
-# ============ 全局并发控制（防 fork 炸弹） ============
-
-MAX_CONCURRENT_SUBAGENTS = int(os.environ.get("OPENCLAW_MAX_CONCURRENT_SUBAGENTS", "15"))
-MAX_SPAWN_DEPTH = int(os.environ.get("OPENCLAW_MAX_SPAWN_DEPTH", "2"))
-SPAWN_DEPTH_ENV_KEY = "OPENCLAW_SPAWN_DEPTH"
-# 测试模式：bypass fork guard（仅在受控测试环境使用）
-BYPASS_FORK_GUARD = os.environ.get("OPENCLAW_BYPASS_FORK_GUARD", "0") == "1"
+# ============ 全局并发控制 ============
 
 _global_semaphore = threading.Semaphore(MAX_CONCURRENT_SUBAGENTS)
 _active_subagent_count = 0
@@ -88,217 +138,11 @@ _semaphore_holders: Dict[str, bool] = {}
 _semaphore_holders_lock = threading.Lock()
 
 
-def _get_current_spawn_depth() -> int:
-    """读取当前递归 spawn 深度（从环境变量）"""
-    try:
-        return int(os.environ.get(SPAWN_DEPTH_ENV_KEY, "0"))
-    except (ValueError, TypeError):
-        return 0
-
-
-def _count_system_claude_processes() -> int:
-    """统计系统中活跃的 claude 进程数（防止跨 executor 实例的进程累积）"""
-    try:
-        result = subprocess.run(
-            ["pgrep", "-cf", "claude"],
-            capture_output=True, text=True, timeout=5,
-        )
-        return int(result.stdout.strip()) if result.returncode == 0 else 0
-    except (subprocess.SubprocessError, OSError, ValueError):
-        return 0
-
-
-# ============ 状态定义 ============
-
-SubagentStatus = Literal[
-    "pending", "running", "completed", "failed", "timed_out", "cancelled",
-    "dead_process_reconciled", "queued_launch_missed"
-]
-
-TERMINAL_STATES = {
-    "completed", "failed", "timed_out", "cancelled",
-    "dead_process_reconciled", "queued_launch_missed"
-}
-
-# P0-Hotfix (2026-03-31): Queued launch timeout threshold
-# Tasks stuck in pending state for longer than this will be reconciled to queued_launch_missed
-QUEUED_TIMEOUT_SECONDS = int(os.environ.get("OPENCLAW_QUEUED_TIMEOUT_SECONDS", "300"))  # Default: 5 minutes
-
-# ============ Cleanup 状态定义 ============
-
-CleanupStatus = Literal["pending", "process_killed", "session_cleaned", "ui_cleanup_unknown", "cleanup_failed"]
-
-CLEANUP_COMPLETE_STATES = {"process_killed", "session_cleaned", "ui_cleanup_unknown"}
-
-# ============ 配置定义 ============
-
-
-@dataclass
-class SubagentConfig:
-    """
-    Subagent 配置 — 定义 subagent 的执行参数。
-    
-    核心字段：
-    - label: 任务标签（用于 session 命名和日志）
-    - runtime: 运行时类型（subagent | acp）
-    - timeout_seconds: 超时时间（秒）
-    - allowed_tools: 允许使用的工具列表
-    - disallowed_tools: 禁止使用的工具列表
-    - cwd: 工作目录
-    - metadata: 额外元数据
-    """
-    label: str
-    runtime: Literal["subagent", "acp"] = "subagent"
-    timeout_seconds: int = 900
-    allowed_tools: Optional[List[str]] = None
-    disallowed_tools: Optional[List[str]] = None
-    cwd: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "label": self.label,
-            "runtime": self.runtime,
-            "timeout_seconds": self.timeout_seconds,
-            "allowed_tools": self.allowed_tools,
-            "disallowed_tools": self.disallowed_tools,
-            "cwd": self.cwd,
-            "metadata": self.metadata,
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SubagentConfig":
-        return cls(
-            label=data.get("label", ""),
-            runtime=data.get("runtime", "subagent"),
-            timeout_seconds=data.get("timeout_seconds", 900),
-            allowed_tools=data.get("allowed_tools"),
-            disallowed_tools=data.get("disallowed_tools"),
-            cwd=data.get("cwd", ""),
-            metadata=data.get("metadata", {}),
-        )
-
-
-# ============ 结果定义 ============
-
-
-@dataclass
-class SubagentResult:
-    """
-    Subagent 执行结果 — 记录任务状态和输出。
-    
-    核心字段：
-    - task_id: 任务 ID
-    - status: 执行状态
-    - config: 执行配置
-    - task: 任务描述
-    - result: 执行结果（完成后填充）
-    - error: 错误信息（失败时填充）
-    - started_at: 开始时间
-    - completed_at: 完成时间
-    - pid: 进程 ID（如果已启动）
-    - pgid: 进程组 ID（如果已启动 session）
-    - cleanup_status: 清理状态（pending | process_killed | session_cleaned | ui_cleanup_unknown | cleanup_failed）
-    - cleanup_metadata: 清理元数据（记录清理动作和结果）
-    - metadata: 额外元数据
-    """
-    task_id: str
-    status: SubagentStatus
-    config: SubagentConfig
-    task: str
-    result: Optional[str] = None
-    error: Optional[str] = None
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    pid: Optional[int] = None
-    pgid: Optional[int] = None
-    cleanup_status: Optional[CleanupStatus] = None
-    cleanup_metadata: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "executor_version": EXECUTOR_VERSION,
-            "task_id": self.task_id,
-            "status": self.status,
-            "config": self.config.to_dict(),
-            "task": self.task,
-            "result": self.result,
-            "error": self.error,
-            "started_at": self.started_at,
-            "completed_at": self.completed_at,
-            "pid": self.pid,
-            "pgid": self.pgid,
-            "cleanup_status": self.cleanup_status,
-            "cleanup_metadata": self.cleanup_metadata,
-            "metadata": self.metadata,
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SubagentResult":
-        config_data = data.get("config", {})
-        return cls(
-            task_id=data.get("task_id", ""),
-            status=data.get("status", "pending"),
-            config=SubagentConfig.from_dict(config_data),
-            task=data.get("task", ""),
-            result=data.get("result"),
-            error=data.get("error"),
-            started_at=data.get("started_at"),
-            completed_at=data.get("completed_at"),
-            pid=data.get("pid"),
-            pgid=data.get("pgid"),
-            cleanup_status=data.get("cleanup_status"),
-            cleanup_metadata=data.get("cleanup_metadata", {}),
-            metadata=data.get("metadata", {}),
-        )
-
-
 # ============ 全局状态存储 ============
 
 # 内存缓存（热状态，重启会丢）
 _background_tasks: Dict[str, SubagentResult] = {}
 _background_tasks_lock = threading.Lock()
-
-# 持久化目录
-SUBAGENT_STATE_DIR = Path(
-    os.environ.get(
-        "OPENCLAW_SUBAGENT_STATE_DIR",
-        Path.home() / ".openclaw" / "shared-context" / "subagent_states",
-    )
-)
-
-
-def _ensure_state_dir():
-    """确保状态目录存在"""
-    SUBAGENT_STATE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _state_file(task_id: str) -> Path:
-    """返回状态文件路径"""
-    return SUBAGENT_STATE_DIR / f"{task_id}.json"
-
-
-def _iso_now() -> str:
-    """返回 ISO-8601 时间戳"""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _pid_exists(pid: int) -> bool:
-    """
-    检查进程是否存在。
-    
-    Args:
-        pid: 进程 ID
-    
-    Returns:
-        True 如果进程存在
-    """
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
 
 
 def _persist_state(result: SubagentResult):
@@ -334,7 +178,7 @@ def _load_state(task_id: str) -> Optional[SubagentResult]:
     state_path = _state_file(task_id)
     if not state_path.exists():
         return None
-    
+
     try:
         with open(state_path, "r") as f:
             data = json.load(f)
@@ -354,13 +198,13 @@ def _update_task_status(task_id: str, status: SubagentStatus, **kwargs):
     """更新任务状态（内存缓存 + 文件持久化）"""
     with _background_tasks_lock:
         result = _background_tasks.get(task_id)
-        
+
         # 如果不在内存缓存中，尝试从文件加载
         if not result:
             result = _load_state(task_id)
             if result:
                 _background_tasks[task_id] = result
-        
+
         if result:
             result.status = status
             if status == "running" and not result.started_at:
@@ -383,16 +227,12 @@ def _get_task(task_id: str) -> Optional[SubagentResult]:
         result = _background_tasks.get(task_id)
         if result:
             return result
-    
+
     # 回退到文件
     return _load_state(task_id)
 
 
 # ============ 工具过滤 ============
-
-RUNNER_SCRIPT_NAME = "run_subagent_claude_v1.sh"
-RUNNER_SCRIPT_ENV_KEYS = ("OPENCLAW_SUBAGENT_RUNNER", "OPENCLAW_RUNNER_SCRIPT")
-WORKSPACE_ROOT_ENV_KEYS = ("OPENCLAW_WORKSPACE_ROOT",)
 
 
 def _resolve_runner_script(cwd: str) -> tuple[Optional[Path], List[str]]:
@@ -466,19 +306,19 @@ def _filter_tools(
 ) -> List[str]:
     """
     过滤工具列表。
-    
+
     规则：
     1. 如果 allowed_tools 为空，默认允许所有
     2. disallowed_tools 优先级更高
     """
     tools = set(available_tools)
-    
+
     if allowed_tools:
         tools = tools.intersection(set(allowed_tools))
-    
+
     if disallowed_tools:
         tools = tools - set(disallowed_tools)
-    
+
     return sorted(tools)
 
 
@@ -488,30 +328,30 @@ def _filter_tools(
 class SubagentExecutor:
     """
     Subagent 执行引擎 — 封装 subagent 启动、监控、结果获取。
-    
+
     核心方法：
     - execute_async(task): 异步启动 subagent，返回 task_id
     - get_result(task_id): 获取任务结果
     - cleanup(task_id): 清理已完成任务
-    
+
     设计借鉴 Deer-Flow SubagentExecutor：
     - 统一 task_id / timeout / status / result handle
     - 工具权限隔离
     - 状态继承思路
-    
+
     适配 OpenClaw：
     - 基于 sessions_spawn API
     - shared-context 持久化
     - 不引入双线程池
     """
-    
+
     # 默认可用工具列表
     DEFAULT_AVAILABLE_TOOLS = [
         "read", "write", "edit", "exec",
         "sessions_spawn", "subagents",
         "bash", "python", "node",
     ]
-    
+
     def __init__(
         self,
         config: SubagentConfig,
@@ -519,35 +359,35 @@ class SubagentExecutor:
     ):
         """
         初始化 SubagentExecutor。
-        
+
         Args:
             config: Subagent 配置
             cwd: 工作目录（覆盖 config.cwd）
         """
         self.config = config
         self.cwd = cwd or config.cwd or os.getcwd()
-        
+
         # 工具过滤
         self.allowed_tools = _filter_tools(
             self.DEFAULT_AVAILABLE_TOOLS,
             config.allowed_tools,
             config.disallowed_tools,
         )
-    
+
     def execute_async(self, task: str, task_id: Optional[str] = None) -> str:
         """
         异步启动 subagent。
-        
+
         三层防护:
-        1. 递归深度检测 (OPENCLAW_SPAWN_DEPTH > MAX_SPAWN_DEPTH → 拒绝)
-        2. 系统级进程数熔断 (pgrep claude > MAX_CONCURRENT_SUBAGENTS → 拒绝)
+        1. 递归深度检测 (OPENCLAW_SPAWN_DEPTH > MAX_SPAWN_DEPTH -> 拒绝)
+        2. 系统级进程数熔断 (pgrep claude > MAX_CONCURRENT_SUBAGENTS -> 拒绝)
         3. 进程内信号量 (跨线程并发保护)
-        
+
         测试模式 (OPENCLAW_BYPASS_FORK_GUARD=1): 跳过所有 guard 检查
         """
         if not task_id:
             task_id = f"task_{uuid.uuid4().hex[:12]}"
-        
+
         # 测试模式：bypass 所有 fork guard
         if not BYPASS_FORK_GUARD:
             depth = _get_current_spawn_depth()
@@ -561,7 +401,7 @@ class SubagentExecutor:
                 )
                 _register_task(result)
                 return task_id
-            
+
             system_count = _count_system_claude_processes()
             if system_count >= MAX_CONCURRENT_SUBAGENTS:
                 result = SubagentResult(
@@ -573,7 +413,7 @@ class SubagentExecutor:
                 )
                 _register_task(result)
                 return task_id
-            
+
             acquired = _global_semaphore.acquire(blocking=False)
             if not acquired:
                 result = SubagentResult(
@@ -585,18 +425,18 @@ class SubagentExecutor:
                 )
                 _register_task(result)
                 return task_id
-            
+
             # 记录信号量持有者，用于后续释放
             with _semaphore_holders_lock:
                 _semaphore_holders[task_id] = True
-        
+
         with _active_subagent_count_lock:
             global _active_subagent_count
             _active_subagent_count += 1
-        
+
         # P0-Hotfix (2026-03-31): Record registration timestamp for queued timeout reconciliation
         registered_at = _iso_now()
-        
+
         result = SubagentResult(
             task_id=task_id, status="pending", config=self.config, task=task,
             metadata={
@@ -608,19 +448,17 @@ class SubagentExecutor:
             },
         )
         _register_task(result)
-        
+
         # P0-Hotfix (2026-03-31): Launch confirmation
-        # _start_subagent_process will update status to "running" on success or "failed" on error
-        # If neither happens within QUEUED_TIMEOUT_SECONDS, reconcile_queued_tasks will recover
         self._start_subagent_process(task_id, task)
-        
+
         return task_id
-    
+
     def _start_subagent_process(self, task_id: str, task: str):
         """
         启动 subagent 进程，注入 OPENCLAW_SPAWN_DEPTH 环境变量。
         失败时释放全局信号量。
-        
+
         使用 start_new_session=True 创建新会话，进程组 ID = pid。
         """
         global _active_subagent_count
@@ -687,9 +525,9 @@ class SubagentExecutor:
                 start_new_session=True,
                 env=child_env,
             )
-            
+
             pgid = process.pid
-            
+
             _update_task_status(
                 task_id, "running", pid=process.pid, pgid=pgid,
                 metadata={
@@ -700,14 +538,14 @@ class SubagentExecutor:
                     "runner_search_paths": searched_runner_paths,
                 },
             )
-            
+
             if not BYPASS_FORK_GUARD:
                 threading.Thread(
                     target=self._monitor_process_and_release,
                     args=(task_id, process),
                     daemon=True,
                 ).start()
-            
+
         except (OSError, ValueError) as e:
             if not BYPASS_FORK_GUARD:
                 _global_semaphore.release()
@@ -719,7 +557,7 @@ class SubagentExecutor:
                 task_id, "failed",
                 error=f"Failed to start subagent process: {str(e)}",
             )
-    
+
     def _monitor_process_and_release(self, task_id: str, process):
         """
         监控子进程结束，释放信号量。
@@ -727,7 +565,7 @@ class SubagentExecutor:
 
         终端态判定优先级：
         1. 子进程写入的状态文件（runner 或 test-mode 脚本负责写）
-        2. 退出码 0 → completed, 非 0 → failed
+        2. 退出码 0 -> completed, 非 0 -> failed
         """
         try:
             exit_code = process.wait()
@@ -799,29 +637,29 @@ class SubagentExecutor:
             with _active_subagent_count_lock:
                 global _active_subagent_count
                 _active_subagent_count -= 1
-    
+
     def get_result(self, task_id: str) -> Optional[SubagentResult]:
         """
         获取任务结果（带超时自动检查 + dead process reconciliation）。
-        
+
         检测逻辑：
         1. 超时检查：如果 started_at 存在且超过 timeout_seconds，标记为 timed_out
         2. Dead process 检查：如果状态是 running 但 pid 不存在，标记为 dead_process_reconciled
-        
+
         Args:
             task_id: 任务 ID
-        
+
         Returns:
             SubagentResult，如果任务不存在则返回 None
         """
         result = _get_task(task_id)
         if not result:
             return None
-        
+
         # 只对非终端状态进行检测
         if result.status in TERMINAL_STATES:
             return result
-        
+
         # 1. 超时自动检查（Batch F 增强）
         if result.status == "running" and result.started_at:
             if self._is_timed_out(result):
@@ -835,9 +673,8 @@ class SubagentExecutor:
                     self._kill_process_group(result)
                 result = _get_task(task_id)
                 return result
-        
-        # 2. Dead process reconciliation（本修复新增）
-        # 如果状态是 running 但 pid 不存在，说明进程已死但状态未更新
+
+        # 2. Dead process reconciliation
         if result.status == "running" and result.pid:
             if not _pid_exists(result.pid):
                 _update_task_status(
@@ -853,90 +690,59 @@ class SubagentExecutor:
                     },
                 )
                 result = _get_task(task_id)
-        
+
         return result
-    
+
     def _is_timed_out(self, result: SubagentResult) -> bool:
         """
         检查任务是否超时。
-        
-        Args:
-            result: 任务结果
-        
-        Returns:
-            True 如果任务已超时
         """
         if not result.started_at:
             return False
-        
+
         try:
             started = datetime.fromisoformat(result.started_at)
             elapsed = (datetime.now() - started).total_seconds()
             return elapsed > self.config.timeout_seconds
         except (ValueError, TypeError):
             return False
-    
+
     def is_completed(self, task_id: str) -> bool:
         """
         检查任务是否完成。
-        
-        Args:
-            task_id: 任务 ID
-        
-        Returns:
-            True 如果任务已完成（终端状态）
         """
         result = _get_task(task_id)
         return result is not None and result.status in TERMINAL_STATES
-    
+
     def cleanup(self, task_id: str, kill_process: bool = True) -> bool:
         """
         清理已完成任务（从内存缓存移除，保留文件）。
-        
-        两层清理：
-        1. execution resource release（已有）：semaphore release / active count / memory cleanup
-        2. session/process cleanup（本批新增）：process group kill / cleanup status tracking
-        
-        Args:
-            task_id: 任务 ID
-            kill_process: 是否杀死进程组（默认 True）
-        
-        Returns:
-            True 如果清理成功
         """
         result = _get_task(task_id)
         if not result or result.status not in TERMINAL_STATES:
             return False
-        
-        # Session/process cleanup（本批新增）
+
+        # Session/process cleanup
         if kill_process and result.pid:
             self._kill_process_group(result)
-        
+
         # 从内存缓存移除（保留文件持久化）
         with _background_tasks_lock:
             if task_id in _background_tasks:
                 del _background_tasks[task_id]
-        
+
         return True
-    
+
     def _kill_process_group(self, result: SubagentResult) -> None:
         """
         杀死进程组（timeout / cancel / terminal 时调用）。
-        
-        注意：
-        - 使用 start_new_session=True 启动，进程组 ID = pid
-        - 只杀进程组，不影响其他进程
-        - UI/网页可能残留（显式建模为 ui_cleanup_unknown）
         """
-        import signal
-        
         if not result.pid:
             return
-        
+
         pgid = result.pgid or result.pid
-        
+
         try:
-            # 先尝试杀死整个进程组
             os.killpg(pgid, signal.SIGTERM)
             _update_task_status(
                 result.task_id,
@@ -947,11 +753,10 @@ class SubagentExecutor:
                     "pgid": pgid,
                     "signal": "SIGTERM",
                     "timestamp": _iso_now(),
-                    "ui_cleanup": "unknown",  # 显式建模：UI 清理状态未知
+                    "ui_cleanup": "unknown",
                 },
             )
         except ProcessLookupError:
-            # 进程已结束
             _update_task_status(
                 result.task_id,
                 result.status,
@@ -974,69 +779,48 @@ class SubagentExecutor:
                     "timestamp": _iso_now(),
                 },
             )
-    
+
     def cancel(self, task_id: str) -> bool:
         """
         取消运行中的任务（杀死进程组 + 标记为 cancelled）。
-        
-        Args:
-            task_id: 任务 ID
-        
-        Returns:
-            True 如果取消成功
         """
         result = _get_task(task_id)
         if not result or result.status not in ("pending", "running"):
             return False
-        
-        # 标记为 cancelled
+
         _update_task_status(task_id, "cancelled")
-        
-        # 杀死进程组
+
         if result.pid:
             self._kill_process_group(result)
-        
+
         return True
-    
+
     def force_cleanup(self, task_id: str) -> Dict[str, Any]:
         """
         强制清理任务（无论状态如何）。
-        
-        用于异常情况下的 cleanup，例如：
-        - 任务卡住但状态未更新
-        - 需要手动回收资源
-        
-        Args:
-            task_id: 任务 ID
-        
-        Returns:
-            清理结果字典
         """
         result = _get_task(task_id)
-        
+
         if not result:
             return {
                 "success": False,
                 "reason": "task_not_found",
                 "task_id": task_id,
             }
-        
-        # 如果还在运行，先取消
+
         if result.status == "running":
             self.cancel(task_id)
-            result = _get_task(task_id)  # 重新加载
-        
-        # 如果还不是终端状态，标记为 failed
+            result = _get_task(task_id)
+
         if result.status not in TERMINAL_STATES:
             _update_task_status(
                 task_id, "failed",
                 error="Force cleaned: task was not in terminal state",
             )
             result = _get_task(task_id)
-        
-        # 执行 cleanup
+
         self.cleanup(task_id, kill_process=True)
-        
+
         return {
             "success": True,
             "task_id": task_id,
@@ -1059,17 +843,6 @@ def execute_subagent(
 ) -> str:
     """
     便捷函数：执行 subagent。
-    
-    Args:
-        task: 任务描述
-        label: 任务标签
-        runtime: 运行时类型
-        timeout_seconds: 超时时间
-        allowed_tools: 允许的工具列表
-        cwd: 工作目录
-    
-    Returns:
-        task_id: 任务 ID
     """
     config = SubagentConfig(
         label=label,
@@ -1078,7 +851,7 @@ def execute_subagent(
         allowed_tools=allowed_tools,
         cwd=cwd or "",
     )
-    
+
     executor = SubagentExecutor(config, cwd=cwd)
     return executor.execute_async(task)
 
@@ -1086,294 +859,8 @@ def execute_subagent(
 def get_subagent_result(task_id: str) -> Optional[SubagentResult]:
     """
     便捷函数：获取 subagent 结果。
-    
-    Args:
-        task_id: 任务 ID
-    
-    Returns:
-        SubagentResult
     """
     return _get_task(task_id)
-
-
-def list_subagent_tasks(
-    status: Optional[SubagentStatus] = None,
-    limit: int = 100,
-) -> List[SubagentResult]:
-    """
-    列出 subagent 任务。
-    
-    Args:
-        status: 按状态过滤
-        limit: 最大返回数量
-    
-    Returns:
-        SubagentResult 列表
-    """
-    _ensure_state_dir()
-    
-    tasks = []
-    for state_file in SUBAGENT_STATE_DIR.glob("*.json"):
-        try:
-            result = _load_state(state_file.stem)
-            if result:
-                if status is None or result.status == status:
-                    tasks.append(result)
-        except (json.JSONDecodeError, KeyError, OSError) as exc:
-            import logging as _logging
-            _logging.getLogger(__name__).warning(
-                "failed to load subagent state from %s: %s", state_file, exc,
-            )
-    
-    # 按 started_at 排序
-    tasks.sort(key=lambda t: t.started_at or "", reverse=True)
-    
-    return tasks[:limit]
-
-
-def reconcile_dead_processes(
-    *,
-    status_filter: Optional[SubagentStatus] = "running",
-    limit: int = 1000,
-) -> List[Dict[str, Any]]:
-    """
-    批量回收已死进程的任务（orphan reconciliation）。
-    
-    扫描所有状态为 running 的任务，检查 pid 是否存在。
-    如果 pid 不存在，将状态更新为 dead_process_reconciled。
-    
-    Args:
-        status_filter: 状态过滤（默认只检查 running）
-        limit: 最大检查数量
-    
-    Returns:
-        被回收的任务列表，每个元素包含：
-        - task_id: 任务 ID
-        - dead_pid: 已死的进程 ID
-        - started_at: 任务开始时间
-        - reconciled_at: 回收时间
-    
-    使用场景：
-    - 定期 cron job 清理 orphan tasks
-    - roundtable / dashboard 启动时检查
-    - 用户报告"假派发卡死"时手动触发
-    """
-    reconciled = []
-    
-    tasks = list_subagent_tasks(status=status_filter, limit=limit)
-    
-    for task in tasks:
-        # 只处理有 pid 的 running 任务
-        if task.status != "running" or not task.pid:
-            continue
-        
-        # 检查 pid 是否存在
-        if not _pid_exists(task.pid):
-            # 更新状态为 dead_process_reconciled
-            _update_task_status(
-                task.task_id,
-                "dead_process_reconciled",
-                error=f"Process {task.pid} no longer exists. Reconciled by batch reconciliation.",
-                cleanup_status="session_cleaned",
-                cleanup_metadata={
-                    "action": "dead_process_reconciled",
-                    "dead_pid": task.pid,
-                    "reconciled_at": _iso_now(),
-                    "reason": "pid_not_found",
-                    "reconciliation_batch": True,
-                },
-            )
-            
-            reconciled.append({
-                "task_id": task.task_id,
-                "dead_pid": task.pid,
-                "started_at": task.started_at,
-                "reconciled_at": _iso_now(),
-                "label": task.config.label,
-            })
-    
-    return reconciled
-
-
-def reconcile_queued_tasks(
-    *,
-    status_filter: Optional[SubagentStatus] = "pending",
-    timeout_seconds: Optional[int] = None,
-    limit: int = 1000,
-) -> List[Dict[str, Any]]:
-    """
-    批量回收长时间停留在 pending 状态的任务（queued→launch handoff 失败）。
-    
-    P0-Hotfix (2026-03-31): 修复并发 leaf tasks 在 queued→launch handoff 阶段丢失的问题。
-    
-    扫描所有状态为 pending 的任务，检查是否超过 QUEUED_TIMEOUT_SECONDS。
-    如果任务在 pending 状态停留时间超过阈值且没有 pid，
-    将状态更新为 queued_launch_missed。
-    
-    Args:
-        status_filter: 状态过滤（默认只检查 pending）
-        timeout_seconds: 超时阈值（秒），默认使用 QUEUED_TIMEOUT_SECONDS（300 秒=5 分钟）
-        limit: 最大检查数量
-    
-    Returns:
-        被回收的任务列表，每个元素包含：
-        - task_id: 任务 ID
-        - pending_since: 任务进入 pending 状态的时间
-        - timeout_seconds: 使用的超时阈值
-        - age_seconds: 任务在 pending 状态停留的时间
-        - reconciled_at: 回收时间
-        - reason: 回收原因（machine-readable）
-    
-    使用场景：
-    - 定期 cron job 清理 orphan tasks
-    - roundtable / dashboard 启动时检查
-    - 用户报告"并发任务全失败"时手动触发
-    
-    验收标准：
-    1. queued task 正常 launch → 不被误回收（有 pid 的任务跳过）
-    2. queued task 长时间无 launch/status/callback → 回收成明确终态
-    3. 并发批次中部分任务成功、部分 launch-missed → 状态可区分
-    """
-    timeout_seconds = timeout_seconds or QUEUED_TIMEOUT_SECONDS
-    reconciled = []
-    now = datetime.now()
-    
-    tasks = list_subagent_tasks(status=status_filter, limit=limit)
-    
-    for task in tasks:
-        # 只处理 pending 状态且没有 pid 的任务
-        # 有 pid 说明已经成功启动进程，不应该被回收
-        if task.status != "pending" or task.pid:
-            continue
-        
-        # 计算任务在 pending 状态停留的时间
-        # 优先使用 created_at（任务注册时间），回退到 metadata 中的 spawned_at
-        pending_since_str = (
-            task.metadata.get("spawned_at") or
-            task.metadata.get("registered_at") or
-            (task.to_dict().get("created_at") if hasattr(task, 'to_dict') else None)
-        )
-        
-        if not pending_since_str:
-            # 没有时间戳，跳过（避免误回收）
-            continue
-        
-        try:
-            # 解析时间戳
-            pending_since_str = str(pending_since_str).replace('Z', '+00:00')
-            pending_since = datetime.fromisoformat(pending_since_str)
-            
-            # 处理时区问题
-            if pending_since.tzinfo is None:
-                pending_since = pending_since.replace(tzinfo=now.tzinfo)
-            
-            age_seconds = (now - pending_since).total_seconds()
-        except (ValueError, TypeError) as e:
-            # 时间戳解析失败，跳过
-            continue
-        
-        # 检查是否超时
-        if age_seconds < timeout_seconds:
-            continue
-        
-        # 回收到 queued_launch_missed 状态
-        # 这是 machine-readable 的失败原因，表示 queued→launch handoff 失败
-        _update_task_status(
-            task.task_id,
-            "queued_launch_missed",
-            error=(
-                f"Task stuck in pending state for {age_seconds:.0f}s (threshold={timeout_seconds}s). "
-                f"Queued→launch handoff failed. No process was started."
-            ),
-            cleanup_status="session_cleaned",
-            cleanup_metadata={
-                "action": "queued_launch_missed_reconciled",
-                "pending_since": pending_since_str,
-                "timeout_seconds": timeout_seconds,
-                "age_seconds": round(age_seconds, 2),
-                "reconciled_at": _iso_now(),
-                "reason": "queued_launch_handoff_failed",
-                "reconciliation_batch": True,
-                "missing_signals": {
-                    "pid": task.pid is None,
-                    "status_file": not _state_file(task.task_id).exists() if not task.pid else False,
-                },
-            },
-        )
-        
-        reconciled.append({
-            "task_id": task.task_id,
-            "pending_since": pending_since_str,
-            "timeout_seconds": timeout_seconds,
-            "age_seconds": round(age_seconds, 2),
-            "reconciled_at": _iso_now(),
-            "label": task.config.label,
-            "reason": "queued_launch_handoff_failed",
-        })
-    
-    return reconciled
-
-
-def reconcile_orphan_completions(
-    timeout_seconds: int = 600,
-    limit: int = 1000,
-) -> List[Dict[str, Any]]:
-    """Reconcile tasks whose process exited but state still shows 'running'.
-
-    This catches the case where _monitor_process_and_release succeeded in
-    detecting process exit but the state file write failed silently (e.g.,
-    disk full, race condition). Without this, such tasks remain stuck in
-    'running' forever.
-
-    Returns list of reconciled task dicts.
-    """
-    reconciled: List[Dict[str, Any]] = []
-    now = datetime.now(timezone.utc)
-
-    tasks = list_subagent_tasks(status="running", limit=limit)
-
-    for task in tasks:
-        if not task.pid:
-            continue
-
-        # If process is still alive, skip
-        if _pid_exists(task.pid):
-            continue
-
-        # Process is dead but state says running — orphan completion
-        logger.warning(
-            "Orphan completion detected: task %s has dead pid %d but status is 'running'",
-            task.task_id,
-            task.pid,
-        )
-
-        _update_task_status(
-            task.task_id,
-            "failed",
-            error=(
-                f"Process {task.pid} exited but state was not updated "
-                f"(orphan completion). Reconciled by watchdog."
-            ),
-            cleanup_status="orphan_reconciled",
-            cleanup_metadata={
-                "action": "orphan_completion_reconciled",
-                "dead_pid": task.pid,
-                "reconciled_at": _iso_now(),
-                "original_status": task.status,
-            },
-        )
-
-        reconciled.append({
-            "task_id": task.task_id,
-            "dead_pid": task.pid,
-            "reconciled_at": _iso_now(),
-            "label": task.config.label if task.config else "",
-        })
-
-    if reconciled:
-        logger.info("Reconciled %d orphan completions", len(reconciled))
-
-    return reconciled
 
 
 # ============ CLI 入口 ============
@@ -1387,59 +874,59 @@ if __name__ == "__main__":
         print("  python subagent_executor.py reconcile [--limit 1000]")
         print("  python subagent_executor.py reconcile-queued [--timeout 300] [--limit 1000]")
         sys.exit(1)
-    
+
     cmd = sys.argv[1]
-    
+
     if cmd == "execute":
         if len(sys.argv) < 3:
             print("Error: missing task")
             sys.exit(1)
-        
+
         task = sys.argv[2]
         label = sys.argv[3] if len(sys.argv) > 3 else "default"
-        
+
         task_id = execute_subagent(task, label=label)
         print(f"Task started: {task_id}")
         print(f"Label: {label}")
         print(f"Check status with: python subagent_executor.py get {task_id}")
-    
+
     elif cmd == "get":
         if len(sys.argv) < 3:
             print("Error: missing task_id")
             sys.exit(1)
-        
+
         task_id = sys.argv[2]
         result = get_subagent_result(task_id)
-        
+
         if result:
             print(json.dumps(result.to_dict(), indent=2))
         else:
             print(f"Task not found: {task_id}")
             sys.exit(1)
-    
+
     elif cmd == "list":
         status = None
         if "--status" in sys.argv:
             idx = sys.argv.index("--status")
             if idx + 1 < len(sys.argv):
                 status = sys.argv[idx + 1]
-        
+
         tasks = list_subagent_tasks(status=status)
         print(json.dumps([t.to_dict() for t in tasks], indent=2))
-    
+
     elif cmd == "reconcile":
         limit = 1000
         if "--limit" in sys.argv:
             idx = sys.argv.index("--limit")
             if idx + 1 < len(sys.argv):
                 limit = int(sys.argv[idx + 1])
-        
+
         reconciled = reconcile_dead_processes(limit=limit)
         print(json.dumps({
             "reconciled_count": len(reconciled),
             "reconciled_tasks": reconciled,
         }, indent=2))
-    
+
     elif cmd == "reconcile-queued":
         timeout = QUEUED_TIMEOUT_SECONDS
         limit = 1000
@@ -1451,14 +938,14 @@ if __name__ == "__main__":
             idx = sys.argv.index("--limit")
             if idx + 1 < len(sys.argv):
                 limit = int(sys.argv[idx + 1])
-        
+
         reconciled = reconcile_queued_tasks(timeout_seconds=timeout, limit=limit)
         print(json.dumps({
             "reconciled_count": len(reconciled),
             "timeout_seconds": timeout,
             "reconciled_tasks": reconciled,
         }, indent=2))
-    
+
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)

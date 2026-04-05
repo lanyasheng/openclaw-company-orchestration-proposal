@@ -30,7 +30,15 @@ from .hook_integrations import (
     enforce_completion_translation,
     log_translation_violation,
     check_pending_translations,
+    auto_register,
     HOOK_VIOLATIONS_DIR,
+)
+
+# Centralized hook dispatcher
+from .hook_dispatcher import (
+    HookDispatcher,
+    HookResult,
+    get_dispatcher,
 )
 
 # Enforce mode 配置
@@ -66,7 +74,12 @@ __all__ = [
     "enforce_completion_translation",
     "log_translation_violation",
     "check_pending_translations",
+    "auto_register",
     "HOOK_VIOLATIONS_DIR",
+    # Centralized hook dispatcher
+    "HookDispatcher",
+    "HookResult",
+    "get_dispatcher",
     # Enforce mode 配置
     "EnforceMode",
     "HookConfig",

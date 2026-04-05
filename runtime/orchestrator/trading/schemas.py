@@ -12,11 +12,16 @@ trading/schemas.py — Paper Trading Journal Schema
 
 from __future__ import annotations
 
+import logging as _logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 import json
+
+from core.validation import validate_required, validate_enum_value, ValidationError
+
+_log = _logging.getLogger(__name__)
 
 
 class ExecutionMode(str, Enum):
@@ -58,7 +63,23 @@ class Proposal:
     execution_mode: ExecutionMode = ExecutionMode.PAPER
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+
+    def __post_init__(self) -> None:
+        errors: List[str] = []
+        for f in ("proposal_id", "symbol", "rationale"):
+            val = getattr(self, f, None)
+            if not val or (isinstance(val, str) and not val.strip()):
+                errors.append(f"{f} is required")
+        err = validate_enum_value(
+            self.execution_mode.value if isinstance(self.execution_mode, ExecutionMode) else str(self.execution_mode),
+            [m.value for m in ExecutionMode],
+            "execution_mode",
+        )
+        if err:
+            errors.append(err)
+        if errors:
+            _log.warning("Proposal validation warnings: %s", errors)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "proposal_id": self.proposal_id,
@@ -76,6 +97,14 @@ class Proposal:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Proposal:
+        missing = validate_required(
+            data, ["proposal_id", "symbol", "side", "quantity", "suggested_price", "rationale"]
+        )
+        if missing:
+            raise ValidationError(
+                [f"missing required field: {f}" for f in missing],
+                source="Proposal.from_dict",
+            )
         return cls(
             proposal_id=data["proposal_id"],
             symbol=data["symbol"],
@@ -154,7 +183,23 @@ class Execution:
     slippage: float = 0.0                   # 滑点
     venue: Optional[str] = None             # 交易场所（模拟/实际）
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+
+    def __post_init__(self) -> None:
+        errors: List[str] = []
+        for f in ("execution_id", "proposal_id", "confirmation_id", "symbol"):
+            val = getattr(self, f, None)
+            if not val or (isinstance(val, str) and not val.strip()):
+                errors.append(f"{f} is required")
+        err = validate_enum_value(
+            self.execution_mode.value if isinstance(self.execution_mode, ExecutionMode) else str(self.execution_mode),
+            [m.value for m in ExecutionMode],
+            "execution_mode",
+        )
+        if err:
+            errors.append(err)
+        if errors:
+            _log.warning("Execution validation warnings: %s", errors)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "execution_id": self.execution_id,

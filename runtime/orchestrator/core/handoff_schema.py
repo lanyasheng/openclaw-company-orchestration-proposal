@@ -21,9 +21,14 @@ handoff_schema.py — Unified Planning → Execution Handoff Schema (v1)
 
 from __future__ import annotations
 
+import logging as _logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
+
+from core.validation import validate_required, validate_enum_value, ValidationError
+
+_log = _logging.getLogger(__name__)
 
 __all__ = [
     "HandoffVersion",
@@ -87,6 +92,11 @@ class PlanningHandoff:
     safety_gates: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
     
+    def __post_init__(self) -> None:
+        is_valid, errors = self.validate()
+        if not is_valid:
+            _log.warning("PlanningHandoff validation warnings: %s", errors)
+
     def validate(self) -> tuple[bool, List[str]]:
         """验证 handoff 是否符合规则"""
         errors: List[str] = []
@@ -137,6 +147,12 @@ class PlanningHandoff:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PlanningHandoff":
+        missing = validate_required(data, ["handoff_id", "source_id"])
+        if missing:
+            raise ValidationError(
+                [f"missing required field: {f}" for f in missing],
+                source="PlanningHandoff.from_dict",
+            )
         return cls(
             handoff_id=data.get("handoff_id", ""),
             source_type=data.get("source_type", "manual"),
@@ -230,7 +246,23 @@ class RegistrationHandoff:
     ready_for_auto_dispatch: bool = False
     readiness: Optional[RegistrationReadiness] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+
+    def __post_init__(self) -> None:
+        errors: List[str] = []
+        for f in ("handoff_id", "registration_id", "task_id"):
+            val = getattr(self, f, None)
+            if not val or (isinstance(val, str) and not val.strip()):
+                errors.append(f"{f} is required")
+        err = validate_enum_value(
+            self.registration_status,
+            ("registered", "skipped", "blocked"),
+            "registration_status",
+        )
+        if err:
+            errors.append(err)
+        if errors:
+            _log.warning("RegistrationHandoff validation warnings: %s", errors)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "handoff_version": HANDOFF_SCHEMA_VERSION,
@@ -249,10 +281,18 @@ class RegistrationHandoff:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RegistrationHandoff":
+        missing = validate_required(
+            data, ["handoff_id", "registration_id", "task_id"]
+        )
+        if missing:
+            raise ValidationError(
+                [f"missing required field: {f}" for f in missing],
+                source="RegistrationHandoff.from_dict",
+            )
         readiness = None
         if data.get("readiness"):
             readiness = RegistrationReadiness.from_dict(data["readiness"])
-        
+
         return cls(
             handoff_id=data.get("handoff_id", ""),
             registration_id=data.get("registration_id", ""),
@@ -299,7 +339,23 @@ class ExecutionHandoff:
     owner: str = ""
     continuation_context: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+
+    def __post_init__(self) -> None:
+        errors: List[str] = []
+        for f in ("handoff_id", "dispatch_id"):
+            val = getattr(self, f, None)
+            if not val or (isinstance(val, str) and not val.strip()):
+                errors.append(f"{f} is required")
+        err = validate_enum_value(
+            self.runtime,
+            ("subagent", "tmux", "manual"),
+            "runtime",
+        )
+        if err:
+            errors.append(err)
+        if errors:
+            _log.warning("ExecutionHandoff validation warnings: %s", errors)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "handoff_version": HANDOFF_SCHEMA_VERSION,
@@ -317,6 +373,12 @@ class ExecutionHandoff:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ExecutionHandoff":
+        missing = validate_required(data, ["handoff_id", "dispatch_id"])
+        if missing:
+            raise ValidationError(
+                [f"missing required field: {f}" for f in missing],
+                source="ExecutionHandoff.from_dict",
+            )
         return cls(
             handoff_id=data.get("handoff_id", ""),
             dispatch_id=data.get("dispatch_id", ""),

@@ -36,6 +36,8 @@ __all__ = [
     "enforce_completion_translation",
     "log_translation_violation",
     "check_pending_translations",
+    # Dispatcher auto-registration
+    "auto_register",
     # Audit directories
     "HOOK_VIOLATIONS_DIR",
 ]
@@ -350,6 +352,81 @@ def check_pending_translations(
             continue
     
     return pending
+
+
+# =============================================================================
+# Dispatcher auto-registration
+# =============================================================================
+
+def auto_register(dispatcher) -> None:
+    """Register all built-in hooks with the centralized dispatcher.
+
+    Wraps the existing ``PostPromiseVerifyHook`` and
+    ``PostCompletionTranslateHook`` so they conform to the dispatcher's
+    ``(event, context) -> HookResult`` signature.
+
+    Args:
+        dispatcher: A ``HookDispatcher`` instance.
+    """
+    from .hook_dispatcher import HookResult
+    from .post_promise_verify_hook import PostPromiseVerifyHook
+    from .post_completion_translate_hook import PostCompletionTranslateHook
+
+    # -- PostPromiseVerifyHook on "pre_reply" ---------------------------------
+
+    _promise_hook = PostPromiseVerifyHook()
+
+    def _promise_verify_adapter(event: str, context: Dict[str, Any]) -> HookResult:
+        """Adapter: run promise-anchor verification on pre_reply."""
+        task_context = context.get("task_context", context)
+        check = _promise_hook.verify_anchor(task_context)
+        if check.has_anchor:
+            return HookResult(action="continue", reason="anchor_verified")
+        return HookResult(
+            action="block",
+            reason=check.missing_reason,
+            metadata=check.to_dict(),
+        )
+
+    dispatcher.register(
+        "pre_reply",
+        _promise_verify_adapter,
+        priority=10,
+        name="post_promise_verify",
+    )
+
+    # -- PostCompletionTranslateHook on "post_completion" ---------------------
+
+    _translate_hook = PostCompletionTranslateHook()
+
+    def _completion_translate_adapter(event: str, context: Dict[str, Any]) -> HookResult:
+        """Adapter: check/enforce completion translation on post_completion."""
+        receipt = context.get("completion_receipt")
+        task_ctx = context.get("task_context", {})
+
+        requirement = _translate_hook.check(receipt, task_ctx)
+        if not requirement.requires_translation:
+            return HookResult(action="continue", reason=requirement.reason)
+
+        translation = _translate_hook.enforce(receipt or {}, task_ctx)
+        if translation:
+            return HookResult(
+                action="modify",
+                reason="translation_generated",
+                metadata={"translation": translation},
+            )
+        return HookResult(
+            action="block",
+            reason="translation_required_but_failed",
+            metadata=requirement.to_dict(),
+        )
+
+    dispatcher.register(
+        "post_completion",
+        _completion_translate_adapter,
+        priority=10,
+        name="post_completion_translate",
+    )
 
 
 # =============================================================================

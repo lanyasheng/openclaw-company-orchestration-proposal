@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging as _logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+
+from core.validation import validate_required, validate_enum_value, ValidationError
+
+_log = _logging.getLogger(__name__)
 
 WorkflowStatus = Literal["pending", "running", "completed", "failed", "gate_blocked", "timed_out", "stalled_unrecoverable"]
 BatchStatus = Literal["pending", "running", "completed", "failed"]
@@ -102,6 +107,16 @@ class TaskEntry:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> TaskEntry:
+        missing = validate_required(data, ["task_id"])
+        if missing:
+            raise ValidationError(
+                [f"missing required field: {f}" for f in missing],
+                source="TaskEntry.from_dict",
+            )
+        # Warn on missing optional fields that callers usually provide
+        soft_missing = validate_required(data, ["label"])
+        if soft_missing:
+            _log.debug("TaskEntry.from_dict: optional fields missing: %s", soft_missing)
         pid = data.get("subagent_pid")
         return cls(
             task_id=str(data["task_id"]),
@@ -149,6 +164,12 @@ class BatchEntry:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> BatchEntry:
+        missing = validate_required(data, ["batch_id"])
+        if missing:
+            raise ValidationError(
+                [f"missing required field: {f}" for f in missing],
+                source="BatchEntry.from_dict",
+            )
         cont = data.get("continuation")
         return cls(
             batch_id=str(data["batch_id"]),
@@ -194,6 +215,12 @@ class WorkflowState:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> WorkflowState:
+        missing = validate_required(data, ["workflow_id"])
+        if missing:
+            raise ValidationError(
+                [f"missing required field: {f}" for f in missing],
+                source="WorkflowState.from_dict",
+            )
         ac = data.get("artifact_chain") or {}
         artifact_chain = {str(k): list(v) for k, v in ac.items()}
         return cls(
