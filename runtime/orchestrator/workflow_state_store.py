@@ -93,8 +93,8 @@ class WorkflowStateStore:
                                 task.subagent_task_id = subagent_task_id
                             save_workflow_state(ws, path)
                             return True
-            except Exception as exc:
-                logger.debug("workflow_state update failed: %s", exc)
+            except Exception:
+                logger.exception("workflow_state update failed for task %s", task_id)
             return False
 
     def update_batch(
@@ -123,8 +123,8 @@ class WorkflowStateStore:
                             batch.continuation = ContinuationDecision.from_dict(continuation)
                         save_workflow_state(ws, path)
                         return True
-            except Exception as exc:
-                logger.debug("workflow_state batch update failed: %s", exc)
+            except Exception:
+                logger.exception("workflow_state batch update failed for batch %s", batch_id)
             return False
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
@@ -140,7 +140,7 @@ class WorkflowStateStore:
                     if task.task_id == task_id:
                         return task.to_dict()
         except Exception:
-            pass
+            logger.exception("workflow_state get_task failed for task %s", task_id)
         return None
 
     def get_batch(self, batch_id: str) -> Optional[Dict[str, Any]]:
@@ -155,7 +155,7 @@ class WorkflowStateStore:
                 if batch.batch_id == batch_id:
                     return batch.to_dict()
         except Exception:
-            pass
+            logger.exception("workflow_state get_batch failed for batch %s", batch_id)
         return None
 
     def record_artifact(self, task_id: str, artifact_type: str, artifact_id: str) -> bool:

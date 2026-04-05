@@ -331,16 +331,16 @@ class PaperSimulationAdapter:
     
     def _persist_journal(self, journal: JournalEntry) -> Path:
         """持久化交易日志到文件"""
+        from utils.io import atomic_write_json
         file_path = self.journal_dir / f"{journal.journal_id}.json"
-        with open(file_path, "w") as f:
-            json.dump(journal.to_dict(), f, indent=2)
+        atomic_write_json(file_path, journal.to_dict())
         return file_path
-    
+
     def persist_position(self, position: Position) -> Path:
         """持久化持仓到文件"""
+        from utils.io import atomic_write_json
         file_path = self.state_dir / f"position_{position.symbol}.json"
-        with open(file_path, "w") as f:
-            json.dump(position.to_dict(), f, indent=2)
+        atomic_write_json(file_path, position.to_dict())
         return file_path
     
     def get_position(self, symbol: str) -> Optional[Position]:

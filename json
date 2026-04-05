@@ -3,7 +3,7 @@
     "resolved_context": "channel_roundtable",
     "source": "ambient_default_current_channel",
     "matched_on": "discord:channel:1483883339701158102",
-    "generated_at": "2026-04-05T00:33:16+08:00"
+    "generated_at": "2026-04-05T12:44:58+08:00"
   },
   "onboarding": {
     "adapter_capability": "channel_roundtable.generic.v1",
@@ -97,7 +97,7 @@
     "enabled": true,
     "adapter": "channel_roundtable",
     "scenario": "current_channel_architecture_roundtable",
-    "batch_key": "batch_current_channel_architecture_roundtable_1483883339701158102_20260405003316",
+    "batch_key": "batch_current_channel_architecture_roundtable_1483883339701158102_20260405124458",
     "owner": "main",
     "backend_preference": "subagent",
     "callback_payload_schema": "channel_roundtable.v1.callback",
@@ -157,7 +157,7 @@
         "channel_name": "temporal-vs-langgraph-openclaw-company-architecture",
         "topic": "Temporal vs LangGraph｜OpenClaw 公司级编排架构",
         "owner": "main",
-        "generated_at": "2026-04-05T00:33:16+08:00"
+        "generated_at": "2026-04-05T12:44:58+08:00"
       },
       "roundtable": {
         "conclusion": "PASS",
@@ -176,7 +176,7 @@
         "channel_name": "temporal-vs-langgraph-openclaw-company-architecture",
         "topic": "Temporal vs LangGraph｜OpenClaw 公司级编排架构",
         "owner": "main",
-        "generated_at": "2026-04-05T00:33:16+08:00"
+        "generated_at": "2026-04-05T12:44:58+08:00"
       },
       "roundtable": {
         "conclusion": "PASS",

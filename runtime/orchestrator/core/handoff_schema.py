@@ -22,7 +22,7 @@ handoff_schema.py — Unified Planning → Execution Handoff Schema (v1)
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 __all__ = [
@@ -339,7 +339,7 @@ def _generate_id(prefix: str) -> str:
 
 def _iso_now() -> str:
     """返回当前 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _resolve_executor_from_profile_and_task(

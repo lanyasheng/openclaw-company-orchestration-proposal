@@ -17,7 +17,7 @@ _TERMINAL_RESULT_STATUSES = {"completed", "failed", "timed_out"}
 
 
 def _iso_now() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 class BatchExecutor:
@@ -59,7 +59,7 @@ class BatchExecutor:
                 capture_output=True, timeout=5,
             )
             return ret.returncode == 0
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             return False
 
     def execute_batch(self, batch: BatchEntry, workflow_state: WorkflowState) -> None:
@@ -84,7 +84,8 @@ class BatchExecutor:
                     task.task_id, task.label, {"batch_id": batch.batch_id}
                 )
                 task.subagent_task_id = handle
-            except Exception as e:
+            except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+                logger.exception("failed to execute task %s", task.task_id)
                 task.status = "failed"
                 task.error = str(e)
                 task.completed_at = _iso_now()
@@ -130,8 +131,8 @@ class BatchExecutor:
             if task.subagent_task_id:
                 try:
                     self._executor.cleanup(task.subagent_task_id)
-                except Exception:
-                    pass
+                except (OSError, RuntimeError) as exc:
+                    logger.warning("cleanup failed for subagent %s: %s", task.subagent_task_id, exc)
 
     def monitor_batch(self, batch: BatchEntry) -> bool:
         # ── Hard batch timeout ───────────────────────────────────────
@@ -167,7 +168,8 @@ class BatchExecutor:
                 continue
             try:
                 tr: TaskResult = self._executor.poll(task.subagent_task_id)
-            except Exception as e:
+            except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+                logger.warning("poll failed for task %s: %s", task.task_id, e)
                 self._apply_retry_or_fail(task, batch, str(e))
                 continue
             if tr.status == "completed":
@@ -184,8 +186,8 @@ class BatchExecutor:
                 # Clean up all external state (progress, task-registry, tmux session)
                 try:
                     self._executor.cleanup(task.subagent_task_id)
-                except Exception:
-                    pass
+                except (OSError, RuntimeError) as exc:
+                    logger.warning("cleanup failed for subagent %s: %s", task.subagent_task_id, exc)
             elif tr.status in ("failed", "timed_out"):
                 self._apply_retry_or_fail(
                     task, batch, tr.error or tr.status,
@@ -223,7 +225,8 @@ class BatchExecutor:
                     task.task_id, task.label, {"batch_id": batch.batch_id}
                 )
                 task.subagent_task_id = handle
-            except Exception as e:
+            except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+                logger.exception("failed to redispatch task %s", task.task_id)
                 task.status = "failed"
                 task.error = str(e)
                 task.completed_at = _iso_now()
@@ -237,4 +240,4 @@ class BatchExecutor:
             from state_sync import sync_task_to_state_machine
             sync_task_to_state_machine(task_id, batch_id, status, result)
         except Exception:
-            logger.debug("state_machine sync skipped for %s", task_id, exc_info=True)
+            logger.warning("state_machine sync skipped for %s", task_id, exc_info=True)

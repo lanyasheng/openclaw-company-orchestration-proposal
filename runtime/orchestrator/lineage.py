@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -71,7 +71,7 @@ def _lineage_file(lineage_id: str) -> Path:
 
 def _iso_now() -> str:
     """返回当前 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _generate_lineage_id() -> str:
@@ -209,11 +209,11 @@ class LineageStore:
             metadata=metadata or {},
         )
         
-        # 保存到文件
+        # 保存到文件（原子写入）
+        from utils.io import atomic_write_text
         file_path = _lineage_file(record.lineage_id)
         _ensure_lineage_dir()
-        with open(file_path, "w") as f:
-            f.write(record.to_json())
+        atomic_write_text(file_path, record.to_json())
         
         # 更新索引
         _record_lineage_index(record.lineage_id, file_path)

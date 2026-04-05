@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -79,7 +79,7 @@ def _spawn_closure_file(spawn_id: str) -> Path:
 
 def _iso_now() -> str:
     """返回当前 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _generate_spawn_id() -> str:
@@ -260,8 +260,8 @@ class SpawnClosureArtifact:
             store = get_store()
             if store.is_active:
                 store.update_task(
-                    self.source_task_id,
-                    execution_metadata={"spawn_id": self.spawn_id, "dispatch_id": self.source_dispatch_id},
+                    self.task_id,
+                    execution_metadata={"spawn_id": self.spawn_id, "dispatch_id": self.dispatch_id},
                 )
         except Exception:
             pass

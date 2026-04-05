@@ -46,7 +46,7 @@ import json
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -168,7 +168,7 @@ class SubagentStateManager:
     
     def _iso_now(self) -> str:
         """返回 ISO-8601 时间戳"""
-        return datetime.now().isoformat()
+        return datetime.now(timezone.utc).isoformat()
     
     def _persist_state(self, state: SubagentState):
         """持久化状态到文件"""

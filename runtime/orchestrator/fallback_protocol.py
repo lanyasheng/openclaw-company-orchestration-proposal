@@ -21,7 +21,7 @@ fallback_protocol.py — P0-4 Timeout / Error / Empty-Result Fallback Protocol
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional, Tuple
 from pathlib import Path
 import json
@@ -37,6 +37,8 @@ __all__ = [
     "check_empty_result",
     "determine_retry_eligibility",
     "build_fallback_closeout",
+    "DenialCircuitBreaker",
+    "get_circuit_breaker",
 ]
 
 FALLBACK_PROTOCOL_VERSION = "fallback_protocol_v1"
@@ -689,6 +691,80 @@ def build_fallback_closeout(
             **fallback_result.metadata,
         },
     }
+
+
+class DenialCircuitBreaker:
+    """Circuit breaker that tracks consecutive and total failures per target.
+
+    Inspired by Claude Code's denial circuit breaker pattern:
+    - 3 consecutive failures → trip (stop trying this target)
+    - 20 total failures → trip permanently
+
+    When tripped, the breaker recommends skipping the target and falling
+    back to an alternative strategy.
+    """
+
+    CONSECUTIVE_THRESHOLD = 3
+    TOTAL_THRESHOLD = 20
+
+    def __init__(self):
+        # target_id → {"consecutive": int, "total": int, "tripped": bool, "last_failure": str}
+        self._state: Dict[str, Dict[str, Any]] = {}
+
+    def record_success(self, target_id: str) -> None:
+        """Record a successful execution for a target, resetting consecutive count."""
+        entry = self._state.setdefault(target_id, {"consecutive": 0, "total": 0, "tripped": False})
+        entry["consecutive"] = 0
+
+    def record_failure(self, target_id: str, reason: str = "") -> bool:
+        """Record a failure for a target.
+
+        Returns True if the circuit breaker has tripped (target should be skipped).
+        """
+        entry = self._state.setdefault(
+            target_id, {"consecutive": 0, "total": 0, "tripped": False}
+        )
+        entry["consecutive"] += 1
+        entry["total"] += 1
+        entry["last_failure"] = reason
+        entry["last_failure_at"] = datetime.now(timezone.utc).isoformat()
+
+        if entry["consecutive"] >= self.CONSECUTIVE_THRESHOLD or entry["total"] >= self.TOTAL_THRESHOLD:
+            entry["tripped"] = True
+
+        return entry["tripped"]
+
+    def is_tripped(self, target_id: str) -> bool:
+        """Check if the circuit breaker is tripped for a target."""
+        entry = self._state.get(target_id)
+        return bool(entry and entry.get("tripped"))
+
+    def reset(self, target_id: str) -> None:
+        """Manually reset the circuit breaker for a target."""
+        self._state.pop(target_id, None)
+
+    def get_status(self, target_id: str) -> Dict[str, Any]:
+        """Get circuit breaker status for a target."""
+        entry = self._state.get(target_id)
+        if not entry:
+            return {"target_id": target_id, "consecutive": 0, "total": 0, "tripped": False}
+        return {"target_id": target_id, **entry}
+
+    def get_all_tripped(self) -> List[str]:
+        """Get all tripped target IDs."""
+        return [tid for tid, e in self._state.items() if e.get("tripped")]
+
+
+# Module-level singleton for cross-module use
+_denial_circuit_breaker: Optional[DenialCircuitBreaker] = None
+
+
+def get_circuit_breaker() -> DenialCircuitBreaker:
+    """Get the singleton DenialCircuitBreaker instance."""
+    global _denial_circuit_breaker
+    if _denial_circuit_breaker is None:
+        _denial_circuit_breaker = DenialCircuitBreaker()
+    return _denial_circuit_breaker
 
 
 # ============ Convenience functions ============

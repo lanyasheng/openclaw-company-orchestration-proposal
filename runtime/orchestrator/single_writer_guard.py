@@ -26,7 +26,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -73,7 +73,7 @@ def _lock_file(repo: str, batch_id: str = "") -> Path:
 
 def _iso_now() -> str:
     """返回当前 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _generate_lock_id() -> str:

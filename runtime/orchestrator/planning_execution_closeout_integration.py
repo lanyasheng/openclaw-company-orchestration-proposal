@@ -289,7 +289,7 @@ class IntegrationKernel:
             ]
             if children:
                 lineage_info["batch_id"] = children[0].batch_id
-        except Exception:
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, OSError):
             pass
         
         # 查询作为 child 的 lineage
@@ -306,7 +306,7 @@ class IntegrationKernel:
             ]
             if parents and not lineage_info["batch_id"]:
                 lineage_info["batch_id"] = parents[0].batch_id
-        except Exception:
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, OSError):
             pass
         
         return lineage_info
@@ -412,7 +412,7 @@ class IntegrationKernel:
         if include_fanin and lineage_info and lineage_info.get("batch_id"):
             try:
                 fanin_readiness = check_fanin_readiness(batch_id=lineage_info["batch_id"])
-            except Exception:
+            except (FileNotFoundError, json.JSONDecodeError, KeyError, OSError):
                 fanin_readiness = {"status": "error", "message": "Failed to check fan-in readiness"}
         
         # 6. 提取 continuation contract
@@ -495,8 +495,8 @@ class IntegrationKernel:
 
 def _iso_now() -> str:
     """返回当前 ISO-8601 时间戳"""
-    from datetime import datetime
-    return datetime.now().isoformat()
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 def get_completion_receipt_by_execution_id(execution_id: str) -> Optional[CompletionReceiptArtifact]:

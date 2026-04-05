@@ -35,7 +35,7 @@ import os
 import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Literal
 
@@ -91,7 +91,7 @@ def _ensure_dirs():
 
 def _iso_now() -> str:
     """返回 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _generate_alert_id(candidate_id: str, signal_type: str, timestamp: str) -> str:

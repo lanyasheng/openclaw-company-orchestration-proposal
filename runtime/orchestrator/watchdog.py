@@ -86,17 +86,15 @@ def auto_resume(state_path: str | Path) -> Optional[str]:
 
     stall_seconds = _seconds_since(ws.updated_at)
     if stall_seconds and stall_seconds > DEFAULT_STALL_TIMEOUT_SECONDS:
-        resume_count = getattr(ws, "resume_count", 0) or 0
-        resume_count += 1
+        ws.resume_count += 1
 
-        if resume_count > 3:
+        if ws.resume_count > 3:
             logger.error(
                 "workflow %s stalled %d times, marking as stalled_unrecoverable",
                 ws.workflow_id,
-                resume_count,
+                ws.resume_count,
             )
             ws.status = "stalled_unrecoverable"
-            ws.resume_count = resume_count
             ws.updated_at = datetime.now(timezone.utc).isoformat()
             save_workflow_state(ws, path)
             return "stalled_unrecoverable"
@@ -105,15 +103,70 @@ def auto_resume(state_path: str | Path) -> Optional[str]:
             "workflow %s stalled for %ds, resuming (attempt %d/3)",
             ws.workflow_id,
             stall_seconds,
-            resume_count,
+            ws.resume_count,
         )
         ws.status = "running"
-        ws.resume_count = resume_count
         ws.updated_at = datetime.now(timezone.utc).isoformat()
         save_workflow_state(ws, path)
         return "resumed"
 
     return None
+
+
+def check_subagent_health() -> dict:
+    """Run subagent-level health checks: dead processes + orphan completions + queued stalls.
+
+    Imports lazily to avoid circular dependencies. Returns a summary dict.
+    """
+    summary: dict = {"dead_processes": [], "orphan_completions": [], "queued_stalls": []}
+    try:
+        from subagent_executor import (
+            reconcile_dead_processes,
+            reconcile_orphan_completions,
+            reconcile_queued_tasks,
+        )
+
+        dead = reconcile_dead_processes()
+        summary["dead_processes"] = dead
+        if dead:
+            logger.info("Watchdog reconciled %d dead subagent processes", len(dead))
+
+        orphans = reconcile_orphan_completions()
+        summary["orphan_completions"] = orphans
+        if orphans:
+            logger.info("Watchdog reconciled %d orphan completions", len(orphans))
+
+        queued = reconcile_queued_tasks()
+        summary["queued_stalls"] = queued
+        if queued:
+            logger.info("Watchdog reconciled %d queued task stalls", len(queued))
+    except ImportError:
+        logger.debug("subagent_executor not available, skipping subagent health checks")
+    except Exception as e:
+        logger.error("Subagent health check failed: %s", e)
+
+    return summary
+
+
+def full_health_check(state_path: Optional[str | Path] = None) -> dict:
+    """Unified health check combining workflow state + subagent health.
+
+    Args:
+        state_path: Optional workflow state file to check.
+
+    Returns:
+        Combined health report dict.
+    """
+    report: dict = {"workflow": None, "subagent_health": {}}
+
+    if state_path:
+        report["workflow"] = check_workflow(state_path)
+        if report["workflow"].get("action") == "auto_resume":
+            auto_resume(state_path)
+
+    report["subagent_health"] = check_subagent_health()
+
+    return report
 
 
 def find_state_files(directory: str | Path) -> List[Path]:

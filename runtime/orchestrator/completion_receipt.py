@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -83,7 +83,7 @@ def _completion_receipt_file(receipt_id: str) -> Path:
 
 def _iso_now() -> str:
     """返回当前 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _generate_receipt_id() -> str:

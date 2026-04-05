@@ -27,6 +27,8 @@ from typing import Any, Dict, List, Optional, Callable, Set
 from pathlib import Path
 import json
 
+from core.types import FanOutMode, FanInMode, GateResult  # noqa: F811
+
 __all__ = [
     "PhaseState",
     "PhaseTransition",
@@ -81,42 +83,6 @@ for state in PhaseState:
     TRANSITION_RULES[(state, PhaseTransition.CANCEL)] = PhaseState.CANCELLED
 
 
-class FanOutMode(str, Enum):
-    """Fan-out 执行模式"""
-    SEQUENTIAL = "sequential"  # 顺序执行
-    PARALLEL = "parallel"  # 并行执行
-    BATCHED = "batched"  # 分批执行
-
-
-class FanInMode(str, Enum):
-    """Fan-in 聚合模式"""
-    ALL_SUCCESS = "all_success"  # 全部成功才继续
-    ANY_SUCCESS = "any_success"  # 任一成功即可
-    MAJORITY = "majority"  # 多数成功
-    CUSTOM = "custom"  # 自定义聚合逻辑
-
-
-@dataclass
-class GateResult:
-    """Quality Gate 检查结果"""
-    passed: bool
-    gate_name: str
-    checks: List[Dict[str, Any]] = field(default_factory=list)
-    blockers: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "passed": self.passed,
-            "gate_name": self.gate_name,
-            "checks": self.checks,
-            "blockers": self.blockers,
-            "warnings": self.warnings,
-            "metadata": self.metadata,
-        }
-
-
 @dataclass
 class QualityGate:
     """
@@ -166,7 +132,7 @@ class QualityGate:
                 all_blockers.append(f"Check {check_fn.__name__} failed: {e}")
         
         return GateResult(
-            passed=not any_failed and self.required,
+            passed=not any_failed or not self.required,
             gate_name=self.name,
             checks=all_checks,
             blockers=all_blockers,
@@ -225,7 +191,8 @@ class CallbackRouter:
                 handler(event)
             except Exception as e:
                 # 回调失败不影响主流程
-                print(f"Callback handler failed: {e}")
+                import logging
+                logging.getLogger(__name__).warning("Callback handler failed: %s", e)
     
     def get_event_log(self, event_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """获取事件日志"""

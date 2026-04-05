@@ -549,7 +549,9 @@ class UnifiedExecutionRuntime:
         ]
         
         try:
-            subprocess.run(start_cmd, check=True, capture_output=True, text=True)
+            subprocess.run(start_cmd, check=True, capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Timed out starting tmux session for label={label}")
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to start tmux session: {e.stderr or e.stdout or str(e)}")
         
@@ -561,7 +563,9 @@ class UnifiedExecutionRuntime:
                 "--dispatch-id", dispatch_id,
             ]
             try:
-                subprocess.run(sync_cmd, check=True, capture_output=True, text=True)
+                subprocess.run(sync_cmd, check=True, capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                print(f"Warning: Observability sync timed out for label={label}")
             except subprocess.CalledProcessError as e:
                 # Log warning but continue (observability is nice-to-have)
                 print(f"Warning: Failed to sync observability: {e.stderr or str(e)}")
@@ -578,6 +582,10 @@ class UnifiedExecutionRuntime:
                     status_dict[key.strip()] = value.strip()
             tmux_status = status_dict.get("STATUS", "unknown")
         except Exception:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "failed to get tmux status for session %s", session, exc_info=True,
+            )
             tmux_status = "unknown"
         
         # 4. Build result with callback/wake wiring

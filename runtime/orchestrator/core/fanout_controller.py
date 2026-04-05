@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Set, Callable
 from pathlib import Path
 import json
 
+from core.types import FanOutMode, FanInMode  # noqa: F811
+
 __all__ = [
     "FanOutMode",
     "FanInMode",
@@ -30,21 +32,6 @@ __all__ = [
 ]
 
 FANOUT_CONTROLLER_VERSION = "fanout_controller_v1"
-
-
-class FanOutMode(str, Enum):
-    """Fan-out 执行模式"""
-    SEQUENTIAL = "sequential"  # 顺序执行
-    PARALLEL = "parallel"  # 并行执行
-    BATCHED = "batched"  # 分批执行
-
-
-class FanInMode(str, Enum):
-    """Fan-in 聚合模式"""
-    ALL_SUCCESS = "all_success"  # 全部成功才继续
-    ANY_SUCCESS = "any_success"  # 任一成功即可
-    MAJORITY = "majority"  # 多数成功
-    CUSTOM = "custom"  # 自定义聚合逻辑
 
 
 class SubTaskStatus(str, Enum):

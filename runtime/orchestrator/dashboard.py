@@ -18,7 +18,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -86,7 +86,7 @@ ARCHIVE_STALE_TRADING_CALLBACK_HOURS = float(os.environ.get("OPENCLAW_ARCHIVE_ST
 
 
 def _iso_now() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def parse_datetime(value: Optional[str]) -> Optional[datetime]:

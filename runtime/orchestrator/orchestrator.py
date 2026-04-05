@@ -9,8 +9,11 @@
 """
 
 import json
+import logging
 import os
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -177,7 +180,7 @@ class Orchestrator:
                     return decision
             except Exception as e:
                 # 规则失败不影响其他规则
-                print(f"Rule failed: {e}")
+                logger.warning("Rule failed: %s", e)
                 continue
         
         return None

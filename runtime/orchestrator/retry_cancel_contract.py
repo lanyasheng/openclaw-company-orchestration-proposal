@@ -52,7 +52,7 @@ import json
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
@@ -379,7 +379,7 @@ class RetryCancelManager:
     
     def _iso_now(self) -> str:
         """返回 ISO-8601 时间戳"""
-        return datetime.now().isoformat()
+        return datetime.now(timezone.utc).isoformat()
     
     def _persist_state(self, state: RetryCancelState):
         """持久化状态到文件"""

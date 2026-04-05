@@ -82,10 +82,15 @@ class TmuxTaskExecutor(TaskExecutorBase):
         session_name = handle
 
         # 1. Check if tmux session still exists
-        check = subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
-            capture_output=True,
-        )
+        try:
+            check = subprocess.run(
+                ["tmux", "has-session", "-t", session_name],
+                capture_output=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("tmux has-session timed out for %s", session_name)
+            return TaskResult(status="running")
         if check.returncode != 0:
             # Session gone — check JSONL log for final state
             return self._check_orch_bridge(session_name)
@@ -111,7 +116,10 @@ class TmuxTaskExecutor(TaskExecutorBase):
                     # Clean up progress file
                     progress_file.unlink(missing_ok=True)
                     # Kill the session (task is done, CC is waiting for input we won't send)
-                    subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+                    try:
+                        subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True, timeout=30)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("tmux kill-session timed out for %s", session_name)
                     return TaskResult(status="completed", output=summary)
             except (json.JSONDecodeError, OSError):
                 pass
@@ -130,11 +138,16 @@ class TmuxTaskExecutor(TaskExecutorBase):
 
     def cancel(self, handle: str) -> bool:
         """Kill the tmux session."""
-        result = subprocess.run(
-            ["tmux", "kill-session", "-t", handle],
-            capture_output=True,
-        )
-        return result.returncode == 0
+        try:
+            result = subprocess.run(
+                ["tmux", "kill-session", "-t", handle],
+                capture_output=True,
+                timeout=30,
+            )
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            logger.warning("tmux kill-session timed out for %s", handle)
+            return False
 
     def cleanup(self, handle: str) -> None:
         """Clean up all state sources for a completed task."""
@@ -153,7 +166,10 @@ class TmuxTaskExecutor(TaskExecutorBase):
         task_file.unlink(missing_ok=True)
 
         # 3. Kill tmux session if still alive
-        subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+        try:
+            subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            logger.warning("tmux kill-session timed out during cleanup for %s", session_name)
 
         # 4. Remove session from in-memory map to avoid memory leak
         self._task_session_map.pop(session_name, None)

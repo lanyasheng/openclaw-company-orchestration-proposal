@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
@@ -53,7 +53,7 @@ RULES_VERSION = "alert_rules_v1"
 
 def _iso_now() -> str:
     """返回 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _parse_iso_time(time_str: str) -> Optional[datetime]:

@@ -433,7 +433,10 @@ class SessionsSpawnAPIExecution:
                     execution_metadata={"api_execution_id": self.execution_id},
                 )
         except Exception:
-            pass
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "workflow_state_store sync failed for task %s", self.source_task_id, exc_info=True,
+            )
         return exec_file
     
     def get_linkage(self) -> Dict[str, str]:

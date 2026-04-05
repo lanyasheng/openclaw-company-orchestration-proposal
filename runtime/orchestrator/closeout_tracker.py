@@ -295,7 +295,10 @@ class CloseoutArtifact:
                     "decided_at": self.closeout_time,
                 })
         except Exception:
-            pass
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "workflow_state_store sync failed for batch %s", self.batch_id, exc_info=True,
+            )
         return closeout_path
 
 

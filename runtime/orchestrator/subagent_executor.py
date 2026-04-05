@@ -39,14 +39,17 @@ result = executor.get_result(task_id)
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import subprocess
 import sys
 import threading
 import uuid
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -101,7 +104,7 @@ def _count_system_claude_processes() -> int:
             capture_output=True, text=True, timeout=5,
         )
         return int(result.stdout.strip()) if result.returncode == 0 else 0
-    except Exception:
+    except (subprocess.SubprocessError, OSError, ValueError):
         return 0
 
 
@@ -278,7 +281,7 @@ def _state_file(task_id: str) -> Path:
 
 def _iso_now() -> str:
     """返回 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _pid_exists(pid: int) -> bool:
@@ -299,13 +302,31 @@ def _pid_exists(pid: int) -> bool:
 
 
 def _persist_state(result: SubagentResult):
-    """持久化状态到文件"""
+    """持久化状态到文件（文件级锁防并发写入冲突）"""
+    import fcntl
     _ensure_state_dir()
     state_path = _state_file(result.task_id)
-    tmp_path = state_path.with_suffix(".tmp")
-    with open(tmp_path, "w") as f:
-        json.dump(result.to_dict(), f, indent=2)
-    tmp_path.replace(state_path)
+    lock_path = state_path.with_suffix(".lock")
+    try:
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            tmp_path = state_path.with_suffix(".tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(result.to_dict(), f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp_path.replace(state_path)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+    except OSError as e:
+        # Fallback: write without lock if locking fails (e.g., NFS)
+        logger.warning("Failed to acquire state lock for %s: %s", result.task_id, e)
+        tmp_path = state_path.with_suffix(".tmp")
+        with open(tmp_path, "w") as f:
+            json.dump(result.to_dict(), f, indent=2)
+        tmp_path.replace(state_path)
 
 
 def _load_state(task_id: str) -> Optional[SubagentResult]:
@@ -687,7 +708,7 @@ class SubagentExecutor:
                     daemon=True,
                 ).start()
             
-        except Exception as e:
+        except (OSError, ValueError) as e:
             if not BYPASS_FORK_GUARD:
                 _global_semaphore.release()
                 with _semaphore_holders_lock:
@@ -767,7 +788,10 @@ class SubagentExecutor:
                     },
                 )
         except Exception:
-            pass
+            import logging as _logging
+            _logging.getLogger(__name__).exception(
+                "unexpected error monitoring subagent process for task %s", task_id,
+            )
         finally:
             _global_semaphore.release()
             with _semaphore_holders_lock:
@@ -938,7 +962,7 @@ class SubagentExecutor:
                     "timestamp": _iso_now(),
                 },
             )
-        except Exception as e:
+        except OSError as e:
             _update_task_status(
                 result.task_id,
                 result.status,
@@ -1095,8 +1119,11 @@ def list_subagent_tasks(
             if result:
                 if status is None or result.status == status:
                     tasks.append(result)
-        except Exception:
-            pass
+        except (json.JSONDecodeError, KeyError, OSError) as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "failed to load subagent state from %s: %s", state_file, exc,
+            )
     
     # 按 started_at 排序
     tasks.sort(key=lambda t: t.started_at or "", reverse=True)
@@ -1284,6 +1311,68 @@ def reconcile_queued_tasks(
             "reason": "queued_launch_handoff_failed",
         })
     
+    return reconciled
+
+
+def reconcile_orphan_completions(
+    timeout_seconds: int = 600,
+    limit: int = 1000,
+) -> List[Dict[str, Any]]:
+    """Reconcile tasks whose process exited but state still shows 'running'.
+
+    This catches the case where _monitor_process_and_release succeeded in
+    detecting process exit but the state file write failed silently (e.g.,
+    disk full, race condition). Without this, such tasks remain stuck in
+    'running' forever.
+
+    Returns list of reconciled task dicts.
+    """
+    reconciled: List[Dict[str, Any]] = []
+    now = datetime.now(timezone.utc)
+
+    tasks = list_subagent_tasks(status="running", limit=limit)
+
+    for task in tasks:
+        if not task.pid:
+            continue
+
+        # If process is still alive, skip
+        if _pid_exists(task.pid):
+            continue
+
+        # Process is dead but state says running — orphan completion
+        logger.warning(
+            "Orphan completion detected: task %s has dead pid %d but status is 'running'",
+            task.task_id,
+            task.pid,
+        )
+
+        _update_task_status(
+            task.task_id,
+            "failed",
+            error=(
+                f"Process {task.pid} exited but state was not updated "
+                f"(orphan completion). Reconciled by watchdog."
+            ),
+            cleanup_status="orphan_reconciled",
+            cleanup_metadata={
+                "action": "orphan_completion_reconciled",
+                "dead_pid": task.pid,
+                "reconciled_at": _iso_now(),
+                "original_status": task.status,
+            },
+        )
+
+        reconciled.append({
+            "task_id": task.task_id,
+            "dead_pid": task.pid,
+            "reconciled_at": _iso_now(),
+            "label": task.config.label if task.config else "",
+        })
+
+    if reconciled:
+        logger.info("Reconciled %d orphan completions", len(reconciled))
+
     return reconciled
 
 

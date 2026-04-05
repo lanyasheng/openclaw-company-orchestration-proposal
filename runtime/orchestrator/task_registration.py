@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -73,7 +73,7 @@ def _registration_file(registration_id: str) -> Path:
 
 def _iso_now() -> str:
     """返回当前 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _generate_task_id(prefix: str = "task") -> str:
@@ -340,11 +340,19 @@ class TaskRegistry:
                 continue
             result.append(TaskRegistrationRecord.from_dict(data))
         
-        # 按注册时间倒序
-        result.sort(
-            key=lambda r: r.metadata.get("registered_at", ""),
-            reverse=True,
-        )
+        # 按注册时间倒序（normalize to UTC epoch for consistent sort
+        # across naive and timezone-aware timestamps）
+        def _sort_key(r: TaskRegistrationRecord) -> float:
+            ts = r.metadata.get("registered_at", "")
+            try:
+                dt = datetime.fromisoformat(ts)
+                if dt.tzinfo is None:
+                    # Treat naive timestamps as local time (legacy behavior)
+                    dt = dt.astimezone()
+                return dt.timestamp()
+            except (ValueError, TypeError):
+                return 0.0
+        result.sort(key=_sort_key, reverse=True)
         
         return result[:limit]
     
@@ -801,18 +809,22 @@ class RegistrationLedger:
         Returns:
             LedgerEntry 列表
         """
+        # Don't limit registry.list() since we filter further below;
+        # apply limit only to the final result.
         records = self.registry.list(
             registration_status="registered",
-            limit=limit,
+            limit=10000,
         )
-        
+
         entries = []
         for record in records:
             if record.ready_for_auto_dispatch:
                 entry = LedgerEntry.from_record(record)
                 if entry.readiness_status == "ready":
                     entries.append(entry)
-        
+                    if len(entries) >= limit:
+                        break
+
         return entries
     
     def get_blocked(self, limit: int = 100) -> List[LedgerEntry]:

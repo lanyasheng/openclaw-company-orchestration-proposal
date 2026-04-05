@@ -39,7 +39,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -118,7 +118,7 @@ def _ensure_dirs():
 
 def _iso_now() -> str:
     """返回 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _generate_alert_id(task_id: str, alert_type: str, timestamp: str) -> str:

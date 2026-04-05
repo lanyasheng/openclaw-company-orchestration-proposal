@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -56,7 +56,7 @@ BLOCKED_TRADING_MISSING_FIELDS = [
 
 
 def _iso_now() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _read_json_if_exists(path: Optional[Path]) -> Dict[str, Any]:

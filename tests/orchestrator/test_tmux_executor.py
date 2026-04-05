@@ -173,7 +173,7 @@ class TestCleanup(_Home):
 
         self.assertFalse(pf.exists())
         self.assertFalse(tf.exists())
-        mr.assert_called_once_with(["tmux", "kill-session", "-t", SES], capture_output=True)
+        mr.assert_called_once_with(["tmux", "kill-session", "-t", SES], capture_output=True, timeout=30)
         self.assertNotIn(SES, ex._task_session_map)
         self.assertNotIn(SES, ex._start_times)
 

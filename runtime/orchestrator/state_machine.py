@@ -10,7 +10,7 @@
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from enum import Enum
@@ -49,7 +49,7 @@ def _batch_file(batch_id: str) -> Path:
 
 def _iso_now() -> str:
     """返回当前 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def create_task(
@@ -284,9 +284,9 @@ def write_batch_summary(batch_id: str, content: str):
     """
     _ensure_state_dir()
     
+    from utils.io import atomic_write_text
     summary_file = _batch_file(batch_id)
-    with open(summary_file, "w") as f:
-        f.write(content)
+    atomic_write_text(summary_file, content)
 
 
 def get_batch_summary_content(batch_id: str) -> Optional[str]:

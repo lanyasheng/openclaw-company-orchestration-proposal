@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 __all__ = [
     "StopReason",
@@ -551,7 +551,7 @@ class NextTaskRegistrationWithStatus:
 
 def _iso_now() -> str:
     """返回当前 ISO-8601 时间戳"""
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _generate_id(prefix: str) -> str:

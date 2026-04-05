@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Callable, Optional
 from pathlib import Path
 
+from core.types import GateResult  # noqa: F811
+
 __all__ = [
     "GateResult",
     "QualityGateEvaluator",
@@ -25,31 +27,6 @@ __all__ = [
 ]
 
 QUALITY_GATE_VERSION = "quality_gate_v1"
-
-
-@dataclass
-class GateResult:
-    """
-    Quality Gate 检查结果
-    
-    包含检查的完整结果，用于决策是否允许继续执行。
-    """
-    passed: bool
-    gate_name: str
-    checks: List[Dict[str, Any]] = field(default_factory=list)
-    blockers: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "passed": self.passed,
-            "gate_name": self.gate_name,
-            "checks": self.checks,
-            "blockers": self.blockers,
-            "warnings": self.warnings,
-            "metadata": self.metadata,
-        }
 
 
 class QualityGateEvaluator:

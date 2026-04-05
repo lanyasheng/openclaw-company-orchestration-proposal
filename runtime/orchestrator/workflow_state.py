@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-WorkflowStatus = Literal["pending", "running", "completed", "failed", "gate_blocked", "timed_out"]
+WorkflowStatus = Literal["pending", "running", "completed", "failed", "gate_blocked", "timed_out", "stalled_unrecoverable"]
 BatchStatus = Literal["pending", "running", "completed", "failed"]
 TaskStatus = Literal["pending", "running", "completed", "failed", "timeout", "timed_out"]
 FanInPolicy = Literal["all_success", "any_success", "majority"]
@@ -174,9 +174,10 @@ class WorkflowState:
     batches: List[BatchEntry] = field(default_factory=list)
     context_summary: str = ""
     artifact_chain: Dict[str, List[str]] = field(default_factory=dict)
+    resume_count: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "workflow_id": self.workflow_id,
             "status": self.status,
             "owner": self.owner,
@@ -187,6 +188,9 @@ class WorkflowState:
             "context_summary": self.context_summary,
             "artifact_chain": {k: list(v) for k, v in self.artifact_chain.items()},
         }
+        if self.resume_count:
+            d["resume_count"] = self.resume_count
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> WorkflowState:
@@ -202,6 +206,7 @@ class WorkflowState:
             batches=[BatchEntry.from_dict(b) for b in (data.get("batches") or [])],
             context_summary=str(data.get("context_summary", "")),
             artifact_chain=artifact_chain,
+            resume_count=int(data.get("resume_count", 0)),
         )
 
 
