@@ -14,6 +14,18 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol
 #
 # BOTH BACKENDS ARE RETAINED INDEFINITELY - no breaking removal planned.
 #
+# RELATIONSHIP WITH tmux_executor.py:
+# - tmux_executor.py (TmuxTaskExecutor) is the concrete executor used by
+#   WorkflowLoop to run tasks in tmux sessions. It handles session creation,
+#   status polling, and result collection via dispatch.sh/status.sh scripts.
+# - This file (continuation_backends.py) provides the ORCHESTRATION-LAYER
+#   abstractions: backend selection, timeout policy, watchdog decision logic,
+#   and backend plan construction. These are consumed by dispatch_bridge,
+#   channel_roundtable, and other orchestration components.
+# - The two files operate at different layers and do not depend on each other.
+#   tmux_executor owns "how to run a tmux task"; this file owns "how to plan,
+#   monitor, and decide lifecycle actions for any backend".
+#
 # P0-3 Batch 4 (2026-03-23): Documented backend policy.
 # P0-3 Batch 5 (2026-03-23): Clarified default path while retaining tmux support.
 # P0-3 Batch 6 (2026-03-23): Generic lifecycle kernel — extract backend-agnostic watchdog/lifecycle logic
@@ -40,6 +52,11 @@ DEFAULT_RETRY_BACKOFF_SECONDS = 30
 
 
 # ============ P0-3 Batch 6: Generic Lifecycle Kernel ============
+# NOTE: GenericBackendStatus, BackendStatusAdapter, and BackendLifecycleConfig
+# are orchestration-layer abstractions used internally by decide_watchdog_action(),
+# build_timeout_policy(), and build_backend_plan() below. They are NOT used by
+# tmux_executor.py (which handles execution-layer concerns independently).
+# These classes are actively consumed via the public functions listed above.
 
 
 class GenericBackendStatus(Enum):
