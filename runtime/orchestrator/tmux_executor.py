@@ -36,7 +36,7 @@ ORCH_BRIDGE = Path(os.environ.get(
     os.path.expanduser("~/.openclaw/skills/nanocompose-dispatch/scripts/orch-bridge.sh"),
 ))
 
-_TERMINAL_STATUSES = {"completed", "failed", "exited"}
+
 
 
 class TmuxTaskExecutor(TaskExecutorBase):
@@ -52,6 +52,8 @@ class TmuxTaskExecutor(TaskExecutorBase):
         self.timeout_seconds = timeout_seconds
         self.mode = mode
         self._start_times: dict[str, float] = {}
+        # session_name -> task_id mapping to avoid fragile reverse reconstruction
+        self._task_session_map: dict[str, str] = {}
 
     def execute(self, task_id: str, label: str, context: Dict[str, Any]) -> str:
         """Start a tmux session with Claude Code. Returns session name as handle."""
@@ -77,6 +79,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
             raise RuntimeError(f"dispatch failed for {task_id}: {error}")
 
         self._start_times[session_name] = time.monotonic()
+        self._task_session_map[session_name] = task_id
         return session_name
 
     def poll(self, handle: str) -> TaskResult:
@@ -132,7 +135,9 @@ class TmuxTaskExecutor(TaskExecutorBase):
         start = self._start_times.get(session_name)
         if start and (time.monotonic() - start) > self.timeout_seconds:
             logger.warning("task %s timed out after %ds", session_name, self.timeout_seconds)
-            subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+            # cleanup() handles orch-bridge complete, progress file removal,
+            # and kill-session (tolerates already-dead sessions)
+            self.cleanup(session_name)
             return TaskResult(status="timed_out", error=f"timeout after {self.timeout_seconds}s")
 
         # 4. Still running
@@ -165,7 +170,10 @@ class TmuxTaskExecutor(TaskExecutorBase):
             pass
 
         # 3. Remove task-registry file directly (belt + suspenders)
-        task_ref = "tsk_" + session_name.replace("nc-", "").replace("-", "_")
+        task_ref = self._task_session_map.get(
+            session_name,
+            "tsk_" + session_name.replace("nc-", "").replace("-", "_"),  # fallback
+        )
         task_file = Path.home() / ".openclaw/shared-context/task-registry/tasks" / f"{task_ref}.json"
         task_file.unlink(missing_ok=True)
 
@@ -215,7 +223,10 @@ class TmuxTaskExecutor(TaskExecutorBase):
             return jsonl_result
 
         # 2. Fall back to orch-bridge
-        task_ref = "tsk_" + session_name.replace("nc-", "").replace("-", "_")
+        task_ref = self._task_session_map.get(
+            session_name,
+            "tsk_" + session_name.replace("nc-", "").replace("-", "_"),  # fallback
+        )
         try:
             result = subprocess.run(
                 [str(ORCH_BRIDGE), "status", task_ref],
