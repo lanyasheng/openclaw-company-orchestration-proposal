@@ -106,7 +106,8 @@ class BatchExecutor:
 
     def _apply_retry_or_fail(self, task: TaskEntry, batch: BatchEntry, error: str) -> None:
         """Mark task for retry if retries remain, otherwise mark failed."""
-        effective_max = task.max_retries if task.max_retries > 0 else self.default_max_retries
+        # max_retries: -1 = use default, 0 = no retries, >0 = that many retries
+        effective_max = task.max_retries if task.max_retries >= 0 else self.default_max_retries
         if task.retry_count < effective_max:
             task.retry_count += 1
             task.status = "pending"
@@ -144,6 +145,13 @@ class BatchExecutor:
             )
             for task in batch.tasks:
                 if task.status == "running":
+                    # Cancel the running executor before marking timed_out
+                    if task.subagent_task_id:
+                        try:
+                            self._executor.cancel(task.subagent_task_id)
+                            self._executor.cleanup(task.subagent_task_id)
+                        except Exception:
+                            logger.debug("cancel/cleanup failed for %s on timeout", task.subagent_task_id)
                     task.status = "timed_out"
                     task.error = f"batch hard timeout after {int(elapsed)}s"
                     task.completed_at = _iso_now()

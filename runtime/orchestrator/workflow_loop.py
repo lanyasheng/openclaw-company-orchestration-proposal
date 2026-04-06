@@ -67,62 +67,69 @@ class WorkflowLoop:
         run_start = time.monotonic()
 
         while state.status == "running":
-            # ── Global workflow timeout ───────────────────────────────
-            elapsed = time.monotonic() - run_start
-            if elapsed > self.max_runtime_seconds:
-                logger.error(
-                    "workflow %s timed out after %.0fs (limit %ds)",
-                    state.workflow_id, elapsed, self.max_runtime_seconds,
-                )
-                state.status = "timed_out"
-                break
-            batch = get_current_batch(state)
-            if batch is None:
-                state.status = "completed"
-                break
-
-            if batch.status == "pending":
-                if not dependencies_met(state, batch):
-                    logger.warning(
-                        "batch %s dependencies not met — this indicates a DAG ordering issue",
-                        batch.batch_id,
+            try:
+                # ── Global workflow timeout ───────────────────────────────
+                elapsed = time.monotonic() - run_start
+                if elapsed > self.max_runtime_seconds:
+                    logger.error(
+                        "workflow %s timed out after %.0fs (limit %ds)",
+                        state.workflow_id, elapsed, self.max_runtime_seconds,
                     )
-                    state.status = "failed"
+                    state.status = "timed_out"
+                    self._save(state, workflow_state_path)
+                    break
+                batch = get_current_batch(state)
+                if batch is None:
+                    state.status = "completed"
                     break
 
-                logger.info("dispatching batch %s", batch.batch_id)
-                self.executor.execute_batch(batch, state)
+                if batch.status == "pending":
+                    if not dependencies_met(state, batch):
+                        logger.warning(
+                            "batch %s dependencies not met — this indicates a DAG ordering issue",
+                            batch.batch_id,
+                        )
+                        state.status = "failed"
+                        break
+
+                    logger.info("dispatching batch %s", batch.batch_id)
+                    self.executor.execute_batch(batch, state)
+                    self._save(state, workflow_state_path)
+
+                if batch.status == "running":
+                    completed = self.executor.monitor_batch(batch)
+                    self._save(state, workflow_state_path)
+                    if not completed:
+                        time.sleep(self.poll_interval)
+                        continue
+
+                if batch.status in ("completed", "failed"):
+                    continuation = self.reviewer.review(batch, state)
+                    batch.continuation = continuation
+                    logger.info(
+                        "batch %s reviewed: %s (%s)",
+                        batch.batch_id,
+                        continuation.decision,
+                        continuation.stopped_because,
+                    )
+
+                    if continuation.decision == "proceed":
+                        next_b = get_next_batch(state)
+                        if next_b is None:
+                            state.status = "completed"
+                        else:
+                            state.plan["current_batch_index"] = state.plan.get("current_batch_index", 0) + 1
+                    elif continuation.decision == "gate":
+                        state.status = "gate_blocked"
+                    elif continuation.decision == "stop":
+                        state.status = "failed"
+
+                    self._save(state, workflow_state_path)
+            except Exception:
+                logger.exception("workflow %s crashed in main loop", state.workflow_id)
+                state.status = "failed"
                 self._save(state, workflow_state_path)
-
-            if batch.status == "running":
-                completed = self.executor.monitor_batch(batch)
-                self._save(state, workflow_state_path)
-                if not completed:
-                    time.sleep(self.poll_interval)
-                    continue
-
-            if batch.status in ("completed", "failed"):
-                continuation = self.reviewer.review(batch, state)
-                batch.continuation = continuation
-                logger.info(
-                    "batch %s reviewed: %s (%s)",
-                    batch.batch_id,
-                    continuation.decision,
-                    continuation.stopped_because,
-                )
-
-                if continuation.decision == "proceed":
-                    next_b = get_next_batch(state)
-                    if next_b is None:
-                        state.status = "completed"
-                    else:
-                        state.plan["current_batch_index"] = state.plan.get("current_batch_index", 0) + 1
-                elif continuation.decision == "gate":
-                    state.status = "gate_blocked"
-                elif continuation.decision == "stop":
-                    state.status = "failed"
-
-                self._save(state, workflow_state_path)
+                break
 
         update_context_summary(state)
         self._save(state, workflow_state_path)

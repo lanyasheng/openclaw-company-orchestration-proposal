@@ -123,7 +123,8 @@ fi
 if $RALPH_ENABLED; then
   HARNESS_DIR="$HOME/.openclaw/skills/execution-harness/skills/agent-hooks/scripts"
   if [[ -f "$HARNESS_DIR/ralph-init.sh" ]]; then
-    bash "$HARNESS_DIR/ralph-init.sh" "$SESSION" "$RALPH_MAX_ITERATIONS"
+    bash "$HARNESS_DIR/ralph-init.sh" "$SESSION" "$RALPH_MAX_ITERATIONS" || \
+      { echo "Warning: ralph-init.sh failed, continuing without Ralph" >&2; RALPH_ENABLED=false; }
   else
     echo "Warning: ralph-init.sh not found, skipping Ralph" >&2
   fi
@@ -145,7 +146,7 @@ fi
 
 if $NEEDS_WORKTREE && [[ -d "$WORKDIR/.git" || -f "$WORKDIR/.git" ]]; then
   WORKTREE_DIR="${WORKDIR}/.claude/worktrees/${SESSION}"
-  BRANCH_NAME="dispatch/${TYPE}/${LABEL##*-}"
+  BRANCH_NAME="dispatch/${LABEL}"
 
   if [[ -d "$WORKTREE_DIR" ]]; then
     echo "Worktree already exists: $WORKTREE_DIR"
@@ -158,6 +159,8 @@ if $NEEDS_WORKTREE && [[ -d "$WORKDIR/.git" || -f "$WORKDIR/.git" ]]; then
 
   if $NEEDS_WORKTREE; then
     WORK_DIR="$WORKTREE_DIR"
+    # 保存 branch name 供 on-session-end.sh 清理时使用（避免 sed 重建不一致）
+    echo "$BRANCH_NAME" > "$WORKTREE_DIR/.openclaw-branch" 2>/dev/null || true
     echo "  Worktree: $WORKTREE_DIR"
   fi
 fi
@@ -203,8 +206,9 @@ rm -f "$PROMPT_FILE"
 # ──── Write State Files ──────────────────────────────────────────────
 NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-# State file (for orchestrator dispatch bridge)
-cat > "$STATE_FILE" <<EOJSON
+# State file (atomic write, Pattern 6)
+_STATE_TMP="${STATE_FILE}.${$}.tmp"
+cat > "$_STATE_TMP" <<EOJSON
 {
   "session": "$SESSION",
   "label": "$LABEL",
@@ -217,11 +221,13 @@ cat > "$STATE_FILE" <<EOJSON
   "pid": $$
 }
 EOJSON
+mv "$_STATE_TMP" "$STATE_FILE"
 
-# Progress file (for TmuxTaskExecutor.poll + on-stop.sh)
+# Progress file (atomic write, Pattern 6)
+_PROG_TMP="${PROGRESS_DIR}/${SESSION}.${$}.tmp"
 jq -n --arg s "$SESSION" --arg p "starting" --arg pd "$WORKDIR" --arg m "interactive" --arg ts "$NOW" \
   '{session:$s,phase:$p,project_dir:$pd,mode:$m,tools_used:0,updated_at:$ts}' \
-  > "$PROGRESS_DIR/${SESSION}.json" 2>/dev/null || true
+  > "$_PROG_TMP" 2>/dev/null && mv "$_PROG_TMP" "$PROGRESS_DIR/${SESSION}.json" || true
 
 # ──── Observability 注册（非阻塞）────────────────────────────────────
 if [[ -f "$TMUX_SYNC_SCRIPT" ]]; then

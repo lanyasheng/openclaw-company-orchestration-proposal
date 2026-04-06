@@ -71,7 +71,8 @@ class TmuxTaskExecutor(TaskExecutorBase):
         ]
 
         logger.info("dispatching %s -> %s", task_id, session_name)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        # 60s: lock wait (30s max) + tmux create + CC init wait (15s max)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
         if result.returncode != 0:
             error = result.stderr.strip() or result.stdout.strip()

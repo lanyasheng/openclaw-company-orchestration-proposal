@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from workflow_state import (
     BatchEntry,
@@ -15,7 +15,7 @@ class BatchReviewer:
     """评审批次结果，决定是否推进到下一批"""
 
     def review(self, batch: BatchEntry, workflow_state: WorkflowState) -> ContinuationDecision:
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         next_batch = self._find_next_batch_id(batch.batch_id, workflow_state)
         fan_ok, fan_reason = self._evaluate_fan_in(batch)
         if not fan_ok:
