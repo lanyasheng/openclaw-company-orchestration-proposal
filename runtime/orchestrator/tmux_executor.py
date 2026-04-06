@@ -58,15 +58,15 @@ class TmuxTaskExecutor(TaskExecutorBase):
         task_type = context.get("type", "review")
         prompt = context.get("prompt", label)
         task_short_id = task_id.replace("tsk_", "").replace("_", "-")
-        session_name = f"{SESSION_PREFIX}-{task_type}-{task_short_id}"
+        session_label = f"{task_type}-{task_short_id}"
+        session_name = f"{SESSION_PREFIX}-{session_label}"
 
+        # start-tmux-task.sh interface: --label/--workdir/--task
         cmd = [
             str(DISPATCH_SCRIPT),
-            "--type", task_type,
-            "--id", task_short_id,
-            "--prompt", prompt,
-            "--project-dir", self.workspace_dir,
-            "--mode", self.mode,
+            "--label", session_label,
+            "--workdir", self.workspace_dir,
+            "--task", prompt,
         ]
 
         logger.info("dispatching %s -> %s", task_id, session_name)

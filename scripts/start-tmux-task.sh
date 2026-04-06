@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # start-tmux-task.sh — Start a tmux session running Claude Code
 # Part of the OpenClaw orchestration layer (tmux backend).
+# Generic: no project-specific logic. Hooks integration via NC_SESSION env.
 #
 # Usage:
 #   start-tmux-task.sh --label <name> --workdir <dir> --task <prompt> \
@@ -8,7 +9,9 @@
 set -euo pipefail
 
 MAX_SESSIONS="${OPENCLAW_MAX_TMUX_SESSIONS:-6}"
+SESSION_PREFIX="${OPENCLAW_SESSION_PREFIX:-oc}"
 STATE_DIR="$HOME/.openclaw/state/tmux-tasks"
+PROGRESS_DIR="$HOME/.openclaw/shared-context/progress"
 LOG_DIR="$HOME/.openclaw/logs"
 
 # ──── Argument Parsing ────────────────────────────────────────────────
@@ -16,7 +19,7 @@ LABEL=""
 WORKDIR=""
 TASK=""
 TIMEOUT=3600
-MODE="headless"
+MODE="interactive"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -24,17 +27,17 @@ while [[ $# -gt 0 ]]; do
     --workdir) WORKDIR="$2"; shift 2 ;;
     --task)    TASK="$2";    shift 2 ;;
     --timeout) TIMEOUT="$2"; shift 2 ;;
-    --mode)    MODE="$2";    shift 2 ;;
+    --mode)    shift 2 ;;  # 接受但忽略，统一 interactive
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 
 if [[ -z "$LABEL" || -z "$WORKDIR" || -z "$TASK" ]]; then
-  echo "Usage: start-tmux-task.sh --label <name> --workdir <dir> --task <prompt> [--timeout <s>] [--mode headless|interactive]" >&2
+  echo "Usage: start-tmux-task.sh --label <name> --workdir <dir> --task <prompt> [--timeout <s>]" >&2
   exit 1
 fi
 
-SESSION="cc-${LABEL}"
+SESSION="${SESSION_PREFIX}-${LABEL}"
 STATE_FILE="${STATE_DIR}/${SESSION}-state.json"
 
 # ──── Precondition Checks ────────────────────────────────────────────
@@ -47,24 +50,20 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   exit 0
 fi
 
-ACTIVE=$(tmux ls 2>/dev/null | grep -c "^cc-" || true)
+ACTIVE=$(tmux ls 2>/dev/null | grep -c "^${SESSION_PREFIX}-" || true)
 if [[ "$ACTIVE" -ge "$MAX_SESSIONS" ]]; then
-  echo "Error: $ACTIVE active cc-* sessions (max $MAX_SESSIONS)" >&2
+  echo "Error: $ACTIVE active ${SESSION_PREFIX}-* sessions (max $MAX_SESSIONS)" >&2
   exit 1
 fi
 
-mkdir -p "$LOG_DIR"
-mkdir -p "$STATE_DIR"
+mkdir -p "$LOG_DIR" "$STATE_DIR" "$PROGRESS_DIR"
 
-# ──── Build Claude Command ───────────────────────────────────────────
+# ──── Build Claude Command (unified interactive) ─────────────────────
 PROMPT_FILE=$(mktemp "$STATE_DIR/${SESSION}-prompt-XXXXXX")
 printf '%s' "$TASK" > "$PROMPT_FILE"
 
-if [[ "$MODE" == "headless" ]]; then
-  CC_CMD="cd '${WORKDIR}' && claude -p --output-format stream-json --max-turns 200 --max-budget-usd 10 --permission-mode bypassPermissions < '${PROMPT_FILE}' > '${LOG_DIR}/${SESSION}.jsonl' 2>&1; rm -f '${PROMPT_FILE}'"
-else
-  CC_CMD="cd '${WORKDIR}' && export CLAUDE_CODE_DISABLE_MOUSE=1 && export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 && claude --permission-mode bypassPermissions"
-fi
+# Export NC_SESSION + NC_PROJECT_DIR so hooks (Stop/SessionEnd) can identify this session
+CC_CMD="cd '${WORKDIR}' && export NC_SESSION='${SESSION}' && export NC_PROJECT_DIR='${WORKDIR}' && export CLAUDE_ENABLE_STREAM_WATCHDOG=1 && export CLAUDE_CODE_DISABLE_MOUSE=1 && export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 && claude --permission-mode bypassPermissions --name '${SESSION}'"
 
 # ──── Create tmux Session ────────────────────────────────────────────
 if ! tmux new-session -d -s "$SESSION" "$CC_CMD"; then
@@ -73,28 +72,28 @@ if ! tmux new-session -d -s "$SESSION" "$CC_CMD"; then
   exit 1
 fi
 
-# Interactive mode: wait for init, then paste prompt
-if [[ "$MODE" == "interactive" ]]; then
-  for _ in $(seq 1 15); do
-    sleep 1
-    tmux has-session -t "$SESSION" 2>/dev/null || { echo "Error: session died during startup" >&2; rm -f "$PROMPT_FILE"; exit 1; }
-    PANE=$(tmux capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
-    [[ ${#PANE} -gt 10 ]] && break
-  done
-  BUFNAME="prompt-${SESSION}"
-  tmux load-buffer -b "$BUFNAME" "$PROMPT_FILE"
-  tmux paste-buffer -b "$BUFNAME" -t "$SESSION"
-  tmux send-keys -t "$SESSION" Enter
-  rm -f "$PROMPT_FILE"
-fi
+# Wait for CC init, then paste prompt
+for _ in $(seq 1 15); do
+  sleep 1
+  tmux has-session -t "$SESSION" 2>/dev/null || { echo "Error: session died during startup" >&2; rm -f "$PROMPT_FILE"; exit 1; }
+  PANE=$(tmux capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
+  [[ ${#PANE} -gt 10 ]] && break
+done
+BUFNAME="prompt-${SESSION}"
+tmux load-buffer -b "$BUFNAME" "$PROMPT_FILE"
+tmux paste-buffer -b "$BUFNAME" -t "$SESSION"
+tmux send-keys -t "$SESSION" Enter
+rm -f "$PROMPT_FILE"
 
-# ──── Write Initial State JSON ───────────────────────────────────────
+# ──── Write State Files ──────────────────────────────────────────────
 NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+# State file (for orchestrator dispatch bridge)
 cat > "$STATE_FILE" <<EOJSON
 {
   "session": "$SESSION",
   "label": "$LABEL",
-  "mode": "$MODE",
+  "mode": "interactive",
   "workdir": "$WORKDIR",
   "status": "started",
   "timeout": $TIMEOUT,
@@ -104,7 +103,13 @@ cat > "$STATE_FILE" <<EOJSON
 }
 EOJSON
 
-echo "Started: $SESSION (mode=$MODE, timeout=${TIMEOUT}s)"
-echo "  Workdir: $WORKDIR"
-echo "  State:   $STATE_FILE"
-echo "  Attach:  tmux attach -t $SESSION"
+# Progress file (for TmuxTaskExecutor.poll + on-stop.sh)
+jq -n --arg s "$SESSION" --arg p "starting" --arg pd "$WORKDIR" --arg m "interactive" --arg ts "$NOW" \
+  '{session:$s,phase:$p,project_dir:$pd,mode:$m,tools_used:0,updated_at:$ts}' \
+  > "$PROGRESS_DIR/${SESSION}.json" 2>/dev/null || true
+
+echo "Started: $SESSION (interactive, timeout=${TIMEOUT}s)"
+echo "  Workdir:  $WORKDIR"
+echo "  State:    $STATE_FILE"
+echo "  Progress: $PROGRESS_DIR/${SESSION}.json"
+echo "  Attach:   tmux attach -t $SESSION"
