@@ -86,14 +86,38 @@ if [[ -f "$RESULT_FILE" || -f "$RESULT_TXT" ]]; then
   fi
 fi
 
-# 并行数量检查
+mkdir -p "$LOG_DIR" "$STATE_DIR" "$PROGRESS_DIR" "$RESULTS_DIR"
+
+# 并行数量检查（mkdir 原子锁防竞态：多个 dispatch 同时跑时串行化）
+LOCK_DIR="$HOME/.openclaw/state/.dispatch-lock"
+_lock_acquired=false
+for _ in $(seq 1 60); do
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    _lock_acquired=true
+    break
+  fi
+  # 检查锁是否过期（>60 秒则清理死锁）
+  if [[ -d "$LOCK_DIR" ]]; then
+    _lock_age=$(( $(date +%s) - $(stat -f%m "$LOCK_DIR" 2>/dev/null || stat -c%Y "$LOCK_DIR" 2>/dev/null || echo 0) ))
+    if [[ "$_lock_age" -gt 60 ]]; then
+      rmdir "$LOCK_DIR" 2>/dev/null
+      continue
+    fi
+  fi
+  sleep 0.5
+done
+if ! $_lock_acquired; then
+  echo "Error: could not acquire dispatch lock after 30s" >&2
+  exit 1
+fi
+_unlock() { rmdir "$LOCK_DIR" 2>/dev/null; }
+trap _unlock EXIT
+
 ACTIVE=$(tmux ls 2>/dev/null | grep -c "^${SESSION_PREFIX}-" || true)
 if [[ "$ACTIVE" -ge "$MAX_SESSIONS" ]]; then
   echo "Error: $ACTIVE active ${SESSION_PREFIX}-* sessions (max $MAX_SESSIONS)" >&2
   exit 1
 fi
-
-mkdir -p "$LOG_DIR" "$STATE_DIR" "$PROGRESS_DIR" "$RESULTS_DIR"
 
 # ──── Ralph 持续执行初始化（execution-harness Pattern 1）────────────
 if $RALPH_ENABLED; then
@@ -160,6 +184,8 @@ if ! tmux new-session -d -s "$SESSION" "$CC_CMD"; then
   rm -f "$PROMPT_FILE"
   exit 1
 fi
+# 释放 dispatch 锁（session 已注册到 tmux，后续 dispatch 能计数到它）
+_unlock
 
 # Wait for CC init, then paste prompt
 for _ in $(seq 1 15); do
