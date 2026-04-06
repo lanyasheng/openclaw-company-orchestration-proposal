@@ -118,7 +118,7 @@ graph TD
 
 ## Dispatch Engine (`start-tmux-task.sh`)
 
-The generic task dispatch engine. Creates tmux sessions with Claude Code, manages lifecycle from launch to completion. Project-specific wrappers (e.g., NanoCompose's `dispatch.sh`) set `OPENCLAW_SESSION_PREFIX` and default directories, then `exec` this script.
+The generic task dispatch engine. Creates tmux sessions with Claude Code, manages lifecycle from launch to completion. Project-specific wrappers set `OPENCLAW_SESSION_PREFIX` and default directories, then `exec` this script.
 
 ```bash
 start-tmux-task.sh --label <name> --workdir <dir> --task <prompt> \
