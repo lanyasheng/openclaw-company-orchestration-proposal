@@ -61,12 +61,13 @@ class TmuxTaskExecutor(TaskExecutorBase):
         session_label = f"{task_type}-{task_short_id}"
         session_name = f"{SESSION_PREFIX}-{session_label}"
 
-        # start-tmux-task.sh interface: --label/--workdir/--task
+        # start-tmux-task.sh interface: --label/--workdir/--task [--type]
         cmd = [
             str(DISPATCH_SCRIPT),
             "--label", session_label,
             "--workdir", self.workspace_dir,
             "--task", prompt,
+            "--type", task_type,
         ]
 
         logger.info("dispatching %s -> %s", task_id, session_name)

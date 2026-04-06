@@ -5,35 +5,56 @@
 #
 # Usage:
 #   start-tmux-task.sh --label <name> --workdir <dir> --task <prompt> \
-#                      [--timeout <seconds>] [--mode <headless|interactive>]
+#     [--timeout <s>] [--type <type>] [--model <model>] \
+#     [--no-ralph] [--max-iterations <n>] [--no-worktree]
 set -euo pipefail
 
 MAX_SESSIONS="${OPENCLAW_MAX_TMUX_SESSIONS:-6}"
 SESSION_PREFIX="${OPENCLAW_SESSION_PREFIX:-oc}"
 STATE_DIR="$HOME/.openclaw/state/tmux-tasks"
 PROGRESS_DIR="$HOME/.openclaw/shared-context/progress"
+RESULTS_DIR="$HOME/.openclaw/shared-context/results"
 LOG_DIR="$HOME/.openclaw/logs"
+ORCH_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TMUX_SYNC_SCRIPT="${ORCH_DIR}/scripts/sync-tmux-observability.py"
+
+# 会修改代码的任务类型 → 需要 worktree 隔离
+CODING_TYPES="bugfix feat crash comp fix"
 
 # ──── Argument Parsing ────────────────────────────────────────────────
 LABEL=""
 WORKDIR=""
 TASK=""
 TIMEOUT=3600
-MODE="interactive"
+TYPE=""
+MODEL_ARG=""
+RALPH_ENABLED=true
+RALPH_MAX_ITERATIONS=50
+WORKTREE_ENABLED=true
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --label)   LABEL="$2";   shift 2 ;;
-    --workdir) WORKDIR="$2"; shift 2 ;;
-    --task)    TASK="$2";    shift 2 ;;
-    --timeout) TIMEOUT="$2"; shift 2 ;;
-    --mode)    shift 2 ;;  # 接受但忽略，统一 interactive
+    --label)          LABEL="$2";   shift 2 ;;
+    --workdir)        WORKDIR="$2"; shift 2 ;;
+    --task)           TASK="$2";    shift 2 ;;
+    --timeout)        TIMEOUT="$2"; shift 2 ;;
+    --type)           TYPE="$2";    shift 2 ;;
+    --model)          MODEL_ARG="$2"; shift 2 ;;
+    --mode)           shift 2 ;;  # 接受但忽略，统一 interactive
+    --ralph)          RALPH_ENABLED=true; shift ;;
+    --no-ralph)       RALPH_ENABLED=false; shift ;;
+    --max-iterations) RALPH_MAX_ITERATIONS="$2"; shift 2 ;;
+    --no-worktree)    WORKTREE_ENABLED=false; shift ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 
 if [[ -z "$LABEL" || -z "$WORKDIR" || -z "$TASK" ]]; then
-  echo "Usage: start-tmux-task.sh --label <name> --workdir <dir> --task <prompt> [--timeout <s>]" >&2
+  echo "Usage: start-tmux-task.sh --label <name> --workdir <dir> --task <prompt>" >&2
+  echo "  --type <type>        Task type (review/bugfix/feat/...), used for worktree/observability" >&2
+  echo "  --model <model>      Claude model override" >&2
+  echo "  --no-ralph           Disable Ralph persistent execution" >&2
+  echo "  --no-worktree        Disable git worktree isolation for coding tasks" >&2
   exit 1
 fi
 
@@ -45,25 +66,85 @@ command -v tmux &>/dev/null || { echo "Error: tmux not found" >&2; exit 1; }
 command -v claude &>/dev/null || { echo "Error: claude CLI not found" >&2; exit 1; }
 [[ -d "$WORKDIR" ]] || { echo "Error: workdir not found: $WORKDIR" >&2; exit 1; }
 
+# Session 存在检查
 if tmux has-session -t "$SESSION" 2>/dev/null; then
-  echo "Session '$SESSION' already exists. Attach: tmux attach -t $SESSION" >&2
+  echo "Session '$SESSION' already exists. Attach: tmux attach -t $SESSION"
   exit 0
 fi
 
+# ──── Results 去重 ────────────────────────────────────────────────────
+RESULT_FILE="${RESULTS_DIR}/${SESSION}.json"
+RESULT_TXT="${RESULTS_DIR}/${SESSION}.txt"
+if [[ -f "$RESULT_FILE" || -f "$RESULT_TXT" ]]; then
+  _CHECK="${RESULT_FILE}"; [[ ! -f "$_CHECK" ]] && _CHECK="$RESULT_TXT"
+  _STATUS=$(jq -r '.subtype // .status // "unknown"' "$_CHECK" 2>/dev/null || echo "exists")
+  if [[ "$_STATUS" == "success" || "$_STATUS" == "completed" || "$_STATUS" == "exists" ]]; then
+    echo "Task ${SESSION} already completed (result file exists). Skipping."
+    exit 0
+  fi
+fi
+
+# 并行数量检查
 ACTIVE=$(tmux ls 2>/dev/null | grep -c "^${SESSION_PREFIX}-" || true)
 if [[ "$ACTIVE" -ge "$MAX_SESSIONS" ]]; then
   echo "Error: $ACTIVE active ${SESSION_PREFIX}-* sessions (max $MAX_SESSIONS)" >&2
   exit 1
 fi
 
-mkdir -p "$LOG_DIR" "$STATE_DIR" "$PROGRESS_DIR"
+mkdir -p "$LOG_DIR" "$STATE_DIR" "$PROGRESS_DIR" "$RESULTS_DIR"
+
+# ──── Ralph 持续执行初始化（execution-harness Pattern 1）────────────
+if $RALPH_ENABLED; then
+  HARNESS_DIR="$HOME/.openclaw/skills/execution-harness/skills/agent-hooks/scripts"
+  if [[ -f "$HARNESS_DIR/ralph-init.sh" ]]; then
+    bash "$HARNESS_DIR/ralph-init.sh" "$SESSION" "$RALPH_MAX_ITERATIONS"
+  else
+    echo "Warning: ralph-init.sh not found, skipping Ralph" >&2
+  fi
+fi
+
+# ──── Worktree 隔离（编码类任务）─────────────────────────────────────
+WORK_DIR="$WORKDIR"
+WORKTREE_DIR=""
+NEEDS_WORKTREE=false
+
+if $WORKTREE_ENABLED && [[ -n "$TYPE" ]]; then
+  for ct in $CODING_TYPES; do
+    if [[ "$TYPE" == "$ct" ]]; then
+      NEEDS_WORKTREE=true
+      break
+    fi
+  done
+fi
+
+if $NEEDS_WORKTREE && [[ -d "$WORKDIR/.git" || -f "$WORKDIR/.git" ]]; then
+  WORKTREE_DIR="${WORKDIR}/.claude/worktrees/${SESSION}"
+  BRANCH_NAME="dispatch/${TYPE}/${LABEL##*-}"
+
+  if [[ -d "$WORKTREE_DIR" ]]; then
+    echo "Worktree already exists: $WORKTREE_DIR"
+  else
+    echo "Creating worktree: $BRANCH_NAME → $WORKTREE_DIR"
+    git -C "$WORKDIR" worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" HEAD 2>/dev/null || \
+    git -C "$WORKDIR" worktree add "$WORKTREE_DIR" "$BRANCH_NAME" 2>/dev/null || \
+    { echo "Warning: Failed to create worktree, using main workdir" >&2; NEEDS_WORKTREE=false; }
+  fi
+
+  if $NEEDS_WORKTREE; then
+    WORK_DIR="$WORKTREE_DIR"
+    echo "  Worktree: $WORKTREE_DIR"
+  fi
+fi
 
 # ──── Build Claude Command (unified interactive) ─────────────────────
 PROMPT_FILE=$(mktemp "$STATE_DIR/${SESSION}-prompt-XXXXXX")
 printf '%s' "$TASK" > "$PROMPT_FILE"
 
+EXTRA=""
+if [[ -n "$MODEL_ARG" ]]; then EXTRA="$EXTRA --model $MODEL_ARG"; fi
+
 # Export NC_SESSION + NC_PROJECT_DIR so hooks (Stop/SessionEnd) can identify this session
-CC_CMD="cd '${WORKDIR}' && export NC_SESSION='${SESSION}' && export NC_PROJECT_DIR='${WORKDIR}' && export CLAUDE_ENABLE_STREAM_WATCHDOG=1 && export CLAUDE_CODE_DISABLE_MOUSE=1 && export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 && claude --permission-mode bypassPermissions --name '${SESSION}'"
+CC_CMD="cd '${WORK_DIR}' && export NC_SESSION='${SESSION}' && export NC_PROJECT_DIR='${WORKDIR}' && export CLAUDE_ENABLE_STREAM_WATCHDOG=1 && export CLAUDE_CODE_DISABLE_MOUSE=1 && export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 && claude --permission-mode bypassPermissions --name '${SESSION}'${EXTRA}"
 
 # ──── Create tmux Session ────────────────────────────────────────────
 if ! tmux new-session -d -s "$SESSION" "$CC_CMD"; then
@@ -108,8 +189,24 @@ jq -n --arg s "$SESSION" --arg p "starting" --arg pd "$WORKDIR" --arg m "interac
   '{session:$s,phase:$p,project_dir:$pd,mode:$m,tools_used:0,updated_at:$ts}' \
   > "$PROGRESS_DIR/${SESSION}.json" 2>/dev/null || true
 
+# ──── Observability 注册（非阻塞）────────────────────────────────────
+if [[ -f "$TMUX_SYNC_SCRIPT" ]]; then
+  python3 "$TMUX_SYNC_SCRIPT" register \
+    --task-id "tsk_${TYPE:-task}_$(echo "$LABEL" | tr '-' '_')" \
+    --label "$SESSION" \
+    --owner "dispatch" \
+    --scenario "${TYPE:-custom}" 2>/dev/null || true
+fi
+
+# ──── Output ─────────────────────────────────────────────────────────
 echo "Started: $SESSION (interactive, timeout=${TIMEOUT}s)"
-echo "  Workdir:  $WORKDIR"
+if $RALPH_ENABLED; then
+echo "  Ralph:    ON (max $RALPH_MAX_ITERATIONS iterations)"
+fi
+echo "  Workdir:  $WORK_DIR"
+if $NEEDS_WORKTREE; then
+echo "  Worktree: $WORKTREE_DIR"
+fi
 echo "  State:    $STATE_FILE"
 echo "  Progress: $PROGRESS_DIR/${SESSION}.json"
 echo "  Attach:   tmux attach -t $SESSION"
