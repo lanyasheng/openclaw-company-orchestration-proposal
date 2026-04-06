@@ -23,14 +23,17 @@ __all__ = ["TmuxTaskExecutor"]
 
 logger = logging.getLogger(__name__)
 
+# Default to orchestrator's own scripts; projects override via env vars
+_ORCH_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
 DISPATCH_SCRIPT = Path(os.environ.get(
     "OPENCLAW_DISPATCH_SCRIPT",
-    os.path.expanduser("~/.openclaw/skills/nanocompose-dispatch/scripts/dispatch.sh"),
+    str(_ORCH_SCRIPTS / "start-tmux-task.sh"),
 ))
 STATUS_SCRIPT = Path(os.environ.get(
     "OPENCLAW_STATUS_SCRIPT",
-    os.path.expanduser("~/.openclaw/skills/nanocompose-dispatch/scripts/status.sh"),
+    str(_ORCH_SCRIPTS / "status-tmux-task.sh"),
 ))
+SESSION_PREFIX = os.environ.get("OPENCLAW_SESSION_PREFIX", "oc")
 
 
 
@@ -55,7 +58,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
         task_type = context.get("type", "review")
         prompt = context.get("prompt", label)
         task_short_id = task_id.replace("tsk_", "").replace("_", "-")
-        session_name = f"nc-{task_type}-{task_short_id}"
+        session_name = f"{SESSION_PREFIX}-{task_type}-{task_short_id}"
 
         cmd = [
             str(DISPATCH_SCRIPT),
@@ -160,7 +163,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
         # 2. Remove task-registry file directly
         task_ref = self._task_session_map.get(
             session_name,
-            "tsk_" + session_name.replace("nc-", "").replace("-", "_"),  # fallback
+            "tsk_" + session_name.replace(f"{SESSION_PREFIX}-", "", 1).replace("-", "_"),
         )
         task_file = Path.home() / ".openclaw/shared-context/task-registry/tasks" / f"{task_ref}.json"
         task_file.unlink(missing_ok=True)
