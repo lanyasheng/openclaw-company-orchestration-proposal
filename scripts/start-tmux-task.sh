@@ -31,6 +31,7 @@ MODEL_ARG=""
 RALPH_ENABLED=true
 RALPH_MAX_ITERATIONS=50
 WORKTREE_ENABLED=true
+AUTO_EXIT=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +46,7 @@ while [[ $# -gt 0 ]]; do
     --no-ralph)       RALPH_ENABLED=false; shift ;;
     --max-iterations) RALPH_MAX_ITERATIONS="$2"; shift 2 ;;
     --no-worktree)    WORKTREE_ENABLED=false; shift ;;
+    --auto-exit)      AUTO_EXIT=true; shift ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -138,7 +140,11 @@ fi
 
 # ──── Build Claude Command (unified interactive) ─────────────────────
 PROMPT_FILE=$(mktemp "$STATE_DIR/${SESSION}-prompt-XXXXXX")
-printf '%s' "$TASK" > "$PROMPT_FILE"
+if $AUTO_EXIT; then
+  printf '%s\n\nCRITICAL: 完成所有任务后 MUST 立即使用 /exit 退出会话。NEVER 等待后续输入。本次为无人值守派发，不会有人跟进。' "$TASK" > "$PROMPT_FILE"
+else
+  printf '%s' "$TASK" > "$PROMPT_FILE"
+fi
 
 EXTRA=""
 if [[ -n "$MODEL_ARG" ]]; then EXTRA="$EXTRA --model $MODEL_ARG"; fi
