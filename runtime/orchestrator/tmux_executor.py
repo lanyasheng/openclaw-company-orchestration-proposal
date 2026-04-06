@@ -103,31 +103,40 @@ class TmuxTaskExecutor(TaskExecutorBase):
         # 2. Check progress file for interactive mode completion
         #    on-stop.sh writes phase=idle-waiting-input when CC finishes a turn
         progress_file = Path.home() / ".openclaw/shared-context/progress" / f"{session_name}.json"
-        if progress_file.exists():
-            try:
-                pdata = json.loads(progress_file.read_text())
-                if pdata.get("phase") == "idle-waiting-input":
-                    logger.info("task %s completed (interactive mode, idle-waiting-input)", session_name)
-                    # Capture last output as summary
-                    summary = ""
-                    try:
-                        cap = subprocess.run(
-                            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-10"],
-                            capture_output=True, text=True, timeout=5,
-                        )
-                        summary = cap.stdout.strip()[-500:] if cap.stdout else ""
-                    except Exception:
-                        pass
-                    # Clean up progress file
-                    progress_file.unlink(missing_ok=True)
-                    # Kill the session (task is done, CC is waiting for input we won't send)
-                    try:
-                        subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True, timeout=30)
-                    except subprocess.TimeoutExpired:
-                        logger.warning("tmux kill-session timed out for %s", session_name)
-                    return TaskResult(status="completed", output=summary)
-            except (json.JSONDecodeError, OSError):
-                pass
+        try:
+            pdata = json.loads(progress_file.read_text())
+            if pdata.get("phase") == "idle-waiting-input":
+                # Guard: if Ralph is still active, this is a mid-loop stop, not completion
+                ralph_file = Path.home() / ".openclaw/shared-context/sessions" / session_name / "ralph.json"
+                ralph_active = False
+                try:
+                    ralph_data = json.loads(ralph_file.read_text())
+                    ralph_active = ralph_data.get("active", False)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    pass
+                if ralph_active:
+                    return TaskResult(status="running")
+                logger.info("task %s completed (interactive mode, idle-waiting-input)", session_name)
+                # Capture last output as summary
+                summary = ""
+                try:
+                    cap = subprocess.run(
+                        ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-10"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    summary = cap.stdout.strip()[-500:] if cap.stdout else ""
+                except Exception:
+                    pass
+                # Clean up progress file
+                progress_file.unlink(missing_ok=True)
+                # Kill the session (task is done, CC is waiting for input we won't send)
+                try:
+                    subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    logger.warning("tmux kill-session timed out for %s", session_name)
+                return TaskResult(status="completed", output=summary)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
 
         # 3. Check timeout
         start = self._start_times.get(session_name)
