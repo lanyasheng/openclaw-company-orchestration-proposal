@@ -138,13 +138,15 @@ if $NEEDS_WORKTREE && [[ -d "$WORKDIR/.git" || -f "$WORKDIR/.git" ]]; then
   fi
 fi
 
+# ──── Auto-exit marker (on-stop.sh will send /exit when CC finishes) ──
+if $AUTO_EXIT; then
+  mkdir -p "$HOME/.openclaw/shared-context/sessions/${SESSION}"
+  echo "true" > "$HOME/.openclaw/shared-context/sessions/${SESSION}/auto-exit"
+fi
+
 # ──── Build Claude Command (unified interactive) ─────────────────────
 PROMPT_FILE=$(mktemp "$STATE_DIR/${SESSION}-prompt-XXXXXX")
-if $AUTO_EXIT; then
-  printf '%s\n\nCRITICAL: 完成所有任务后 MUST 立即使用 /exit 退出会话。NEVER 等待后续输入。本次为无人值守派发，不会有人跟进。' "$TASK" > "$PROMPT_FILE"
-else
-  printf '%s' "$TASK" > "$PROMPT_FILE"
-fi
+printf '%s' "$TASK" > "$PROMPT_FILE"
 
 EXTRA=""
 if [[ -n "$MODEL_ARG" ]]; then EXTRA="$EXTRA --model $MODEL_ARG"; fi
