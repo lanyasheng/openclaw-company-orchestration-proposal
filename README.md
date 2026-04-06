@@ -75,7 +75,8 @@ graph TD
 
   subgraph Exec["Execution Substrate"]
     SE["SubagentExecutor<br/>process mgmt · fork guard"]
-    TE["TmuxExecutor<br/>session mgmt · monitoring"]
+    TE["TmuxTaskExecutor<br/>configurable prefix · Ralph-aware poll"]
+    DE["start-tmux-task.sh<br/>dispatch engine · lock · worktree · Ralph"]
     EI["TaskExecutorBase<br/>pluggable backends"]
   end
 
@@ -112,6 +113,42 @@ graph TD
 ```
 
 **Design principle:** OpenClaw holds the platform primitives (`sessions_spawn`, callbacks, shared-context). This repo holds the **orchestration logic** — batch DAG, fan-in, gates, state. External frameworks (LangGraph, etc.) only enter at the execution layer.
+
+---
+
+## Dispatch Engine (`start-tmux-task.sh`)
+
+The generic task dispatch engine. Creates tmux sessions with Claude Code, manages lifecycle from launch to completion. Project-specific wrappers (e.g., NanoCompose's `dispatch.sh`) set `OPENCLAW_SESSION_PREFIX` and default directories, then `exec` this script.
+
+```bash
+start-tmux-task.sh --label <name> --workdir <dir> --task <prompt> \
+  [--type <type>] [--model <model>] [--auto-exit] [--no-ralph] [--no-worktree]
+```
+
+| Capability | Implementation |
+|-----------|---------------|
+| **Concurrency lock** | `mkdir`-based atomic lock serializes session creation; prevents exceeding `MAX_SESSIONS`. 60s stale lock recovery. |
+| **Results dedup** | Checks `results/{session}.json/.txt` before dispatch; skips already-completed tasks. |
+| **Ralph init** | Enables persistent execution by default (`--no-ralph` to disable). Graceful degradation if `ralph-init.sh` not found or fails. |
+| **Worktree isolation** | Auto-creates git worktree for coding tasks (`bugfix/feat/crash/comp/fix`). Branch name saved to `.openclaw-branch` metadata for cleanup. |
+| **Auto-exit** | `--auto-exit` writes a marker file; `on-stop.sh` sends `/exit` via tmux after Ralph allows stop. For unattended cron/orchestrator dispatches. |
+| **Hooks integration** | Exports `NC_SESSION` + `NC_PROJECT_DIR`; passes `--name` to Claude CLI. All Stop/SessionEnd hooks fire correctly. |
+| **Atomic state files** | State + progress files written via `tmp+mv` (Pattern 6). |
+| **Configurable prefix** | `OPENCLAW_SESSION_PREFIX` env var (default: `oc`). Session names: `{prefix}-{label}`. |
+
+### TmuxTaskExecutor (Python)
+
+`TmuxTaskExecutor` is the orchestrator's interface to the dispatch engine:
+
+```python
+executor = TmuxTaskExecutor(workspace_dir="/path/to/project", timeout_seconds=3600)
+handle = executor.execute(task_id="t1", label="Review", context={"type": "review", "prompt": "..."})
+result = executor.poll(handle)  # checks progress file + Ralph state
+```
+
+- `poll()` detects completion via `phase: idle-waiting-input` in progress file, but guards against Ralph-active false positives
+- Session prefix configurable via `OPENCLAW_SESSION_PREFIX` (default: `oc`)
+- 60s subprocess timeout for dispatch (covers lock wait + CC init)
 
 ---
 
@@ -230,8 +267,13 @@ The control plane incorporates patterns from Claude Code's execution harness arc
 | **Watchdog Health Checks** | Unified `full_health_check()` combines workflow stall detection, dead process reconciliation, orphan completion recovery, and queued task stall detection. |
 | **Orphan Completion Recovery** | `reconcile_orphan_completions()` detects tasks whose process exited but state still shows "running" — prevents silent task loss. |
 | **Fork Bomb Prevention** | Three-layer guard in `SubagentExecutor`: (1) `OPENCLAW_SPAWN_DEPTH` env var, (2) system-wide `pgrep` process count, (3) `threading.Semaphore`. |
-| **Subprocess Timeouts** | All synchronous `subprocess.run()` calls have explicit timeouts (30s for tmux, 60s for general commands). |
+| **Subprocess Timeouts** | All synchronous `subprocess.run()` calls have explicit timeouts (60s for dispatch, 30s for kill-session, 5s for capture-pane). |
 | **UTC Timestamps** | All modules use `datetime.now(timezone.utc)` for consistent cross-process timestamp ordering. |
+| **Dispatch Concurrency Lock** | `mkdir`-based atomic lock in `start-tmux-task.sh` serializes session creation to prevent exceeding `MAX_SESSIONS`. 60s stale lock auto-recovery. |
+| **Auto-Exit for Unattended Sessions** | `--auto-exit` marker file + `on-stop.sh` integration. Ralph-aware: only fires after Ralph allows stop. Prevents zombie sessions from cron/orchestrator dispatches. |
+| **Batch Timeout Cleanup** | `batch_executor` now cancels running executors before marking tasks as `timed_out`, preventing orphaned tmux sessions. |
+| **Retry Semantics** | `max_retries=0` correctly means "no retries" (not "use default"). `-1` or omitted means "use default" (3). |
+| **Main Loop Crash Recovery** | `workflow_loop` wraps the main loop in `try-except`; unhandled exceptions set `status=failed` and persist state before exiting. |
 | **Single Writer Guard** | `fcntl.flock`-based file locking with 5-minute timeout, reentrant for same writer. |
 
 ---
