@@ -121,7 +121,7 @@ fi
 
 # ──── Ralph 持续执行初始化（execution-harness Pattern 1）────────────
 if $RALPH_ENABLED; then
-  HARNESS_DIR="$HOME/.openclaw/skills/execution-harness/skills/agent-hooks/scripts"
+  HARNESS_DIR="$HOME/.openclaw/skills/execution-harness/execution-loop/scripts"
   if [[ -f "$HARNESS_DIR/ralph-init.sh" ]]; then
     bash "$HARNESS_DIR/ralph-init.sh" "$SESSION" "$RALPH_MAX_ITERATIONS" || \
       { echo "Warning: ralph-init.sh failed, continuing without Ralph" >&2; RALPH_ENABLED=false; }
