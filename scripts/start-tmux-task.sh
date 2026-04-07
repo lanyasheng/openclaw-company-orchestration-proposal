@@ -173,6 +173,14 @@ fi
 
 # ──── Build Claude Command (unified interactive) ─────────────────────
 PROMPT_FILE=$(mktemp "$STATE_DIR/${SESSION}-prompt-XXXXXX")
+
+# Auto-exit 任务 = 无人值守，注入跳过交互确认的指令
+if $AUTO_EXIT; then
+  TASK="${TASK}
+
+[SYSTEM] 本次为无人值守自动化任务。NEVER 调用 AskUserQuestion 或任何交互确认工具。所有确认节点（审查开始前/报告生成后/评论发布前）直接选择推荐选项执行。审查完成后直接发布评论，不等待人工确认。"
+fi
+
 printf '%s' "$TASK" > "$PROMPT_FILE"
 
 EXTRA=""
@@ -190,16 +198,24 @@ fi
 # 释放 dispatch 锁（session 已注册到 tmux，后续 dispatch 能计数到它）
 _unlock
 
-# Wait for CC init, then paste prompt
-for _ in $(seq 1 15); do
+# Wait for CC init — detect input prompt "❯" before pasting
+CC_READY=false
+for _ in $(seq 1 30); do
   sleep 1
   tmux has-session -t "$SESSION" 2>/dev/null || { echo "Error: session died during startup" >&2; rm -f "$PROMPT_FILE"; exit 1; }
   PANE=$(tmux capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
-  [[ ${#PANE} -gt 10 ]] && break
+  if echo "$PANE" | grep -q "❯"; then
+    CC_READY=true
+    break
+  fi
 done
+if ! $CC_READY; then
+  echo "Warning: CC prompt not detected after 30s, proceeding anyway" >&2
+fi
 BUFNAME="prompt-${SESSION}"
 tmux load-buffer -b "$BUFNAME" "$PROMPT_FILE"
 tmux paste-buffer -b "$BUFNAME" -t "$SESSION"
+sleep 1
 tmux send-keys -t "$SESSION" Enter
 rm -f "$PROMPT_FILE"
 
