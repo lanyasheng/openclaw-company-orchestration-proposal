@@ -22,17 +22,27 @@
 
 ## 核心能力
 
-批量 DAG 工作流引擎，通过 tmux + Claude Code CLI 编排多 Agent 任务执行。
+编排控制面提供两条共存的执行路径：
+
+| 路径 | 适用场景 | 入口 |
+|------|---------|------|
+| **DAG 工作流** | 预规划批量编排：规划所有批次 → 自动推进 | `cli.py plan / run / resume / show` |
+| **回调驱动** | 事件驱动：消息 → callback → 决策 → 下一跳 | `cli.py status / decide / stuck` |
+
+两条路径共享同一个执行基板（`SubagentExecutor` + `TmuxTaskExecutor`）。
 
 | 能力 | 实现 | 状态 |
 |------|------|------|
-| **批量 DAG 规划** | `depends_on` 定义依赖，Kahn 算法校验 DAG，拓扑排序确定执行顺序 | ✅ 生产验证 |
-| **并行派发 + 重试** | `BatchExecutor` 通过可插拔 Executor 派发任务，监控完成，自动重试 | ✅ 生产验证 |
-| **扇入审查** | `BatchReviewer` 支持 `all_success` / `any_success` / `majority` 策略 | ✅ 生产验证 |
-| **安全门禁** | 可配置的门禁条件，暂停等待人工审查，resume 继续 | ✅ 生产验证 |
-| **单 JSON 状态** | 每个工作流一个 `workflow_state_*.json`，唯一事实源 | ✅ 生产验证 |
-| **LangGraph 集成** | 可选 LangGraph StateGraph 引擎，零依赖轮询降级 | ✅ 生产验证 |
-| **可插拔 Executor** | `TaskExecutorBase` 抽象接口，可替换任意执行后端 | ✅ 接口已定义 |
+| **批量 DAG 规划** | Kahn 算法校验 DAG，拓扑排序确定执行顺序 | ✅ 生产验证 |
+| **并行派发 + 重试** | `BatchExecutor` 通过可插拔 Executor 派发任务 | ✅ 生产验证 |
+| **扇入审查** | `all_success` / `any_success` / `majority` 策略 | ✅ 生产验证 |
+| **安全门禁** | 可配置门禁条件，暂停等待人工审查 | ✅ 生产验证 |
+| **Continuation Kernel** | 9 版本制品链：注册 → 派发 → 孵化 → 执行 → 回执 → 回调 → 自动续行 | ✅ 生产验证 |
+| **Hooks 系统** | 三档行为约束（audit/warn/enforce）：承诺验证、完成翻译 | ✅ 生产验证 |
+| **可观测性** | 任务状态卡、看板渲染、tmux 同步 | ✅ 生产验证 |
+| **告警** | 规则引擎 + 审计追踪 + 告警路由 | ✅ 生产验证 |
+| **断路器** | 连续 3 次 / 累计 20 次失败自动熔断 | ✅ 已实现 |
+| **可插拔 Executor** | `TaskExecutorBase` 抽象接口 | ✅ 接口已定义 |
 
 ---
 
@@ -49,27 +59,17 @@ python3 runtime/orchestrator/cli.py resume workflow_state_wf_xxx.json
 
 ---
 
-## 仓库结构
+## 可靠性
 
-```
-runtime/orchestrator/           # 核心模块 (18 个文件)
-├── cli.py                      # CLI 入口: plan/run/show/resume
-├── workflow_state.py           # 单 JSON 状态模型
-├── task_planner.py             # DAG 校验 + 拓扑排序
-├── batch_executor.py           # 并行派发 + 重试
-├── batch_reviewer.py           # 扇入策略 + 门禁
-├── orchestrator.py             # 规则链决策引擎
-├── executor_interface.py       # 可插拔 Executor 抽象接口
-├── subagent_executor.py        # 进程管理 + fork 防护
-├── tmux_executor.py            # Tmux 会话 Executor
-└── utils/                      # 原子写入、UTC 时间戳
-
-scripts/                        # Shell 派发引擎
-├── start-tmux-task.sh          # 通用 tmux 任务启动器
-└── monitor/status scripts
-
-tests/orchestrator/             # 测试套件 (89 个单元测试)
-```
+| 机制 | 实现 |
+|------|------|
+| 原子写入 | `tempfile + os.fsync + os.replace`（`utils/io.py`） |
+| 文件锁 | `SingleWriterGuard` + `fcntl.flock` |
+| 断路器 | 连续/累计失败追踪，自动熔断 |
+| 看门狗 | 停滞检测、死进程回收、孤儿任务恢复 |
+| Fork 防护 | 三层守卫：孵化深度 + 进程计数 + 信号量 |
+| UTC 时间 | 所有超时比较使用 `datetime.now(timezone.utc)` |
+| 崩溃恢复 | `workflow_loop` 异常时持久化状态再退出 |
 
 ---
 
