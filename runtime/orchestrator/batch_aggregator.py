@@ -13,7 +13,7 @@ Fan-in 汇总层 v1 — 监听多个子任务的 completion 事件，按 batch_i
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -277,7 +277,7 @@ def detect_stuck_batches(timeout_minutes: int = 60) -> List[Dict[str, Any]]:
     _ensure_state_dir()
     
     stuck = []
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     threshold = now - timedelta(minutes=timeout_minutes)
     
     batch_ids = set()

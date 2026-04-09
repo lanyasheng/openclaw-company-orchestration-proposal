@@ -33,7 +33,7 @@ if [[ -z "$LABEL" ]]; then
   exit 1
 fi
 
-SESSION="cc-${LABEL}"
+SESSION="${OPENCLAW_SESSION_PREFIX:-oc}-${LABEL}"
 LOG_FILE="/tmp/${SESSION}-monitor.log"
 
 log() {

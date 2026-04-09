@@ -383,7 +383,7 @@ def test_cleanup():
 
 def test_timeout_auto_detection():
     """测试超时自动检测（Batch F 增强）"""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     config = SubagentConfig(
         label="test-timeout",
@@ -401,7 +401,7 @@ def test_timeout_auto_detection():
     
     # 手动设置 started_at 为过去时间（模拟超时）
     from subagent_executor import _update_task_status
-    past_time = (datetime.now() - timedelta(seconds=5)).isoformat()
+    past_time = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
     _update_task_status(task_id, "running")
     
     # 直接修改状态文件来设置 started_at
@@ -524,7 +524,7 @@ def test_cleanup_completed_task():
 
 def test_cleanup_timed_out_task():
     """测试清理超时任务"""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     config = SubagentConfig(
         label="test-cleanup-timeout",
@@ -546,7 +546,7 @@ def test_cleanup_timed_out_task():
     if state_path.exists():
         with open(state_path, "r") as f:
             data = json.load(f)
-        data["started_at"] = (datetime.now() - timedelta(seconds=5)).isoformat()
+        data["started_at"] = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
         data["status"] = "timed_out"
         with open(state_path, "w") as f:
             json.dump(data, f, indent=2)
@@ -942,12 +942,12 @@ def test_queued_launch_missed_state_definition():
 def test_reconcile_queued_tasks_basic():
     """测试 reconcile_queued_tasks 基本功能"""
     import tempfile
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     from pathlib import Path
     
     # 创建一个旧的 pending 任务（超过超时阈值）
     task_id = "test_queued_old_pending"
-    old_timestamp = (datetime.now() - timedelta(seconds=QUEUED_TIMEOUT_SECONDS + 60)).isoformat()
+    old_timestamp = (datetime.now(timezone.utc) - timedelta(seconds=QUEUED_TIMEOUT_SECONDS + 60)).isoformat()
     
     config = SubagentConfig(label="test-queued", runtime="subagent")
     result = SubagentResult(
@@ -987,12 +987,12 @@ def test_reconcile_queued_tasks_basic():
 
 def test_reconcile_queued_tasks_does_not_affect_recent_pending():
     """测试 reconcile_queued_tasks 不会影响最近的 pending 任务"""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     from pathlib import Path
     
     # 创建一个最近的 pending 任务（未超过超时阈值）
     task_id = "test_queued_recent_pending"
-    recent_timestamp = (datetime.now() - timedelta(seconds=QUEUED_TIMEOUT_SECONDS - 120)).isoformat()
+    recent_timestamp = (datetime.now(timezone.utc) - timedelta(seconds=QUEUED_TIMEOUT_SECONDS - 120)).isoformat()
     
     config = SubagentConfig(label="test-queued-recent", runtime="subagent")
     result = SubagentResult(
@@ -1074,12 +1074,12 @@ def test_reconcile_queued_tasks_does_not_affect_running_with_pid():
 
 def test_reconcile_queued_tasks_concurrent_batch_scenario():
     """测试并发批次场景：部分成功、部分 launch-missed 可区分"""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     from pathlib import Path
     
     # 创建 4 个并发任务
-    old_timestamp = (datetime.now() - timedelta(seconds=QUEUED_TIMEOUT_SECONDS + 60)).isoformat()
-    recent_timestamp = (datetime.now() - timedelta(seconds=30)).isoformat()
+    old_timestamp = (datetime.now(timezone.utc) - timedelta(seconds=QUEUED_TIMEOUT_SECONDS + 60)).isoformat()
+    recent_timestamp = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
     
     task_ids = {
         "old_pending_1": old_timestamp,
@@ -1137,11 +1137,11 @@ def test_reconcile_queued_tasks_concurrent_batch_scenario():
 
 def test_queued_timeout_reconciliation_machine_readable_reason():
     """测试 queued timeout reconciliation 提供 machine-readable reason"""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     from pathlib import Path
     
     task_id = "test_queued_reason"
-    old_timestamp = (datetime.now() - timedelta(seconds=QUEUED_TIMEOUT_SECONDS + 60)).isoformat()
+    old_timestamp = (datetime.now(timezone.utc) - timedelta(seconds=QUEUED_TIMEOUT_SECONDS + 60)).isoformat()
     
     config = SubagentConfig(label="test-queued-reason", runtime="subagent")
     result = SubagentResult(

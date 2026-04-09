@@ -22,14 +22,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "$LABEL" ]]; then
-  SESSION="cc-${LABEL}"
+  SESSION="${OPENCLAW_SESSION_PREFIX:-oc}-${LABEL}"
 elif [[ -z "$SESSION" ]]; then
   echo "Usage: status-tmux-task.sh --label <name> [--json]" >&2
   exit 1
 fi
 
-STATE_FILE="/tmp/${SESSION}-state.json"
-REPORT_FILE="/tmp/${SESSION}-completion-report.md"
+STATE_DIR="$HOME/.openclaw/state/tmux-tasks"
+STATE_FILE="${STATE_DIR}/${SESSION}-state.json"
+REPORT_FILE="${STATE_DIR}/${SESSION}-completion-report.md"
 NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
 # ──── Status Detection (mirrors watchdog.sh detect_status) ───────────

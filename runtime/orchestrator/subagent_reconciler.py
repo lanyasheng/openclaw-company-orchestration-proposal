@@ -225,7 +225,7 @@ def reconcile_queued_tasks(
     """
     timeout_seconds = timeout_seconds or QUEUED_TIMEOUT_SECONDS
     reconciled = []
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     tasks = list_subagent_tasks(status=status_filter, limit=limit)
 

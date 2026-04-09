@@ -702,7 +702,7 @@ class SubagentExecutor:
 
         try:
             started = datetime.fromisoformat(result.started_at)
-            elapsed = (datetime.now() - started).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
             return elapsed > self.config.timeout_seconds
         except (ValueError, TypeError):
             return False
