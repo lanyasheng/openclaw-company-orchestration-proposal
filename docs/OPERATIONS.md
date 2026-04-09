@@ -116,7 +116,7 @@ workflow_state_wf_xxx.json    ← 唯一真值，所有状态都在这里
 
 ## Runner 脚本契约
 
-任务实际由 `scripts/run_subagent_claude_v1.sh` 执行。`SubagentExecutor` 会向子进程注入以下环境变量：
+`SubagentExecutor` 向子进程注入以下环境变量：
 
 | 变量 | 说明 |
 |------|------|
