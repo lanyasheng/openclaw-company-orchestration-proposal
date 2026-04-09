@@ -74,14 +74,13 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   exit 0
 fi
 
-# ──── Results 去重 ────────────────────────────────────────────────────
+# ──── Results 去重（只检查 .json，不检查 .txt）─────────────────────────
+# .txt 是 capture-pane 原始输出，不可靠。.json 是结构化 completion marker。
 RESULT_FILE="${RESULTS_DIR}/${SESSION}.json"
-RESULT_TXT="${RESULTS_DIR}/${SESSION}.txt"
-if [[ -f "$RESULT_FILE" || -f "$RESULT_TXT" ]]; then
-  _CHECK="${RESULT_FILE}"; [[ ! -f "$_CHECK" ]] && _CHECK="$RESULT_TXT"
-  _STATUS=$(jq -r '.subtype // .status // "unknown"' "$_CHECK" 2>/dev/null || echo "exists")
-  if [[ "$_STATUS" == "success" || "$_STATUS" == "completed" || "$_STATUS" == "exists" ]]; then
-    echo "Task ${SESSION} already completed (result file exists). Skipping."
+if [[ -f "$RESULT_FILE" ]]; then
+  _STATUS=$(jq -r '.subtype // .status // "unknown"' "$RESULT_FILE" 2>/dev/null || echo "unknown")
+  if [[ "$_STATUS" == "success" || "$_STATUS" == "completed" ]]; then
+    echo "Task ${SESSION} already completed (result JSON status=${_STATUS}). Skipping."
     exit 0
   fi
 fi
