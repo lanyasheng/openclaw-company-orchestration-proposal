@@ -8,18 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-class ValidationError(ValueError):
-    """Validation error for workflow state data."""
-    pass
-
-def validate_required(data: dict, fields: list) -> list:
-    """Return list of missing required fields."""
-    return [f for f in fields if f not in data or data[f] is None]
-
-def validate_enum_value(value, allowed, field_name="field"):
-    """Validate value is in allowed set, raise ValidationError if not."""
-    if value not in allowed:
-        raise ValidationError(f"{field_name} must be one of {allowed}, got {value!r}")
+from core.validation import validate_required, validate_enum_value, ValidationError
 
 _log = _logging.getLogger(__name__)
 
