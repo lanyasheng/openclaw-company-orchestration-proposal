@@ -68,11 +68,12 @@ class TmuxTaskExecutor(TaskExecutorBase):
             "--workdir", self.workspace_dir,
             "--task", prompt,
             "--type", task_type,
+            "--auto-exit",
         ]
 
         logger.info("dispatching %s -> %s", task_id, session_name)
-        # 60s: lock wait (30s max) + tmux create + CC init wait (15s max)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        # 90s: lock wait (30s max) + tmux create + CC init wait (30s max) + paste
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
 
         if result.returncode != 0:
             error = result.stderr.strip() or result.stdout.strip()
@@ -116,27 +117,28 @@ class TmuxTaskExecutor(TaskExecutorBase):
                     pass
                 if ralph_active:
                     return TaskResult(status="running")
-                logger.info("task %s completed (interactive mode, idle-waiting-input)", session_name)
-                # Capture last output as summary
-                summary = ""
-                try:
-                    cap = subprocess.run(
-                        ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-10"],
-                        capture_output=True, text=True, timeout=5,
-                    )
-                    summary = cap.stdout.strip()[-500:] if cap.stdout else ""
-                except Exception:
-                    pass
-                # Clean up progress file
-                progress_file.unlink(missing_ok=True)
-                # Kill the session (task is done, CC is waiting for input we won't send)
-                try:
-                    subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True, timeout=30)
-                except subprocess.TimeoutExpired:
-                    logger.warning("tmux kill-session timed out for %s", session_name)
-                return TaskResult(status="completed", output=summary)
+                logger.info("task %s idle-waiting-input, sending /exit", session_name)
+                # Send /exit so CC processes it and SessionEnd hook fires
+                # (updates reviewed-mrs.json, cleans worktree, sends notifications)
+                # Return "running" — next poll will see session dead and use
+                # _check_orch_bridge to confirm completion via result JSON.
+                self._send_exit(session_name)
+                # Write completion marker so _check_orch_bridge can find it
+                self._write_completion_marker(session_name)
+                # Don't return completed yet — let session die naturally,
+                # giving on-session-end.sh time to run.
+                return TaskResult(status="running")
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             pass
+
+        # 2b. Check review-posted marker (task completed but progress file missing/deleted)
+        #     This handles the case where CC finished but Stop hook didn't fire again.
+        review_posted = Path.home() / ".openclaw/shared-context/results" / f"{session_name}.review-posted"
+        if review_posted.exists():
+            logger.info("task %s review-posted marker found, sending /exit", session_name)
+            self._send_exit(session_name)
+            self._write_completion_marker(session_name)
+            return TaskResult(status="running")
 
         # 3. Check timeout
         start = self._start_times.get(session_name)
@@ -149,6 +151,41 @@ class TmuxTaskExecutor(TaskExecutorBase):
 
         # 4. Still running
         return TaskResult(status="running")
+
+    def _send_exit(self, session_name: str) -> None:
+        """Send /exit to a tmux session, with kill-session fallback."""
+        try:
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "/exit", "Enter"],
+                capture_output=True, timeout=5,
+            )
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            try:
+                subprocess.run(
+                    ["tmux", "kill-session", "-t", session_name],
+                    capture_output=True, timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning("tmux kill-session timed out for %s", session_name)
+
+    def _write_completion_marker(self, session_name: str) -> None:
+        """Write a completion JSON so _check_orch_bridge can detect it after session dies."""
+        result_json = Path.home() / ".openclaw/shared-context/results" / f"{session_name}.json"
+        if not result_json.exists():
+            try:
+                from datetime import datetime, timezone
+                data = {
+                    "session": session_name,
+                    "status": "completed",
+                    "subtype": "completed",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "content": "poll-detected completion",
+                }
+                tmp = result_json.with_suffix(f".{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(data))
+                tmp.rename(result_json)
+            except Exception:
+                logger.debug("failed to write completion marker for %s", session_name)
 
     def cancel(self, handle: str) -> bool:
         """Kill the tmux session."""
@@ -231,5 +268,21 @@ class TmuxTaskExecutor(TaskExecutorBase):
         if jsonl_result is not None:
             return jsonl_result
 
-        # Session gone, no JSONL result — assume failed
+        # Check result JSON written by on-stop.sh auto-exit (interactive mode)
+        result_json = Path.home() / ".openclaw/shared-context/results" / f"{session_name}.json"
+        try:
+            rdata = json.loads(result_json.read_text())
+            if rdata.get("status") == "completed" or rdata.get("subtype") == "completed":
+                logger.info(
+                    "task %s completed per result JSON (session already gone)",
+                    session_name,
+                )
+                return TaskResult(
+                    status="completed",
+                    output=rdata.get("content", "auto-exit completion"),
+                )
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+
+        # Session gone, no completion evidence — assume failed
         return TaskResult(status="failed", error="tmux session exited without completion")

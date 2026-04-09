@@ -320,6 +320,7 @@ def create_workflow(
                     started_at=td.get("started_at"),
                     completed_at=td.get("completed_at"),
                     error=td.get("error"),
+                    max_retries=int(td.get("max_retries", 0)),
                 )
             )
         batches.append(

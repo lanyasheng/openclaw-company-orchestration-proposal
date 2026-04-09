@@ -104,8 +104,26 @@ class BatchExecutor:
         except (ValueError, TypeError):
             return 0.0
 
+    @staticmethod
+    def _is_capacity_error(error: str) -> bool:
+        """Detect MAX_SESSIONS capacity-full errors (should not consume retry budget)."""
+        err_lower = error.lower()
+        return ("active" in err_lower and "max" in err_lower) or \
+               ("sessions" in err_lower and ("max" in err_lower or "limit" in err_lower))
+
     def _apply_retry_or_fail(self, task: TaskEntry, batch: BatchEntry, error: str) -> None:
         """Mark task for retry if retries remain, otherwise mark failed."""
+        # Capacity-full is a transient condition — reset to pending without
+        # consuming retry budget so queued tasks aren't falsely exhausted.
+        if self._is_capacity_error(error):
+            task.status = "pending"
+            task.error = None
+            task.subagent_task_id = None
+            logger.info(
+                "task %s capacity-full, pending without consuming retry budget",
+                task.task_id,
+            )
+            return
         # max_retries: -1 = use default, 0 = no retries, >0 = that many retries
         effective_max = task.max_retries if task.max_retries >= 0 else self.default_max_retries
         if task.retry_count < effective_max:
@@ -191,11 +209,13 @@ class BatchExecutor:
                     task.task_id, batch.batch_id, "completed",
                     result={"verdict": "PASS", "summary": task.result_summary},
                 )
-                # Clean up all external state (progress, task-registry, tmux session)
-                try:
-                    self._executor.cleanup(task.subagent_task_id)
-                except (OSError, RuntimeError) as exc:
-                    logger.warning("cleanup failed for subagent %s: %s", task.subagent_task_id, exc)
+                # Light cleanup: remove in-memory tracking only.
+                # Don't call cleanup() (which kills tmux) — let the session
+                # die naturally so on-session-end.sh has time to run
+                # (update reviewed-mrs.json, clean worktree, send notification).
+                if hasattr(self._executor, '_task_session_map'):
+                    self._executor._task_session_map.pop(task.subagent_task_id, None)
+                    self._executor._start_times.pop(task.subagent_task_id, None)
             elif tr.status in ("failed", "timed_out"):
                 self._apply_retry_or_fail(
                     task, batch, tr.error or tr.status,
@@ -235,9 +255,7 @@ class BatchExecutor:
                 task.subagent_task_id = handle
             except (OSError, RuntimeError, subprocess.SubprocessError) as e:
                 logger.exception("failed to redispatch task %s", task.task_id)
-                task.status = "failed"
-                task.error = str(e)
-                task.completed_at = _iso_now()
+                self._apply_retry_or_fail(task, batch, str(e))
 
     def _sync_to_state_machine(
         self, task_id: str, batch_id: str, status: str, result: dict | None = None

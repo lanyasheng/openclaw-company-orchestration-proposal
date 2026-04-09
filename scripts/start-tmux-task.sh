@@ -110,7 +110,7 @@ if ! $_lock_acquired; then
   echo "Error: could not acquire dispatch lock after 30s" >&2
   exit 1
 fi
-_unlock() { rmdir "$LOCK_DIR" 2>/dev/null; }
+_unlock() { local _rc=$?; rmdir "$LOCK_DIR" 2>/dev/null || true; return $_rc; }
 trap _unlock EXIT
 
 ACTIVE=$(tmux ls 2>/dev/null | grep -c "^${SESSION_PREFIX}-" || true)
@@ -271,3 +271,5 @@ fi
 echo "  State:    $STATE_FILE"
 echo "  Progress: $PROGRESS_DIR/${SESSION}.json"
 echo "  Attach:   tmux attach -t $SESSION"
+
+exit 0
