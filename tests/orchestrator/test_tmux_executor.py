@@ -12,7 +12,7 @@ from tmux_executor import TmuxTaskExecutor
 from executor_interface import TaskResult
 
 TID = "tsk_abc_123"
-SES = "nc-review-abc-123"
+SES = "oc-review-abc-123"
 WS = "/tmp/test-workspace"
 CTX = {"type": "review", "prompt": "review this PR"}
 
@@ -57,8 +57,8 @@ class TestExecute(TestCase):
     def test_dispatch_cmd_args(self, mr):
         _ex().execute(TID, "l", CTX)
         a = mr.call_args[0][0]
-        for v in ("--type", "review", "--id", "abc-123", "--prompt",
-                   "review this PR", "--project-dir", WS, "--mode", "interactive"):
+        for v in ("--type", "review", "--label", "review-abc-123",
+                   "--task", "review this PR", "--workdir", WS):
             self.assertIn(v, a)
 
     @patch("tmux_executor.subprocess.run", return_value=_ok())

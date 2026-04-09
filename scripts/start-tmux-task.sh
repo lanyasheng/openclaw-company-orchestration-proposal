@@ -120,6 +120,10 @@ if [[ "$ACTIVE" -ge "$MAX_SESSIONS" ]]; then
 fi
 
 # ──── Ralph 持续执行初始化（execution-harness Pattern 1）────────────
+# Auto-exit 与 Ralph 互斥：auto-exit 需要 session 完成后退出，Ralph 会阻止退出
+if $AUTO_EXIT; then
+  RALPH_ENABLED=false
+fi
 if $RALPH_ENABLED; then
   HARNESS_DIR="$HOME/.openclaw/skills/execution-harness/execution-loop/scripts"
   if [[ -f "$HARNESS_DIR/ralph-init.sh" ]]; then
@@ -169,6 +173,7 @@ fi
 if $AUTO_EXIT; then
   mkdir -p "$HOME/.openclaw/shared-context/sessions/${SESSION}"
   echo "true" > "$HOME/.openclaw/shared-context/sessions/${SESSION}/auto-exit"
+  echo "$(date '+%H:%M:%S') start-tmux-task AUTO_EXIT=true SESSION=${SESSION} marker=$(ls "$HOME/.openclaw/shared-context/sessions/${SESSION}/auto-exit" 2>/dev/null && echo EXISTS || echo MISSING)" >> /tmp/on-stop-debug.log
 fi
 
 # ──── Build Claude Command (unified interactive) ─────────────────────
@@ -187,7 +192,7 @@ EXTRA=""
 if [[ -n "$MODEL_ARG" ]]; then EXTRA="$EXTRA --model $MODEL_ARG"; fi
 
 # Export NC_SESSION + NC_PROJECT_DIR so hooks (Stop/SessionEnd) can identify this session
-CC_CMD="cd '${WORK_DIR}' && export NC_SESSION='${SESSION}' && export NC_PROJECT_DIR='${WORKDIR}' && export CLAUDE_ENABLE_STREAM_WATCHDOG=1 && export CLAUDE_CODE_DISABLE_MOUSE=1 && export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 && claude --permission-mode bypassPermissions --name '${SESSION}'${EXTRA}"
+CC_CMD="cd '${WORK_DIR}' && export NC_SESSION='${SESSION}' && export NC_PROJECT_DIR='${WORKDIR}' && export CLAUDE_CODE_DISABLE_MOUSE=1 && export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 && claude --permission-mode bypassPermissions --name '${SESSION}'${EXTRA}"
 
 # ──── Create tmux Session ────────────────────────────────────────────
 if ! tmux new-session -d -s "$SESSION" "$CC_CMD"; then

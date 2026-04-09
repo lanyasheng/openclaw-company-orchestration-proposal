@@ -1,6 +1,0 @@
-{
-  "task_id": "tsk_trading_pilot_demo_001",
-  "workspace_repo_path": "repos/workspace-trading",
-  "input_config_path": "research/v2_portfolio/basket_configs/acceptance_harness_v1_sample.json",
-  "run_label": "dry-run-demo"
-}

@@ -1,3 +1,0 @@
-"""
-trading — Trading callback tests
-"""
