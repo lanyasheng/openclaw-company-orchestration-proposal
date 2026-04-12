@@ -35,16 +35,17 @@ class WorkflowLoop:
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         backend: str = "auto",
         max_runtime_seconds: int = 86400,
+        on_task_complete: "Callable[[str], None] | None" = None,
     ):
         executor = None
         if backend == "tmux":
             from tmux_executor import TmuxTaskExecutor
-            executor = TmuxTaskExecutor(workspace_dir, timeout_seconds)
+            executor = TmuxTaskExecutor(workspace_dir, timeout_seconds, on_complete=on_task_complete)
         elif backend == "auto":
             import shutil
             if shutil.which("tmux"):
                 from tmux_executor import TmuxTaskExecutor
-                executor = TmuxTaskExecutor(workspace_dir, timeout_seconds)
+                executor = TmuxTaskExecutor(workspace_dir, timeout_seconds, on_complete=on_task_complete)
         # else: default SubagentTaskExecutor via BatchExecutor
         self.executor = BatchExecutor(workspace_dir, timeout_seconds, executor=executor)
         # WorkflowLoop._save() is the single writer for workflow_state.

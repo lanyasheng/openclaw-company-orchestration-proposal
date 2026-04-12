@@ -15,7 +15,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 
 from executor_interface import TaskExecutorBase, TaskResult
 
@@ -45,6 +45,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
         workspace_dir: str,
         timeout_seconds: int = 3600,
         mode: str = "interactive",
+        on_complete: Optional[Callable[[str], None]] = None,
     ):
         self.workspace_dir = workspace_dir
         self.timeout_seconds = timeout_seconds
@@ -52,6 +53,13 @@ class TmuxTaskExecutor(TaskExecutorBase):
         self._start_times: dict[str, float] = {}
         # session_name -> task_id mapping to avoid fragile reverse reconstruction
         self._task_session_map: dict[str, str] = {}
+        # Track sessions we've already sent /exit to, preventing double-exit
+        # which causes SessionEnd hooks to fire twice
+        self._exit_sent: set[str] = set()
+        # Optional callback invoked when a task completes, before /exit.
+        # Signature: on_complete(session_name: str) -> None
+        # Injected by callers (e.g. patrol-engine) for notifications.
+        self._on_complete = on_complete
 
     def execute(self, task_id: str, label: str, context: Dict[str, Any]) -> str:
         """Start a tmux session with Claude Code. Returns session name as handle."""
@@ -117,14 +125,16 @@ class TmuxTaskExecutor(TaskExecutorBase):
                     pass
                 if ralph_active:
                     return TaskResult(status="running")
-                logger.info("task %s idle-waiting-input, sending /exit", session_name)
-                # Send /exit so CC processes it and SessionEnd hook fires
-                # (updates reviewed-mrs.json, cleans worktree, sends notifications)
-                # Return "running" — next poll will see session dead and use
-                # _check_orch_bridge to confirm completion via result JSON.
-                self._send_exit(session_name)
-                # Write completion marker so _check_orch_bridge can find it
-                self._write_completion_marker(session_name)
+                if session_name not in self._exit_sent:
+                    logger.info("task %s idle-waiting-input, sending /exit", session_name)
+                    if self._on_complete:
+                        try:
+                            self._on_complete(session_name)
+                        except Exception:
+                            logger.debug("on_complete callback failed for %s", session_name)
+                    self._send_exit(session_name)
+                    self._exit_sent.add(session_name)
+                    self._write_completion_marker(session_name)
                 # Don't return completed yet — let session die naturally,
                 # giving on-session-end.sh time to run.
                 return TaskResult(status="running")
@@ -135,9 +145,16 @@ class TmuxTaskExecutor(TaskExecutorBase):
         #     This handles the case where CC finished but Stop hook didn't fire again.
         review_posted = Path.home() / ".openclaw/shared-context/results" / f"{session_name}.review-posted"
         if review_posted.exists():
-            logger.info("task %s review-posted marker found, sending /exit", session_name)
-            self._send_exit(session_name)
-            self._write_completion_marker(session_name)
+            if session_name not in self._exit_sent:
+                logger.info("task %s review-posted marker found, sending /exit", session_name)
+                if self._on_complete:
+                    try:
+                        self._on_complete(session_name)
+                    except Exception:
+                        logger.debug("on_complete callback failed for %s", session_name)
+                self._send_exit(session_name)
+                self._exit_sent.add(session_name)
+                self._write_completion_marker(session_name)
             return TaskResult(status="running")
 
         # 3. Check timeout

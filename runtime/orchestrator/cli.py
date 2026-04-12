@@ -199,7 +199,7 @@ def cmd_plan(description: str, config_path: str):
     print(f"\nRun with: orchestrator-cli run {out_path}")
 
 
-def cmd_run(state_path: str, workspace_dir: str = ".", backend: str = "auto"):
+def cmd_run(state_path: str, workspace_dir: str = ".", backend: str = "auto", on_task_complete_script: str = ""):
     """运行工作流"""
     from workflow_state_store import get_store
     store = get_store()
@@ -235,7 +235,18 @@ def cmd_run(state_path: str, workspace_dir: str = ".", backend: str = "auto"):
         if engine == "LangGraph":
             result = run_workflow(ws, state_path, workspace_dir)
         else:
-            loop = WorkflowLoop(workspace_dir, backend=backend)
+            on_complete_fn = None
+            if on_task_complete_script:
+                import subprocess as _sp
+                _notify_script = on_task_complete_script  # capture for closure
+                def on_complete_fn(session_name: str) -> None:
+                    r = _sp.run(["bash", _notify_script, session_name],
+                                capture_output=True, text=True, timeout=30)
+                    if r.returncode == 0:
+                        print(f"  [notify] sent for {session_name}")
+                    else:
+                        print(f"  [notify] failed for {session_name}: {r.stderr[:100]}")
+            loop = WorkflowLoop(workspace_dir, backend=backend, on_task_complete=on_complete_fn)
             result = loop.run(state_path)
     except Exception as e:
         print(f"\nError during execution: {type(e).__name__}: {e}")
@@ -334,10 +345,11 @@ def main():
 
     if cmd == "run":
         if len(sys.argv) < 3:
-            print("Usage: orchestrator-cli run <state.json> [--workspace <dir>] [--backend tmux|subagent|auto]")
+            print("Usage: orchestrator-cli run <state.json> [--workspace <dir>] [--backend tmux|subagent|auto] [--on-task-complete <script>]")
             sys.exit(1)
         workspace = "."
         backend = os.environ.get("OPENCLAW_DEFAULT_BACKEND", "auto")
+        on_complete_script = ""
         if "--workspace" in sys.argv:
             idx = sys.argv.index("--workspace")
             if idx + 1 < len(sys.argv):
@@ -346,7 +358,11 @@ def main():
             idx = sys.argv.index("--backend")
             if idx + 1 < len(sys.argv):
                 backend = sys.argv[idx + 1]
-        cmd_run(sys.argv[2], workspace, backend)
+        if "--on-task-complete" in sys.argv:
+            idx = sys.argv.index("--on-task-complete")
+            if idx + 1 < len(sys.argv):
+                on_complete_script = sys.argv[idx + 1]
+        cmd_run(sys.argv[2], workspace, backend, on_complete_script)
         return
 
     if cmd == "resume":

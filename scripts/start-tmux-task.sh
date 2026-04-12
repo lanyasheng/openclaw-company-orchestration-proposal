@@ -19,7 +19,7 @@ ORCH_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TMUX_SYNC_SCRIPT="${ORCH_DIR}/scripts/sync-tmux-observability.py"
 
 # 会修改代码的任务类型 → 需要 worktree 隔离
-CODING_TYPES="bugfix feat crash comp fix"
+CODING_TYPES="${OPENCLAW_CODING_TYPES:-bugfix feat crash comp fix}"
 
 # ──── Argument Parsing ────────────────────────────────────────────────
 LABEL=""
@@ -62,6 +62,8 @@ fi
 
 SESSION="${SESSION_PREFIX}-${LABEL}"
 STATE_FILE="${STATE_DIR}/${SESSION}-state.json"
+# Trace ID: 每次 dispatch 生成唯一 ID，贯穿整个生命周期
+TRACE_ID=$(python3 -c "import uuid; print(uuid.uuid4().hex[:16])" 2>/dev/null || head -c 16 /dev/urandom | xxd -p | head -c 16)
 
 # ──── Precondition Checks ────────────────────────────────────────────
 command -v tmux &>/dev/null || { echo "Error: tmux not found" >&2; exit 1; }
@@ -151,12 +153,18 @@ if $NEEDS_WORKTREE && [[ -d "$WORKDIR/.git" || -f "$WORKDIR/.git" ]]; then
   WORKTREE_DIR="${WORKDIR}/.claude/worktrees/${SESSION}"
   BRANCH_NAME="dispatch/${LABEL}"
 
+  # Worktree base branch: configurable via env, defaults to origin/develop
+  BASE_BRANCH="${OPENCLAW_WORKTREE_BASE:-origin/develop}"
+  # Extract the short ref name for local fallback (e.g. "origin/develop" → "develop")
+  BASE_SHORT="${BASE_BRANCH##*/}"
+
   if [[ -d "$WORKTREE_DIR" ]]; then
     echo "Worktree already exists: $WORKTREE_DIR"
   else
-    echo "Creating worktree: $BRANCH_NAME → $WORKTREE_DIR"
-    git -C "$WORKDIR" worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" HEAD 2>/dev/null || \
-    git -C "$WORKDIR" worktree add "$WORKTREE_DIR" "$BRANCH_NAME" 2>/dev/null || \
+    git -C "$WORKDIR" fetch origin "$BASE_SHORT" --quiet 2>/dev/null || true
+    echo "Creating worktree: $BRANCH_NAME → $WORKTREE_DIR (base: $BASE_BRANCH)"
+    git -C "$WORKDIR" worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" "$BASE_BRANCH" 2>/dev/null || \
+    git -C "$WORKDIR" worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" "$BASE_SHORT" 2>/dev/null || \
     { echo "Warning: Failed to create worktree, using main workdir" >&2; NEEDS_WORKTREE=false; }
   fi
 
@@ -172,7 +180,7 @@ fi
 if $AUTO_EXIT; then
   mkdir -p "$HOME/.openclaw/shared-context/sessions/${SESSION}"
   echo "true" > "$HOME/.openclaw/shared-context/sessions/${SESSION}/auto-exit"
-  echo "$(date '+%H:%M:%S') start-tmux-task AUTO_EXIT=true SESSION=${SESSION} marker=$(ls "$HOME/.openclaw/shared-context/sessions/${SESSION}/auto-exit" 2>/dev/null && echo EXISTS || echo MISSING)" >> /tmp/on-stop-debug.log
+  [[ -n "${DEBUG:-}" ]] && echo "$(date '+%H:%M:%S') start-tmux-task AUTO_EXIT=true SESSION=${SESSION}" >> $HOME/.openclaw/logs/debug.log
 fi
 
 # ──── Build Claude Command (unified interactive) ─────────────────────
@@ -191,7 +199,7 @@ EXTRA=""
 if [[ -n "$MODEL_ARG" ]]; then EXTRA="$EXTRA --model $MODEL_ARG"; fi
 
 # Export NC_SESSION + NC_PROJECT_DIR so hooks (Stop/SessionEnd) can identify this session
-CC_CMD="cd '${WORK_DIR}' && export NC_SESSION='${SESSION}' && export NC_PROJECT_DIR='${WORKDIR}' && export CLAUDE_CODE_DISABLE_MOUSE=1 && export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 && claude --permission-mode bypassPermissions --name '${SESSION}'${EXTRA}"
+CC_CMD="cd '${WORK_DIR}' && export NC_SESSION='${SESSION}' && export NC_PROJECT_DIR='${WORKDIR}' && export DISPATCH_TRACE_ID='${TRACE_ID}' && export CLAUDE_CODE_DISABLE_MOUSE=1 && export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 && claude --permission-mode bypassPermissions --name '${SESSION}'${EXTRA}"
 
 # ──── Create tmux Session ────────────────────────────────────────────
 if ! tmux new-session -d -s "$SESSION" "$CC_CMD"; then
@@ -226,22 +234,16 @@ rm -f "$PROMPT_FILE"
 # ──── Write State Files ──────────────────────────────────────────────
 NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-# State file (atomic write, Pattern 6)
+# State file (atomic write, Pattern 6 — jq for safe JSON escaping)
 _STATE_TMP="${STATE_FILE}.${$}.tmp"
-cat > "$_STATE_TMP" <<EOJSON
-{
-  "session": "$SESSION",
-  "label": "$LABEL",
-  "mode": "interactive",
-  "workdir": "$WORKDIR",
-  "status": "started",
-  "timeout": $TIMEOUT,
-  "started_at": "$NOW",
-  "updated_at": "$NOW",
-  "pid": $$
-}
-EOJSON
-mv "$_STATE_TMP" "$STATE_FILE"
+jq -n \
+  --arg s "$SESSION" --arg l "$LABEL" --arg td "$LABEL" \
+  --arg t "${TYPE:-task}" --arg m "interactive" --arg w "$WORKDIR" \
+  --arg st "started" --argjson to "$TIMEOUT" \
+  --arg sa "$NOW" --arg ua "$NOW" --argjson p "$$" \
+  --arg tr "$TRACE_ID" --arg ptr "${PATROL_TRACE_ID:-}" \
+  '{session:$s,label:$l,task_desc:$td,type:$t,mode:$m,workdir:$w,status:$st,timeout:$to,started_at:$sa,updated_at:$ua,pid:$p,trace_id:$tr,parent_trace_id:$ptr}' \
+  > "$_STATE_TMP" && mv "$_STATE_TMP" "$STATE_FILE"
 
 # Progress file (atomic write, Pattern 6)
 _PROG_TMP="${PROGRESS_DIR}/${SESSION}.${$}.tmp"
@@ -269,6 +271,14 @@ echo "  Worktree: $WORKTREE_DIR"
 fi
 echo "  State:    $STATE_FILE"
 echo "  Progress: $PROGRESS_DIR/${SESSION}.json"
+echo "  Trace:    $TRACE_ID"
 echo "  Attach:   tmux attach -t $SESSION"
+
+# ──── Dispatch Event (structured JSONL) ──────────────────────────────
+EVENTS_LOG="$LOG_DIR/dispatch-events.jsonl"
+jq -n --arg ts "$NOW" --arg tr "$TRACE_ID" --arg s "$SESSION" \
+  --arg ev "dispatch_started" --arg t "${TYPE:-task}" --arg w "$WORKDIR" \
+  '{ts:$ts,trace_id:$tr,session:$s,event:$ev,type:$t,workdir:$w}' \
+  >> "$EVENTS_LOG" 2>/dev/null || true
 
 exit 0

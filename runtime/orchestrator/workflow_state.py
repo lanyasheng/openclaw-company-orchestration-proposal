@@ -79,7 +79,7 @@ class TaskEntry:
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     error: Optional[str] = None
-    max_retries: int = 0
+    max_retries: int = -1  # -1 = use BatchExecutor.default_max_retries
     retry_count: int = 0
     callback_result: Optional[Dict[str, Any]] = None
     execution_metadata: Dict[str, Any] = field(default_factory=dict)
@@ -129,7 +129,7 @@ class TaskEntry:
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
             error=data.get("error"),
-            max_retries=int(data.get("max_retries", 0)),
+            max_retries=int(data.get("max_retries", -1)),
             retry_count=int(data.get("retry_count", 0)),
             callback_result=data.get("callback_result"),
             execution_metadata=dict(data.get("execution_metadata") or {}),
@@ -320,7 +320,7 @@ def create_workflow(
                     started_at=td.get("started_at"),
                     completed_at=td.get("completed_at"),
                     error=td.get("error"),
-                    max_retries=int(td.get("max_retries", 0)),
+                    max_retries=int(td.get("max_retries", -1)),
                 )
             )
         batches.append(

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import subprocess
@@ -86,10 +88,8 @@ class BatchExecutor:
                 task.subagent_task_id = handle
             except (OSError, RuntimeError, subprocess.SubprocessError) as e:
                 logger.exception("failed to execute task %s", task.task_id)
-                task.status = "failed"
-                task.error = str(e)
-                task.completed_at = _iso_now()
-                self._sync_to_state_machine(task.task_id, batch.batch_id, "failed")
+                # Route through retry logic — capacity-full should not permanently fail
+                self._apply_retry_or_fail(task, batch, str(e))
 
     def _batch_elapsed_seconds(self, batch: BatchEntry) -> float:
         """Return seconds since batch started, or 0 if not started."""
@@ -116,6 +116,11 @@ class BatchExecutor:
         # Capacity-full is a transient condition — reset to pending without
         # consuming retry budget so queued tasks aren't falsely exhausted.
         if self._is_capacity_error(error):
+            # Clean stale completion marker to prevent retry short-circuit
+            if task.subagent_task_id:
+                for suffix in (".json", ".review-posted"):
+                    marker = Path.home() / ".openclaw/shared-context/results" / f"{task.subagent_task_id}{suffix}"
+                    marker.unlink(missing_ok=True)
             task.status = "pending"
             task.error = None
             task.subagent_task_id = None
@@ -127,6 +132,11 @@ class BatchExecutor:
         # max_retries: -1 = use default, 0 = no retries, >0 = that many retries
         effective_max = task.max_retries if task.max_retries >= 0 else self.default_max_retries
         if task.retry_count < effective_max:
+            # Clean stale completion marker to prevent retry short-circuit
+            if task.subagent_task_id:
+                for suffix in (".json", ".review-posted"):
+                    marker = Path.home() / ".openclaw/shared-context/results" / f"{task.subagent_task_id}{suffix}"
+                    marker.unlink(missing_ok=True)
             task.retry_count += 1
             task.status = "pending"
             task.error = None
@@ -221,15 +231,19 @@ class BatchExecutor:
                     task, batch, tr.error or tr.status,
                 )
 
-        has_running = any(t.status == "running" for t in batch.tasks)
-        has_pending = any(t.status == "pending" for t in batch.tasks)
-        if not has_running and has_pending:
-            self._redispatch_pending(
-                [t for t in batch.tasks if t.status == "pending"], batch
-            )
+        running_count = sum(1 for t in batch.tasks if t.status == "running")
+        pending_tasks = [t for t in batch.tasks if t.status == "pending"]
+
+        # Slot-based dispatch: fill freed slots immediately instead of
+        # waiting for the entire batch to finish.  MAX_SESSIONS is the
+        # capacity cap enforced by start-tmux-task.sh.
+        max_slots = int(os.environ.get("OPENCLAW_MAX_TMUX_SESSIONS", "6"))
+        free_slots = max(0, max_slots - running_count)
+        if free_slots > 0 and pending_tasks:
+            self._redispatch_pending(pending_tasks[:free_slots], batch)
             return False
 
-        all_done = not has_running and not has_pending
+        all_done = running_count == 0 and not pending_tasks
         if all_done and batch.status == "running":
             batch.status = "completed"
             batch.completed_at = _iso_now()
