@@ -78,8 +78,9 @@ AlertSeverity = Literal[
 # 告警通道
 DeliveryChannel = Literal[
     "file",              # 文件 mock (测试用)
-    "discord",           # Discord 消息
-    "openclaw_native",   # OpenClaw 原生消息
+    "dingtalk",          # 钉钉群机器人 webhook
+    "discord",           # Discord 消息 (fallback to file)
+    "openclaw_native",   # OpenClaw 原生消息 (fallback to file)
 ]
 
 # 告警状态目录
@@ -429,6 +430,8 @@ class AlertDispatcher:
         
         if self.channel == "file":
             return self._deliver_to_file(payload)
+        elif self.channel == "dingtalk":
+            return self._deliver_to_dingtalk(payload)
         elif self.channel == "discord":
             return self._deliver_to_discord(payload)
         elif self.channel == "openclaw_native":
@@ -470,24 +473,87 @@ class AlertDispatcher:
                 error=str(e),
             )
     
+    def _deliver_to_dingtalk(self, payload: AlertPayload) -> DeliveryResult:
+        """发送到钉钉群机器人 webhook"""
+        import hmac
+        import hashlib as _hashlib
+        import base64
+        import urllib.parse
+        import urllib.request
+        import time as _time
+
+        config_path = Path.home() / ".openclaw" / "dingtalk-config.json"
+        if not config_path.exists():
+            return self._deliver_to_file(payload)  # fallback
+
+        try:
+            config = json.loads(config_path.read_text())
+            webhook_url = config["webhookUrl"]
+            secret = config.get("secret", "")
+
+            # Sign if secret is present
+            if secret:
+                timestamp = str(int(_time.time() * 1000))
+                string_to_sign = f"{timestamp}\n{secret}"
+                hmac_code = hmac.new(
+                    secret.encode("utf-8"),
+                    string_to_sign.encode("utf-8"),
+                    digestmod=_hashlib.sha256,
+                ).digest()
+                sign = urllib.parse.quote_plus(base64.b64encode(hmac_code).decode())
+                webhook_url = f"{webhook_url}&timestamp={timestamp}&sign={sign}"
+
+            # Build markdown message
+            severity_icon = {"info": "✅", "warning": "⚠️", "error": "❌", "critical": "🔴"}.get(
+                payload.severity, "ℹ️"
+            )
+            title = f"{severity_icon} [{payload.alert_type}] {payload.task_id}"
+            body = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": title,
+                    "text": f"### {title}\n\n{payload.human_message[:2000]}",
+                },
+            }
+
+            req = urllib.request.Request(
+                webhook_url,
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp_data = json.loads(resp.read())
+
+            if resp_data.get("errcode") == 0:
+                # Also write to file for audit
+                self._deliver_to_file(payload)
+                return DeliveryResult(
+                    status="sent",
+                    channel="dingtalk",
+                    message_id=str(resp_data.get("errmsg", "")),
+                )
+            else:
+                return DeliveryResult(
+                    status="failed",
+                    channel="dingtalk",
+                    error=f"DingTalk API error: {resp_data}",
+                )
+        except Exception as e:
+            # Fallback to file on any error
+            self._deliver_to_file(payload)
+            return DeliveryResult(
+                status="failed",
+                channel="dingtalk",
+                error=f"DingTalk delivery failed, wrote to file: {e}",
+            )
+
     def _deliver_to_discord(self, payload: AlertPayload) -> DeliveryResult:
-        """
-        发送到 Discord
-        
-        当前实现：写入文件作为 mock，后续可集成真实 Discord API
-        """
-        # TODO: 集成真实 Discord API
-        # 当前 fallback 到文件模式
+        """发送到 Discord — fallback 到文件"""
         return self._deliver_to_file(payload)
-    
+
     def _deliver_to_openclaw(self, payload: AlertPayload) -> DeliveryResult:
-        """
-        发送到 OpenClaw 原生消息
-        
-        当前实现：写入文件作为 mock，后续可集成 OpenClaw message API
-        """
-        # TODO: 集成 OpenClaw message API
-        # 当前 fallback 到文件模式
+        """发送到 OpenClaw 原生消息 — fallback 到文件"""
         return self._deliver_to_file(payload)
     
     def dispatch_completion_alert(

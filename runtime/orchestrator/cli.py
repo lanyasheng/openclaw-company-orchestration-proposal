@@ -7,6 +7,10 @@ DAG 工作流命令:
   orchestrator-cli run <state.json> [--workspace .]   运行工作流
   orchestrator-cli resume <state.json>                从中断处恢复
   orchestrator-cli show <state.json>                  查看工作流状态
+  orchestrator-cli retry-task <state.json> <task_id>  重试单个失败任务
+
+运营命令:
+  orchestrator-cli all-status                         跨路径统一状态视图
 
 回调驱动命令:
   orchestrator-cli status <task_id>                   查询任务状态
@@ -328,6 +332,154 @@ def cmd_show(state_path: str):
         print(f"  {ws.context_summary[:200]}...")
 
 
+def cmd_all_status():
+    """跨路径统一状态视图：DAG 工作流 + 回调任务 + tmux sessions"""
+    from pathlib import Path
+    import subprocess
+
+    home = Path.home()
+    sections = []
+
+    # 1. DAG workflows
+    wf_dir = home / ".openclaw/shared-context/workflows"
+    wf_files = sorted(wf_dir.glob("workflow_state_*.json")) if wf_dir.is_dir() else []
+    # Also check orchestrator working dir
+    orch_dir = home / ".openclaw/orchestrator"
+    if orch_dir.is_dir():
+        wf_files.extend(sorted(orch_dir.glob("workflow_state_*.json")))
+
+    active_wf = []
+    for wf in wf_files:
+        try:
+            from workflow_state import load_workflow_state
+            ws = load_workflow_state(wf)
+            if ws.status in ("running", "pending", "gate_blocked"):
+                running = sum(1 for b in ws.batches for t in b.tasks if t.status == "running")
+                pending = sum(1 for b in ws.batches for t in b.tasks if t.status == "pending")
+                failed = sum(1 for b in ws.batches for t in b.tasks if t.status == "failed")
+                active_wf.append(f"  {ws.workflow_id} [{ws.status}] "
+                                 f"running={running} pending={pending} failed={failed} "
+                                 f"updated={ws.updated_at}")
+        except Exception:
+            pass
+
+    if active_wf:
+        sections.append("DAG Workflows:\n" + "\n".join(active_wf))
+    else:
+        sections.append("DAG Workflows: none active")
+
+    # 2. Callback-driven tasks
+    job_dir = home / ".openclaw/shared-context/job-status"
+    cb_running, cb_pending = [], []
+    if job_dir.is_dir():
+        for f in sorted(job_dir.glob("*.json")):
+            if f.name.startswith("batch-"):
+                continue
+            try:
+                data = json.loads(f.read_text())
+                state = data.get("state", "")
+                if state in ("running", "pending", "callback_received"):
+                    entry = f"  {data['task_id']} [{state}] batch={data.get('batch_id', '?')}"
+                    (cb_running if state == "running" else cb_pending).append(entry)
+            except Exception:
+                pass
+    cb_items = cb_running + cb_pending
+    if cb_items:
+        sections.append(f"Callback Tasks ({len(cb_items)} active):\n" + "\n".join(cb_items))
+    else:
+        sections.append("Callback Tasks: none active")
+
+    # 3. Live tmux sessions
+    prefix = os.environ.get("OPENCLAW_SESSION_PREFIX", "oc")
+    tmux_lines = []
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name} #{session_created}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                if line and line.startswith(prefix + "-"):
+                    tmux_lines.append(f"  {line}")
+    except Exception:
+        pass
+
+    if tmux_lines:
+        sections.append(f"Tmux Sessions ({len(tmux_lines)}):\n" + "\n".join(tmux_lines))
+    else:
+        sections.append("Tmux Sessions: none")
+
+    # 4. Observability cards (active only)
+    cards_dir = home / ".openclaw/shared-context/observability/cards"
+    active_cards = []
+    if cards_dir.is_dir():
+        for f in sorted(cards_dir.glob("*.json")):
+            try:
+                data = json.loads(f.read_text())
+                stage = data.get("stage", "")
+                if stage in ("planning", "dispatch", "running", "idle", "callback_received"):
+                    active_cards.append(
+                        f"  {data.get('task_id', '?')} [{stage}] "
+                        f"owner={data.get('owner', '?')} executor={data.get('executor', '?')}")
+            except Exception:
+                pass
+
+    if active_cards:
+        sections.append(f"Observability Cards ({len(active_cards)} active):\n" + "\n".join(active_cards))
+
+    print("\n\n".join(sections))
+
+
+def cmd_retry_task(state_path: str, task_id: str):
+    """重试工作流中单个失败的任务"""
+    from workflow_state import load_workflow_state, save_workflow_state
+    from datetime import datetime, timezone
+
+    ws = load_workflow_state(state_path)
+
+    # Find the task
+    target_task = None
+    target_batch = None
+    for batch in ws.batches:
+        for task in batch.tasks:
+            if task.task_id == task_id:
+                target_task = task
+                target_batch = batch
+                break
+
+    if target_task is None:
+        print(f"Error: task '{task_id}' not found in {state_path}")
+        sys.exit(1)
+
+    if target_task.status not in ("failed", "timed_out"):
+        print(f"Error: task '{task_id}' is '{target_task.status}', not failed/timed_out")
+        sys.exit(1)
+
+    # Reset the task
+    target_task.status = "pending"
+    target_task.error = None
+    target_task.completed_at = None
+    target_task.subagent_task_id = None
+    target_task.retry_count += 1
+
+    # If the batch was marked failed, reset it to running
+    if target_batch.status == "failed":
+        target_batch.status = "running"
+        target_batch.completed_at = None
+
+    # If the workflow was marked failed, reset to running
+    if ws.status == "failed":
+        ws.status = "running"
+
+    ws.updated_at = datetime.now(timezone.utc).isoformat()
+    save_workflow_state(ws, state_path)
+
+    print(f"Task '{task_id}' reset to pending (retry #{target_task.retry_count})")
+    print(f"Batch '{target_batch.batch_id}' status: {target_batch.status}")
+    print(f"Workflow status: {ws.status}")
+    print(f"\nResume with: orchestrator-cli resume {state_path}")
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -382,6 +534,17 @@ def main():
             print("Usage: orchestrator-cli show <state.json>")
             sys.exit(1)
         cmd_show(sys.argv[2])
+        return
+
+    if cmd == "retry-task":
+        if len(sys.argv) < 4:
+            print("Usage: orchestrator-cli retry-task <state.json> <task_id>")
+            sys.exit(1)
+        cmd_retry_task(sys.argv[2], sys.argv[3])
+        return
+
+    if cmd == "all-status":
+        cmd_all_status()
         return
 
     # Callback-driven commands
