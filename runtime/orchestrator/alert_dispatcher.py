@@ -305,7 +305,7 @@ class AlertDispatcher:
     
     def __init__(
         self,
-        channel: DeliveryChannel = "file",
+        channel: DeliveryChannel = None,
         dry_run: bool = False,
         throttle_window_seconds: int = DEFAULT_THROTTLE_WINDOW_SECONDS,
         max_alerts_per_window: int = DEFAULT_MAX_ALERTS_PER_WINDOW,
@@ -323,6 +323,8 @@ class AlertDispatcher:
             timeout_threshold_minutes: 超时阈值（分钟）
             heartbeat_timeout_minutes: 心跳超时阈值（分钟）
         """
+        if channel is None:
+            channel = os.environ.get("OPENCLAW_ALERT_CHANNEL", "dingtalk")
         self.channel = channel
         self.dry_run = dry_run
         self.throttle_window_seconds = throttle_window_seconds

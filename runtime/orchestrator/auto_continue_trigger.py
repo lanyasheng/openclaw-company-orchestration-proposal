@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -232,6 +232,41 @@ class AutoContinueTrigger:
         # 默认：需要 gate
         return "gate_required", "unclear_state_requires_gate"
     
+    def _check_rate_limit(self) -> tuple[bool, str]:
+        """Check auto-continue rate limit to prevent runaway loops.
+
+        Limits: MAX_PER_HOUR (default 20) and MAX_PER_DAY (default 100).
+        Counts recent decisions from the decisions directory.
+        """
+        max_per_hour = int(os.environ.get("OPENCLAW_MAX_CONTINUE_PER_HOUR", "20"))
+        max_per_day = int(os.environ.get("OPENCLAW_MAX_CONTINUE_PER_DAY", "100"))
+
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        hour_ago = now - timedelta(hours=1)
+        day_ago = now - timedelta(days=1)
+
+        hour_count = 0
+        day_count = 0
+        from completion_receipt import COMPLETION_RECEIPT_DIR
+        decisions_dir = COMPLETION_RECEIPT_DIR
+        if decisions_dir.is_dir():
+            for f in decisions_dir.glob("*.json"):
+                try:
+                    mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
+                    if mtime > day_ago:
+                        day_count += 1
+                    if mtime > hour_ago:
+                        hour_count += 1
+                except OSError:
+                    pass
+
+        if hour_count >= max_per_hour:
+            return True, f"rate_limit_hourly_{hour_count}/{max_per_hour}"
+        if day_count >= max_per_day:
+            return True, f"rate_limit_daily_{day_count}/{max_per_day}"
+        return False, ""
+
     def evaluate(
         self,
         receipt_id: str,
@@ -242,6 +277,15 @@ class AutoContinueTrigger:
             return AutoContinueDecision(
                 decision="gate_required",
                 reason="auto_continue_disabled_by_env",
+                source_receipt_id=receipt_id,
+            )
+
+        # Rate limit check — prevent runaway continuation loops
+        rate_limited, rate_reason = self._check_rate_limit()
+        if rate_limited:
+            return AutoContinueDecision(
+                decision="continue_blocked",
+                reason=rate_reason,
                 source_receipt_id=receipt_id,
             )
         
