@@ -21,11 +21,14 @@ bridge_consumer.py — Universal Partial-Completion Continuation Framework v8
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+
+logger = logging.getLogger(__name__)
 
 from sessions_spawn_request import (
     SessionsSpawnRequest,
@@ -392,7 +395,8 @@ class BridgeConsumedArtifact:
                     execution_metadata={"consumed_id": self.consumed_id, "consumer_status": self.consumer_status},
                 )
         except Exception:
-            pass
+            logger.error("Failed to update task store for consumed artifact %s — dedup may fail on restart",
+                         self.consumed_id, exc_info=True)
         return artifact_file
     
     def get_linkage(self) -> Dict[str, str]:

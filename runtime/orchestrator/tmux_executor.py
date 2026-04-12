@@ -131,7 +131,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
                         try:
                             self._on_complete(session_name)
                         except Exception:
-                            logger.debug("on_complete callback failed for %s", session_name)
+                            logger.warning("on_complete callback failed for %s", session_name, exc_info=True)
                     self._send_exit(session_name)
                     self._exit_sent.add(session_name)
                     self._write_completion_marker(session_name)
@@ -202,7 +202,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
                 tmp.write_text(json.dumps(data))
                 tmp.rename(result_json)
             except Exception:
-                logger.debug("failed to write completion marker for %s", session_name)
+                logger.warning("failed to write completion marker for %s", session_name, exc_info=True)
 
     def cancel(self, handle: str) -> bool:
         """Kill the tmux session."""
@@ -239,9 +239,10 @@ class TmuxTaskExecutor(TaskExecutorBase):
         except subprocess.TimeoutExpired:
             logger.warning("tmux kill-session timed out during cleanup for %s", session_name)
 
-        # 4. Remove session from in-memory map to avoid memory leak
+        # 4. Remove session from in-memory maps to avoid memory leak
         self._task_session_map.pop(session_name, None)
         self._start_times.pop(session_name, None)
+        self._exit_sent.discard(session_name)
 
         logger.info("cleanup completed for %s", session_name)
 
@@ -275,7 +276,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
                     )
                     return TaskResult(status="completed", output=str(summary))
         except Exception as e:
-            logger.debug("JSONL log check failed for %s: %s", session_name, e)
+            logger.warning("JSONL log check failed for %s: %s", session_name, e)
         return None
 
     def _check_orch_bridge(self, session_name: str) -> TaskResult:

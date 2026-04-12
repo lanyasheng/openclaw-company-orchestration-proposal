@@ -506,8 +506,6 @@ class SubagentExecutor:
         else:
             cmd = [
                 "bash", str(runner_script),
-                task,
-                self.config.label,
             ]
 
         child_env = os.environ.copy()
@@ -515,6 +513,8 @@ class SubagentExecutor:
         child_env[SPAWN_DEPTH_ENV_KEY] = str(current_depth + 1)
         child_env["OPENCLAW_SUBAGENT_STATE_DIR"] = str(SUBAGENT_STATE_DIR)
         child_env["OPENCLAW_TASK_ID"] = task_id
+        child_env["OPENCLAW_TASK_PROMPT"] = task
+        child_env["OPENCLAW_TASK_LABEL"] = self.config.label
 
         try:
             process = subprocess.Popen(

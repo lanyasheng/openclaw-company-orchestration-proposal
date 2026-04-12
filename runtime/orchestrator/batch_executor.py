@@ -179,11 +179,9 @@ class BatchExecutor:
                             self._executor.cancel(task.subagent_task_id)
                             self._executor.cleanup(task.subagent_task_id)
                         except Exception:
-                            logger.debug("cancel/cleanup failed for %s on timeout", task.subagent_task_id)
-                    task.status = "timed_out"
-                    task.error = f"batch hard timeout after {int(elapsed)}s"
-                    task.completed_at = _iso_now()
-                    # Attempt retry for timed-out tasks
+                            logger.warning("cancel/cleanup failed for %s on timeout", task.subagent_task_id, exc_info=True)
+                    # Route through retry logic — do not pre-set timed_out
+                    # as _apply_retry_or_fail may reset to pending for retry
                     self._apply_retry_or_fail(
                         task, batch,
                         f"batch hard timeout after {int(elapsed)}s",

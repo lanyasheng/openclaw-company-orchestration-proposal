@@ -60,6 +60,13 @@ if [[ -z "$LABEL" || -z "$WORKDIR" || -z "$TASK" ]]; then
   exit 1
 fi
 
+# ──── Input Validation ────────────────────────────────────────────────
+# LABEL is used in session names, file paths, and shell commands — must be safe
+if [[ ! "$LABEL" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+  echo "Error: LABEL contains invalid characters (allowed: a-zA-Z0-9._-): $LABEL" >&2
+  exit 1
+fi
+
 SESSION="${SESSION_PREFIX}-${LABEL}"
 STATE_FILE="${STATE_DIR}/${SESSION}-state.json"
 # Trace ID: 每次 dispatch 生成唯一 ID，贯穿整个生命周期
@@ -68,6 +75,7 @@ TRACE_ID=$(python3 -c "import uuid; print(uuid.uuid4().hex[:16])" 2>/dev/null ||
 # ──── Precondition Checks ────────────────────────────────────────────
 command -v tmux &>/dev/null || { echo "Error: tmux not found" >&2; exit 1; }
 command -v claude &>/dev/null || { echo "Error: claude CLI not found" >&2; exit 1; }
+command -v jq &>/dev/null || { echo "Error: jq not found (required for state file creation)" >&2; exit 1; }
 [[ -d "$WORKDIR" ]] || { echo "Error: workdir not found: $WORKDIR" >&2; exit 1; }
 
 # Session 存在检查

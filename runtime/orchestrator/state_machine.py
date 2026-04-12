@@ -8,12 +8,16 @@
                          timeout/failed → (retry or abort)
 """
 
+import fcntl
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from enum import Enum
+
+_SAFE_ID_RE = re.compile(r'^[a-zA-Z0-9._-]+$')
 
 
 class TaskState(str, Enum):
@@ -37,13 +41,21 @@ def _ensure_state_dir():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _validate_id(value: str, label: str = "id") -> None:
+    """Validate that an ID is safe for use in file paths."""
+    if not _SAFE_ID_RE.match(value):
+        raise ValueError(f"Invalid {label}: {value!r} (allowed: a-zA-Z0-9._-)")
+
+
 def _task_file(task_id: str) -> Path:
     """返回任务状态文件路径"""
+    _validate_id(task_id, "task_id")
     return STATE_DIR / f"{task_id}.json"
 
 
 def _batch_file(batch_id: str) -> Path:
     """返回 batch 汇总文件路径"""
+    _validate_id(batch_id, "batch_id")
     return STATE_DIR / f"batch-{batch_id}-summary.md"
 
 
@@ -118,29 +130,37 @@ def update_state(
     task_file = _task_file(task_id)
     if not task_file.exists():
         raise FileNotFoundError(f"Task {task_id} not found")
-    
-    with open(task_file, "r") as f:
-        state = json.load(f)
-    
-    state["state"] = new_state.value
-    
-    if result is not None:
-        state["result"] = result
-    
-    if next_task_ids is not None:
-        state["next_task_ids"] = next_task_ids
-    
-    if new_state == TaskState.CALLBACK_RECEIVED:
-        state["callback_received_at"] = _iso_now()
-    elif new_state in (TaskState.FINAL_CLOSED, TaskState.TIMEOUT, TaskState.FAILED):
-        state["completed_at"] = _iso_now()
-    
-    # 原子写入
-    tmp_file = task_file.with_suffix(".tmp")
-    with open(tmp_file, "w") as f:
-        json.dump(state, f, indent=2)
-    tmp_file.replace(task_file)
-    
+
+    lock_file = task_file.with_suffix(".lock")
+    with open(lock_file, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            with open(task_file, "r") as f:
+                state = json.load(f)
+
+            state["state"] = new_state.value
+
+            if result is not None:
+                state["result"] = result
+
+            if next_task_ids is not None:
+                state["next_task_ids"] = next_task_ids
+
+            if new_state == TaskState.CALLBACK_RECEIVED:
+                state["callback_received_at"] = _iso_now()
+            elif new_state in (TaskState.FINAL_CLOSED, TaskState.TIMEOUT, TaskState.FAILED):
+                state["completed_at"] = _iso_now()
+
+            # 原子写入
+            tmp_file = task_file.with_suffix(".tmp")
+            with open(tmp_file, "w") as f:
+                json.dump(state, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp_file.replace(task_file)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
     return state
 
 
@@ -353,26 +373,32 @@ def retry_task(task_id: str) -> Dict[str, Any]:
         更新后的任务状态
     """
     _ensure_state_dir()
-    
+
     task_file = _task_file(task_id)
     if not task_file.exists():
         raise FileNotFoundError(f"Task {task_id} not found")
-    
-    with open(task_file, "r") as f:
-        state = json.load(f)
-    
-    state["state"] = TaskState.RETRYING.value
-    state["retry_count"] = state.get("retry_count", 0) + 1
-    state["completed_at"] = None
-    
-    # 原子写入
-    tmp_file = task_file.with_suffix(".tmp")
-    with open(tmp_file, "w") as f:
-        json.dump(state, f, indent=2)
-    tmp_file.replace(task_file)
-    
-    # 回到 pending
-    return update_state(task_id, TaskState.PENDING)
+
+    lock_file = task_file.with_suffix(".lock")
+    with open(lock_file, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            with open(task_file, "r") as f:
+                state = json.load(f)
+
+            state["state"] = TaskState.PENDING.value
+            state["retry_count"] = state.get("retry_count", 0) + 1
+            state["completed_at"] = None
+
+            tmp_file = task_file.with_suffix(".tmp")
+            with open(tmp_file, "w") as f:
+                json.dump(state, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp_file.replace(task_file)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
+    return state
 
 
 # CLI 入口
