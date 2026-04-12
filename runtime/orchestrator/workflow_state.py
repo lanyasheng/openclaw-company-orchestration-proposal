@@ -8,7 +8,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from core.validation import validate_required, validate_enum_value, ValidationError
+class ValidationError(ValueError):
+    """Raised when input data fails validation."""
+    pass
+
+def validate_required(data: dict, fields: list) -> list:
+    """Return list of missing required fields."""
+    return [f for f in fields if f not in data or data[f] is None]
+
+def validate_enum_value(value, allowed: list, field_name: str = "value") -> None:
+    """Raise ValidationError if value not in allowed list."""
+    if value not in allowed:
+        raise ValidationError(f"{field_name} must be one of {allowed}, got {value!r}")
 
 _log = _logging.getLogger(__name__)
 

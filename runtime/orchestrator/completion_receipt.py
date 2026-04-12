@@ -604,47 +604,41 @@ class CompletionReceiptKernel:
             metadata=metadata,
         )
         
-        # ========== Observability Batch 2: Completion Translation Hook ==========
-        # 强制 completion receipt 包含翻译汇报（audit-only 模式）
+        # ========== Completion Translation Hook ==========
+        # Modes: audit (log only), warn (log + metadata), enforce (require translation)
+        _hook_mode = os.environ.get("OPENCLAW_HOOK_ENFORCE_MODE", "warn")
         try:
             from hooks.hook_integrations import enforce_completion_translation, log_translation_violation
-            
+
             receipt_dict = artifact.to_dict()
             task_context = {
                 "scenario": metadata.get("scenario", ""),
                 "label": metadata.get("label", execution.metadata.get("label", "")),
                 "task_id": execution.task_id,
             }
-            
+
             translation_required, translation_reason, translation = enforce_completion_translation(
                 receipt_dict, task_context
             )
-            
+
             if translation_required and translation:
-                # 将翻译添加到 metadata
                 metadata["human_translation"] = translation
                 metadata["translation_enforced"] = True
-                metadata["translation_reason"] = translation_reason
             elif translation_required and not translation:
-                # 记录违规
                 log_translation_violation(receipt_id, execution.task_id, translation_reason, metadata)
                 metadata["translation_violation"] = {
                     "required": True,
                     "reason": translation_reason,
-                    "violation_logged": True,
+                    "enforce_mode": _hook_mode,
                 }
-            else:
-                metadata["translation_check"] = {
-                    "required": False,
-                    "reason": translation_reason,
-                }
+                if _hook_mode == "enforce":
+                    logger.warning("completion receipt missing translation for %s: %s",
+                                   execution.task_id, translation_reason)
         except ImportError:
-            # Hook 模块不可用时不阻断主流程
             pass
         except Exception as e:
-            # Hook 执行失败，记录错误但不阻止 receipt 创建
             metadata["translation_hook_error"] = str(e)
-        # ========== End Batch 2 Hook Integration ==========
+        # ========== End Translation Hook ==========
         
         return artifact
     
