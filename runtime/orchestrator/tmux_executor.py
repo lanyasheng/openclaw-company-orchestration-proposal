@@ -35,6 +35,16 @@ STATUS_SCRIPT = Path(os.environ.get(
 ))
 SESSION_PREFIX = os.environ.get("OPENCLAW_SESSION_PREFIX", "oc")
 
+# Shared state directories — match env vars used by start-tmux-task.sh
+_OPENCLAW_HOME = Path(os.environ.get("OPENCLAW_HOME", Path.home() / ".openclaw"))
+_SHARED_CONTEXT = _OPENCLAW_HOME / "shared-context"
+_PROGRESS_DIR = _SHARED_CONTEXT / "progress"
+_RESULTS_DIR = _SHARED_CONTEXT / "results"
+_SESSIONS_DIR = _SHARED_CONTEXT / "sessions"
+_TASK_REGISTRY_DIR = _SHARED_CONTEXT / "task-registry" / "tasks"
+_STATE_DIR = _OPENCLAW_HOME / "state" / "tmux-tasks"
+_LOGS_DIR = _OPENCLAW_HOME / "logs"
+
 
 
 class TmuxTaskExecutor(TaskExecutorBase):
@@ -111,12 +121,12 @@ class TmuxTaskExecutor(TaskExecutorBase):
 
         # 2. Check progress file for interactive mode completion
         #    on-stop.sh writes phase=idle-waiting-input when CC finishes a turn
-        progress_file = Path.home() / ".openclaw/shared-context/progress" / f"{session_name}.json"
+        progress_file = _PROGRESS_DIR / f"{session_name}.json"
         try:
             pdata = json.loads(progress_file.read_text())
             if pdata.get("phase") == "idle-waiting-input":
                 # Guard: if Ralph is still active, this is a mid-loop stop, not completion
-                ralph_file = Path.home() / ".openclaw/shared-context/sessions" / session_name / "ralph.json"
+                ralph_file = _SESSIONS_DIR / session_name / "ralph.json"
                 ralph_active = False
                 try:
                     ralph_data = json.loads(ralph_file.read_text())
@@ -143,7 +153,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
 
         # 2b. Check review-posted marker (task completed but progress file missing/deleted)
         #     This handles the case where CC finished but Stop hook didn't fire again.
-        review_posted = Path.home() / ".openclaw/shared-context/results" / f"{session_name}.review-posted"
+        review_posted = _RESULTS_DIR / f"{session_name}.review-posted"
         if review_posted.exists():
             if session_name not in self._exit_sent:
                 logger.info("task %s review-posted marker found, sending /exit", session_name)
@@ -187,7 +197,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
 
     def _write_completion_marker(self, session_name: str) -> None:
         """Write a completion JSON so _check_orch_bridge can detect it after session dies."""
-        result_json = Path.home() / ".openclaw/shared-context/results" / f"{session_name}.json"
+        result_json = _RESULTS_DIR / f"{session_name}.json"
         if not result_json.exists():
             try:
                 from datetime import datetime, timezone
@@ -222,7 +232,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
         session_name = handle
 
         # 1. Remove progress file
-        progress_file = Path.home() / ".openclaw/shared-context/progress" / f"{session_name}.json"
+        progress_file = _PROGRESS_DIR / f"{session_name}.json"
         progress_file.unlink(missing_ok=True)
 
         # 2. Remove task-registry file directly
@@ -230,7 +240,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
             session_name,
             "tsk_" + session_name.replace(f"{SESSION_PREFIX}-", "", 1).replace("-", "_"),
         )
-        task_file = Path.home() / ".openclaw/shared-context/task-registry/tasks" / f"{task_ref}.json"
+        task_file = _TASK_REGISTRY_DIR / f"{task_ref}.json"
         task_file.unlink(missing_ok=True)
 
         # 3. Kill tmux session if still alive
@@ -239,7 +249,19 @@ class TmuxTaskExecutor(TaskExecutorBase):
         except subprocess.TimeoutExpired:
             logger.warning("tmux kill-session timed out during cleanup for %s", session_name)
 
-        # 4. Remove session from in-memory maps to avoid memory leak
+        # 4. Remove shell-created state file and session directory
+        state_file = _STATE_DIR / f"{session_name}-state.json"
+        state_file.unlink(missing_ok=True)
+        session_dir = _SESSIONS_DIR / session_name
+        if session_dir.is_dir():
+            import shutil
+            shutil.rmtree(session_dir, ignore_errors=True)
+
+        # 5. Remove result files
+        for suffix in (".json", ".review-posted"):
+            (_RESULTS_DIR / f"{session_name}{suffix}").unlink(missing_ok=True)
+
+        # 6. Remove session from in-memory maps to avoid memory leak
         self._task_session_map.pop(session_name, None)
         self._start_times.pop(session_name, None)
         self._exit_sent.discard(session_name)
@@ -254,7 +276,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
         window has already exited but a ``result`` event exists in the log,
         the task actually completed successfully.
         """
-        log_path = Path.home() / ".openclaw" / "logs" / f"{session_name}.jsonl"
+        log_path = _LOGS_DIR / f"{session_name}.jsonl"
         if not log_path.exists():
             return None
         try:
@@ -287,7 +309,7 @@ class TmuxTaskExecutor(TaskExecutorBase):
             return jsonl_result
 
         # Check result JSON written by on-stop.sh auto-exit (interactive mode)
-        result_json = Path.home() / ".openclaw/shared-context/results" / f"{session_name}.json"
+        result_json = _RESULTS_DIR / f"{session_name}.json"
         try:
             rdata = json.loads(result_json.read_text())
             if rdata.get("status") == "completed" or rdata.get("subtype") == "completed":

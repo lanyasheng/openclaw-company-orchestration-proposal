@@ -218,12 +218,13 @@ class BatchExecutor:
                     result={"verdict": "PASS", "summary": task.result_summary},
                 )
                 # Light cleanup: remove in-memory tracking only.
-                # Don't call cleanup() (which kills tmux) — let the session
-                # die naturally so on-session-end.sh has time to run
-                # (update reviewed-mrs.json, clean worktree, send notification).
+                # Don't call full cleanup() (which kills tmux) — let the session
+                # die naturally so on-session-end.sh has time to run.
                 if hasattr(self._executor, '_task_session_map'):
                     self._executor._task_session_map.pop(task.subagent_task_id, None)
                     self._executor._start_times.pop(task.subagent_task_id, None)
+                if hasattr(self._executor, '_exit_sent'):
+                    self._executor._exit_sent.discard(task.subagent_task_id)
             elif tr.status in ("failed", "timed_out"):
                 self._apply_retry_or_fail(
                     task, batch, tr.error or tr.status,

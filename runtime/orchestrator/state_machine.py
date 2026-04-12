@@ -102,8 +102,10 @@ def create_task(
     tmp_file = _task_file(task_id).with_suffix(".tmp")
     with open(tmp_file, "w") as f:
         json.dump(state, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
     tmp_file.replace(_task_file(task_id))
-    
+
     return state
 
 

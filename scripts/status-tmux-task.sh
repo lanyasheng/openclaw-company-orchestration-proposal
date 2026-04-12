@@ -92,7 +92,8 @@ try:
     print(int((datetime.now(timezone.utc) - t).total_seconds()))
 except: print(0)
 " 2>/dev/null || echo "0")
-  if [[ "$STATUS" == "idle" && "$ELAPSED" -gt 1800 ]]; then
+  STALL_TIMEOUT="${OPENCLAW_STALL_TIMEOUT:-3600}"
+  if [[ "$STATUS" == "idle" && "$ELAPSED" -gt "$STALL_TIMEOUT" ]]; then
     STATUS="stuck"
     STUCK=true
   fi

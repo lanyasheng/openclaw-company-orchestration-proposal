@@ -73,8 +73,13 @@ class BackwriteResult:
             "errors": self.errors,
             "metadata": self.metadata,
             "success": (
-                self.task_registration_updated or 
-                self.state_machine_updated or 
+                self.task_registration_updated and
+                self.state_machine_updated and
+                self.observability_card_updated
+            ),
+            "partial_success": (
+                self.task_registration_updated or
+                self.state_machine_updated or
                 self.observability_card_updated
             ),
         }

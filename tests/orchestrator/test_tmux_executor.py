@@ -35,8 +35,26 @@ class _Home(TestCase):
         self.home = Path(self._td.name)
         self._p = patch("tmux_executor.Path.home", return_value=self.home)
         self._p.start()
+        # Patch module-level path constants to match the temp home
+        import tmux_executor as _te
+        oc = self.home / ".openclaw"
+        sc = oc / "shared-context"
+        self._path_patches = {
+            "_OPENCLAW_HOME": patch.object(_te, "_OPENCLAW_HOME", oc),
+            "_SHARED_CONTEXT": patch.object(_te, "_SHARED_CONTEXT", sc),
+            "_PROGRESS_DIR": patch.object(_te, "_PROGRESS_DIR", sc / "progress"),
+            "_RESULTS_DIR": patch.object(_te, "_RESULTS_DIR", sc / "results"),
+            "_SESSIONS_DIR": patch.object(_te, "_SESSIONS_DIR", sc / "sessions"),
+            "_TASK_REGISTRY_DIR": patch.object(_te, "_TASK_REGISTRY_DIR", sc / "task-registry" / "tasks"),
+            "_STATE_DIR": patch.object(_te, "_STATE_DIR", oc / "state" / "tmux-tasks"),
+            "_LOGS_DIR": patch.object(_te, "_LOGS_DIR", oc / "logs"),
+        }
+        for p in self._path_patches.values():
+            p.start()
 
     def tearDown(self):
+        for p in self._path_patches.values():
+            p.stop()
         self._p.stop(); self._td.cleanup()
 
     def _mkd(self, rel):

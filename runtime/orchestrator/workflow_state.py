@@ -14,7 +14,7 @@ _log = _logging.getLogger(__name__)
 
 WorkflowStatus = Literal["pending", "running", "completed", "failed", "gate_blocked", "timed_out", "stalled_unrecoverable"]
 BatchStatus = Literal["pending", "running", "completed", "failed"]
-TaskStatus = Literal["pending", "running", "completed", "failed", "timeout", "timed_out"]
+TaskStatus = Literal["pending", "running", "completed", "failed", "timed_out"]
 FanInPolicy = Literal["all_success", "any_success", "majority"]
 ContinuationAction = Literal["proceed", "gate", "stop"]
 

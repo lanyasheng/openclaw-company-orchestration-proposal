@@ -150,13 +150,25 @@ def _atomic_claim_consumed(request_id: str, consumed_id: str) -> bool:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)
     except OSError:
-        # Fallback: non-atomic path (e.g., NFS without flock support)
-        index = _load_consumed_index()
-        if request_id in index:
+        # Fallback: mkdir-based atomic lock for NFS compatibility
+        lock_dir = BRIDGE_CONSUMED_DIR / ".claim-lock"
+        try:
+            os.mkdir(lock_dir)
+        except FileExistsError:
+            logger.warning("bridge_consumer: claim lock contention for %s, aborting", request_id)
             return False
-        index[request_id] = consumed_id
-        _save_consumed_index(index)
-        return True
+        try:
+            index = _load_consumed_index()
+            if request_id in index:
+                return False
+            index[request_id] = consumed_id
+            _save_consumed_index(index)
+            return True
+        finally:
+            try:
+                os.rmdir(lock_dir)
+            except OSError:
+                pass
 
 
 def _record_consumed_dedupe(request_id: str, consumed_id: str):
