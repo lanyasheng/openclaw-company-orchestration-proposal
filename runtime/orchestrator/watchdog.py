@@ -31,6 +31,21 @@ DEFAULT_STALL_TIMEOUT_SECONDS = 3600
 DEFAULT_POLL_INTERVAL = 30
 
 
+def _sync_cards(ws, stage: str) -> None:
+    """Best-effort sync observability cards for running tasks in the workflow."""
+    try:
+        from observability_card import update_card
+
+        for batch in ws.batches:
+            if batch.status not in ("running", "pending"):
+                continue
+            for task in batch.tasks:
+                if task.status in ("running", "pending"):
+                    update_card(task.task_id, stage=stage)
+    except Exception as e:
+        logger.debug("Card sync skipped: %s", e)
+
+
 def check_workflow(state_path: str | Path) -> dict:
     """Check a single workflow's health. Returns diagnosis."""
     path = Path(state_path)
@@ -97,6 +112,7 @@ def auto_resume(state_path: str | Path) -> Optional[str]:
             ws.status = "stalled_unrecoverable"
             ws.updated_at = datetime.now(timezone.utc).isoformat()
             save_workflow_state(ws, path)
+            _sync_cards(ws, "failed")
             return "stalled_unrecoverable"
 
         logger.warning(
@@ -108,6 +124,7 @@ def auto_resume(state_path: str | Path) -> Optional[str]:
         ws.status = "running"
         ws.updated_at = datetime.now(timezone.utc).isoformat()
         save_workflow_state(ws, path)
+        _sync_cards(ws, "running")
         return "resumed"
 
     return None

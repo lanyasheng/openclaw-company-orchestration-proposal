@@ -95,6 +95,7 @@ CardStage = Literal[
     "planning",
     "dispatch",
     "running",
+    "idle",
     "callback_received",
     "closeout",
     "completed",

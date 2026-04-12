@@ -142,7 +142,10 @@ class WriterLockRecord:
             return False
         try:
             expires = datetime.fromisoformat(self.expires_at)
-            return datetime.now() > expires
+            now = datetime.now(timezone.utc)
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            return now > expires
         except (ValueError, TypeError):
             return False
 
@@ -273,7 +276,7 @@ class SingleWriterGuard:
             if existing.writer_id == writer_id and not existing.is_expired():
                 # 刷新过期时间
                 existing.expires_at = (
-                    datetime.now() + timedelta(seconds=self.timeout_seconds)
+                    datetime.now(timezone.utc) + timedelta(seconds=self.timeout_seconds)
                 ).isoformat()
                 self._write_lock_record(existing, repo, batch_id)
                 return True, "lock_reacquired", existing
@@ -298,7 +301,7 @@ class SingleWriterGuard:
             writer_id=writer_id,
             lane_type="writer",
             acquired_at=_iso_now(),
-            expires_at=(datetime.now() + timedelta(seconds=self.timeout_seconds)).isoformat(),
+            expires_at=(datetime.now(timezone.utc) + timedelta(seconds=self.timeout_seconds)).isoformat(),
             status="active",
             metadata=metadata or {},
         )
